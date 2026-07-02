@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 storage_state.json
+state.json
 storage/*.json
 logs/*.log
 output/*
