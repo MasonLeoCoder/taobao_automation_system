@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import (
-    Browser,
     BrowserContext,
     ElementHandle,
     Error as PlaywrightError,
@@ -21,7 +20,10 @@ from playwright.sync_api import (
 from utils.logger import get_logger
 
 LOGIN_URL = "https://loginmyseller.taobao.com/"
+HOME_URL = "https://myseller.taobao.com/home.htm/QnworkbenchHome"
 STATE_PATH = Path("./state.json")
+USER_DATA_DIR = Path("./storage/taobao_browser_profile")
+SESSION_MARKER_PATH = Path("./storage/taobao_browser_profile/.login_ok")
 MAX_RETRY = 3
 PAGE_TIMEOUT_MS = 60_000
 SHORT_TIMEOUT_MS = 5_000
@@ -43,21 +45,24 @@ HOME_HINT_SELECTORS = (
 )
 
 
-def launch_browser() -> tuple[Playwright, Browser, BrowserContext]:
+def launch_browser() -> tuple[Playwright, BrowserContext]:
     """启动浏览器。
 
     参数：
         无。
 
     返回：
-        tuple[Playwright, Browser, BrowserContext]：Playwright 实例、浏览器实例和浏览器上下文。
+        tuple[Playwright, BrowserContext]：Playwright 实例和持久化浏览器上下文。
     """
     playwright = sync_playwright().start()
-    browser = playwright.chromium.launch(headless=False)
-    context = browser.new_context()
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    context = playwright.chromium.launch_persistent_context(
+        user_data_dir=str(USER_DATA_DIR),
+        headless=False,
+    )
     context.set_default_timeout(PAGE_TIMEOUT_MS)
     context.set_default_navigation_timeout(PAGE_TIMEOUT_MS)
-    return playwright, browser, context
+    return playwright, context
 
 
 def load_session(context: BrowserContext) -> bool:
@@ -70,15 +75,13 @@ def load_session(context: BrowserContext) -> bool:
         bool：会话文件存在且加载成功时返回 True，否则返回 False。
     """
     logger = get_logger(__name__)
-    if not STATE_PATH.exists():
-        logger.info("No session file found: %s", STATE_PATH)
+    if not _has_saved_session():
         return False
 
-    try:
-        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        logger.warning("Session file is not valid JSON: %s", STATE_PATH)
-        return False
+    state = _read_storage_state()
+    if state is None:
+        logger.info("Loaded session from persistent browser profile: %s", USER_DATA_DIR)
+        return True
 
     cookies = state.get("cookies", [])
     if cookies:
@@ -111,7 +114,13 @@ def load_session(context: BrowserContext) -> bool:
             """
         )
 
-    logger.info("Loaded session from %s", STATE_PATH)
+    logger.info(
+        "Loaded session from profile %s and state file %s; cookies=%s, origins=%s.",
+        USER_DATA_DIR,
+        STATE_PATH,
+        len(cookies),
+        len(origins),
+    )
     return True
 
 
@@ -128,7 +137,7 @@ def check_login(page: Page) -> bool:
 
     for attempt in range(1, MAX_RETRY + 1):
         try:
-            page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+            page.goto(HOME_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
             _wait_for_page_ready(page)
             _human_delay(page)
 
@@ -141,7 +150,7 @@ def check_login(page: Page) -> bool:
                 return False
 
             if "login" not in page.url.lower():
-                logger.info("Login is valid; current URL is %s", page.url)
+                logger.info("Login is valid; seller homepage URL is %s", page.url)
                 return True
 
             return False
@@ -185,10 +194,8 @@ def login_with_qrcode(page: Page) -> bool:
 
             logger.info("Waiting for QR-code scan to complete. Attempt %s/%s.", attempt, MAX_RETRY)
             _wait_for_login_success(page)
-
-            if check_login(page):
-                logger.info("QR-code login succeeded.")
-                return True
+            logger.info("QR-code login succeeded on current page: %s", page.url)
+            return True
         except PlaywrightTimeoutError as error:
             logger.warning("QR-code login attempt %s/%s timed out: %s", attempt, MAX_RETRY, error)
             if attempt == MAX_RETRY:
@@ -209,6 +216,8 @@ def save_session(context: BrowserContext) -> None:
         None：该函数只负责将 storage_state 写入 ./state.json。
     """
     context.storage_state(path=str(STATE_PATH))
+    SESSION_MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SESSION_MARKER_PATH.write_text(str(int(time.time())), encoding="utf-8")
     get_logger(__name__).info("Saved session to %s", STATE_PATH)
 
 
@@ -224,13 +233,13 @@ def ensure_login() -> bool:
     """
     logger = get_logger(__name__)
     playwright: Playwright | None = None
-    browser: Browser | None = None
+    context: BrowserContext | None = None
 
     try:
-        playwright, browser, context = launch_browser()
+        playwright, context = launch_browser()
         session_loaded = False
 
-        if STATE_PATH.exists():
+        if _has_saved_session():
             logger.info("Session exists; loading before login check.")
             session_loaded = load_session(context)
 
@@ -246,14 +255,15 @@ def ensure_login() -> bool:
             logger.info("Session does not exist; starting QR-code login.")
 
         login_with_qrcode(page)
+        _wait_for_auth_state_stable(page)
         save_session(context)
         return True
     except Exception:
         logger.exception("Taobao seller-center login failed.")
         return False
     finally:
-        if browser is not None:
-            browser.close()
+        if context is not None:
+            context.close()
         if playwright is not None:
             playwright.stop()
 
@@ -273,6 +283,59 @@ def _wait_for_page_ready(page: Page) -> None:
     except PlaywrightTimeoutError:
         pass
     page.wait_for_timeout(800)
+
+
+def _read_storage_state() -> dict | None:
+    """读取并校验本地 storage_state 文件。
+
+    参数：
+        无。
+
+    返回：
+        dict | None：文件存在且 JSON 合法时返回状态字典，否则返回 None。
+    """
+    logger = get_logger(__name__)
+
+    if not STATE_PATH.exists():
+        logger.info("No session file found: %s", STATE_PATH)
+        return None
+
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("Session file is not valid JSON: %s", STATE_PATH)
+        return None
+
+    if not isinstance(state, dict):
+        logger.warning("Session file root is not a JSON object: %s", STATE_PATH)
+        return None
+
+    return state
+
+
+def _has_saved_session() -> bool:
+    """判断本地是否存在可复用的登录会话。
+
+    参数：
+        无。
+
+    返回：
+        bool：扫码成功后存在持久化浏览器标记时返回 True，否则返回 False。
+    """
+    return SESSION_MARKER_PATH.exists()
+
+
+def _wait_for_auth_state_stable(page: Page) -> None:
+    """等待登录后的 cookie 和本地存储写入稳定。
+
+    参数：
+        page (Page)：扫码登录成功后的当前页面对象。
+
+    返回：
+        None：该函数只负责等待状态稳定，不返回业务数据。
+    """
+    _wait_for_page_ready(page)
+    page.wait_for_timeout(3_000)
 
 
 def _has_visible_selector(page: Page, selectors: tuple[str, ...], timeout: int) -> bool:
