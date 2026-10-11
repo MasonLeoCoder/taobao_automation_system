@@ -65,7 +65,7 @@ class AppTests(unittest.TestCase):
             yield context, page
             calls.append("close")
 
-        with patch.object(service, "browser_session", session), patch.object(service, "authenticate", side_effect=lambda *a: calls.append("login")), patch.object(service, "click_product_nav", side_effect=lambda *a: calls.append("product") or page), patch.object(service, "click_publish_product", side_effect=lambda *a: calls.append("publish") or page), patch.object(service, "click_start_button", side_effect=lambda *a: calls.append("start")):
+        with patch.object(service, "browser_session", session), patch.object(service, "authenticate", side_effect=lambda *a: calls.append("login") or page), patch.object(service, "click_product_nav", side_effect=lambda *a: calls.append("product") or page), patch.object(service, "click_publish_product", side_effect=lambda *a: calls.append("publish") or page), patch.object(service, "click_start_button", side_effect=lambda *a: calls.append("start")):
             service.open_publish(self.settings, True, lambda: calls.append("ready"))
         self.assertEqual(calls, ["open", "login", "product", "publish", "start", "ready", "close"])
 

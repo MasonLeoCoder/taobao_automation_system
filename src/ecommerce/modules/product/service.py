@@ -9,7 +9,7 @@ from ecommerce.shared.config import Settings
 def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None) -> str:
     """打开发布入口；参数：配置、是否点击开启、就绪回调；返回：结果说明。"""
     with browser_session(settings) as (context, page):
-        authenticate(context, page, settings)
+        page = authenticate(context, page, settings)
         page = click_product_nav(context, page)
         page = click_publish_product(context, page)
         if start:

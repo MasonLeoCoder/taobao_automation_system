@@ -126,6 +126,7 @@ Excel、JSON 等具体业务读写能力尚未接入，不建立无实际用途�
 ## 迁移记录
 
 原来的 `automation/`、`browser/`、`data/`、`ai/`、`utils/` 代码按职责迁入 `src/ecommerce`；未实现的原样返回占位函数已移除。
-原始代码和未提交差异备份在 `workspace/backups/before-refactor/`，原有 `test.py` 手工计时脚本保留至 `tests/manual/timing_probe.py`。
-旧 `logs/`、`output/`、`storage/` 的运行资料保留。新版日志写入 `workspace/logs`，旧日志不会伪装成新任务记录。
+原始代码和未提交差异备份在 `workspace/backups/before-refactor/`，原有手工计时脚本归档为该备份目录中的 `test.py`。
+旧 `logs/`、`output/`、`storage/` 已清理；根目录 `state.json` 保留以尝试恢复登录状态。浏览器资料将自动建立在 `workspace/storage/browser_profiles/`，必要时重新扫码。新版日志写入 `workspace/logs`。
+打包生成的 `build/`、`workspace/build/` 和源码缓存已清理，后续运行或打包可能再次生成。`src/*.egg-info/` 是可编辑安装的元数据，保留供当前安装使用。
 尚未实现业务按优先级：Excel → 千牛草稿；生意参谋/万相台报表及网页分析；关键词/竞品采集与选品。

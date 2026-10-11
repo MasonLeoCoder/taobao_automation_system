@@ -12,8 +12,3 @@ storage_state.json
 state.json
 storage/taobao_browser_profile/
 storage/*.json
-logs/*.log
-output/*
-!output/.gitkeep
-!logs/.gitkeep
-!storage/.gitkeep
