@@ -1,4 +1,2 @@
-playwright
-pandas
-openai
-python-dotenv
+# 核心依赖在 pyproject.toml 统一维护。
+-e .

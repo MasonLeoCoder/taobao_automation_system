@@ -1,4 +1,10 @@
 .venv/
+workspace/
+config/settings.toml
+*.egg-info/
+build/
+dist/
+.pytest_cache/
 __pycache__/
 *.pyc
 .env

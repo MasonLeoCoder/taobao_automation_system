@@ -1,0 +1,14 @@
+# 相对路径统一基于项目根目录，可通过 ECOMMERCE_ROOT 覆盖根目录。
+workspace = "workspace"
+shop_name = "我的店铺"
+
+[browser]
+headless = false
+timeout_ms = 60000
+# 未设置时优先兼容根目录 state.json 和 storage/taobao_browser_profile。
+# session_path = "workspace/storage/sessions/qianniu.json"
+# profile_path = "workspace/storage/browser_profiles/qianniu"
+
+[web]
+host = "127.0.0.1"
+port = 8000

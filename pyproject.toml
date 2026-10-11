@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taobao-automation-system"
+version = "0.2.0"
+description = "单店铺电商自动化与本地数据工作台"
+requires-python = ">=3.11"
+dependencies = ["playwright>=1.40,<2", "Flask>=3.1,<4", "tzdata>=2024.1"]
+
+[project.optional-dependencies]
+data = ["pandas>=2,<4", "openpyxl>=3.1,<4"]
+ai = ["openai>=1,<3"]
+
+[project.scripts]
+ecommerce = "ecommerce.cli.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ecommerce.web" = ["templates/*.html", "static/*.css"]
+"ecommerce.infrastructure.storage" = ["migrations/*.sql"]

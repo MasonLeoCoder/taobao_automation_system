@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}概览{% endblock %} · 电商工作台</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}">
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+<aside>
+  <a class="brand" href="/">商<span>电商工作台<small>ECOMMERCE WORKSPACE</small></span></a>
+  <div class="shop"><span class="dot"></span>{{ shop_name }}<small>单店铺 · 本地工作空间</small></div>
+  <nav aria-label="主导航">
+    <a class="{{ 'active' if active == 'home' }}" href="/">工作台概览</a>
+    <a class="{{ 'active' if active == 'tasks' }}" href="/tasks">任务记录</a>
+    <p>业务模块</p>
+    {% for item in features %}<a class="{{ 'active' if active == item.key }}" href="/modules/{{ item.key }}">{{ item.name }}{% if item.status == 'planned' %}<small>规划中</small>{% endif %}</a>{% endfor %}
+  </nav>
+  <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。<small>基础架构 · v0.2</small></div>
+</aside>
+<main id="main">
+  <header><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span><span class="local"><span class="dot"></span>本地服务</span></header>
+  {% block content %}{% endblock %}
+  <footer>数据来自本地运行记录 · 时间按 Asia/Shanghai 展示</footer>
+</main>
+</body></html>

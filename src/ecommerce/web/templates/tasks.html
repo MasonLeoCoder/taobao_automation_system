@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}任务记录{% endblock %}{% block breadcrumb %}任务记录{% endblock %}
+{% block content %}
+<section class="intro"><div><p class="eyebrow">TASK HISTORY</p><h1>每一次执行，都有记录。</h1><p>最近 50 条真实任务记录。刷新页面可查看最新状态。</p></div><a class="button" href="/tasks">刷新记录 ↻</a></section>
+{% if tasks %}<div class="table-wrap"><table><thead><tr><th>任务 / 编号</th><th>状态</th><th>开始时间</th><th>结束时间</th><th>执行结果</th></tr></thead><tbody>
+{% set labels = {'running':'运行中','succeeded':'成功','failed':'失败','cancelled':'已取消','needs_attention':'需人工处理'} %}
+{% for task in tasks %}<tr><td>{{ task.name }}<small>{{ task.id[:12] }}</small></td><td><span class="badge {{ task.status }}">{{ labels[task.status] }}</span></td><td>{{ task.started_at | local_time }}</td><td>{{ task.finished_at | local_time }}</td><td>{{ task.message or '任务执行中' }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<section class="empty"><span class="empty-symbol">↗</span><h2>还没有执行记录</h2><p>运行登录或商品入口任务后，这里会显示状态和结果。</p><a class="text-link" href="/modules/account">从账号登录开始 →</a></section>{% endif %}
+{% endblock %}
