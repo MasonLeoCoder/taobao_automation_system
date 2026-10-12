@@ -5,6 +5,29 @@ from playwright.sync_api import BrowserContext, Page, ElementHandle, Error as Pl
 PAGE_TIMEOUT_MS = 60000
 SHORT_TIMEOUT_MS = 5000
 
+def wait_for_visible_element(
+    page: Page,
+    selectors: tuple[str, ...],
+    *,
+    element_name: str,
+    timeout: int = SHORT_TIMEOUT_MS,
+) -> ElementHandle:
+    """按顺序尝试定位规则，返回主页面中首个命中的可见元素。
+
+    element_name 用于失败提示；timeout 是每条规则的等待时间（毫秒），
+    不是所有规则共用的总时限。仅在超时时尝试下一条规则，其他错误直接抛出。
+    """
+    last_error: Exception | None = None
+    for selector in selectors:
+        try:
+            element = page.wait_for_selector(selector, state="visible", timeout=timeout)
+            if element is not None:
+                return element
+        except PlaywrightTimeoutError as error:
+            last_error = error
+
+    raise PlaywrightTimeoutError(f"未检测到{element_name}") from last_error
+
 def wait_for_page_ready(page: Page) -> None:
     """等待页面进入可操作状态。
 

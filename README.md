@@ -28,6 +28,7 @@ python main.py status                    # 已实现与待实现的功能
 python main.py account login             # 复用会话，必要时人工扫码
 python main.py account check             # 在线检查会话，失效返回需人工处理
 python main.py product open              # 打开发布入口，回车关闭浏览器
+python main.py product open --keyword "粘毛器" # 搜索后停留在结果页，回车关闭浏览器
 python main.py product open --start      # 额外尝试点击“开启”
 python main.py product open --no-wait     # 完成入口导航后关闭浏览器
 python main.py tasks                     # 最近 50 条任务记录

@@ -17,6 +17,9 @@ def parser() -> argparse.ArgumentParser:
     product.add_argument("action", choices=("open",))
     product.add_argument("--start", action="store_true", help="尝试点击开启按钮，旧定位问题待验证")
     product.add_argument("--no-wait", action="store_true", help="完成后立即关闭浏览器")
+    product.add_argument("--keyword", help="进入发布页面后搜索指定关键词")
+    product.add_argument("--category", help="点击搜索结果中的完整类目路径，使用 > 分隔")
+    product.add_argument("--brand", help="选择指定品牌并点击确认下一步，需同时提供类目")
     commands.add_parser("status", help="显示当前功能状态")
     commands.add_parser("tasks", help="查看最近 50 条任务记录")
     web = commands.add_parser("web", help="启动本地网页")
@@ -66,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             legacy = args.command == "upload"
             if legacy:
                 print("旧命令 upload 对应 product open --start；尚不支持完整上架。", file=sys.stderr)
-            result = execute(settings, legacy or args.start, legacy or not args.no_wait)
+            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None))
         print(f"[{result.status}] {result.message}")
         if result.task_id:
             print(f"任务编号：{result.task_id}")
