@@ -20,6 +20,9 @@ def parser() -> argparse.ArgumentParser:
     product.add_argument("--keyword", help="进入发布页面后搜索指定关键词")
     product.add_argument("--category", help="点击搜索结果中的完整类目路径，使用 > 分隔")
     product.add_argument("--brand", help="选择指定品牌并点击确认下一步，需同时提供类目")
+    product.add_argument("--main-images-dir", help="按编号1～5上传五张1:1主图，相对路径基于项目根目录")
+    product.add_argument("--portrait-images-dir", help="按顺序上传五张3:4主图，相对路径基于项目根目录")
+    product.add_argument("--detail-images-dir", help="按数字编号上传全部详情图，长图使用平台完整分割")
     commands.add_parser("status", help="显示当前功能状态")
     commands.add_parser("tasks", help="查看最近 50 条任务记录")
     web = commands.add_parser("web", help="启动本地网页")
@@ -69,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             legacy = args.command == "upload"
             if legacy:
                 print("旧命令 upload 对应 product open --start；尚不支持完整上架。", file=sys.stderr)
-            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None))
+            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None))
         print(f"[{result.status}] {result.message}")
         if result.task_id:
             print(f"任务编号：{result.task_id}")

@@ -1,4 +1,5 @@
 """千牛商品入口操作，迁移现有选择器。"""
+from .verification import qianniu_operation, checkpoint
 from logging import getLogger as get_logger
 import re
 from ecommerce.infrastructure.browser.actions import (
@@ -27,6 +28,7 @@ START_BUTTON_SELECTORS = (
 SEARCH_INPUT_SELECTOR = "input[placeholder*='可输入产品名称']"
 
 
+@qianniu_operation
 def select_brand_and_continue(page: Page, brand: str) -> Page:
     """选择品牌并进入下一步；参数：类目页、完整品牌名称；返回：后续页面。"""
     if not brand.strip():
@@ -43,6 +45,7 @@ def select_brand_and_continue(page: Page, brand: str) -> Page:
     return next_page
 
 
+@qianniu_operation
 def select_publish_category(page: Page, category: str) -> None:
     """点击完整类目路径；参数：结果页、以 > 分隔的路径；返回：无。"""
     parts = [part.strip() for part in category.split(">")]
@@ -55,6 +58,7 @@ def select_publish_category(page: Page, category: str) -> None:
     get_logger(__name__).info("已点击类目：%s", " > ".join(parts))
 
 
+@qianniu_operation
 def search_publish_products(page: Page, keyword: str) -> None:
     """搜索发品；参数：发布页面、非空关键词；返回：无，等待结果页出现。"""
     keyword = keyword.strip()
@@ -64,13 +68,14 @@ def search_publish_products(page: Page, keyword: str) -> None:
     search_input = page.locator(SEARCH_INPUT_SELECTOR)
     search_input.wait_for(state="visible")
     search_input.fill(keyword)
-    page.get_by_text("搜索", exact=True).click()
+    page.get_by_role("button", name="搜索", exact=True).click()
     # 初始类目选择页没有“全部”结果标签，等待搜索结果视图出现。
     page.get_by_text("全部", exact=True).wait_for(state="visible")
     page.get_by_text("我的商品", exact=True).first.wait_for(state="visible")
     logger.info("发品搜索结果页已显示，等待下一步操作")
 
 
+@qianniu_operation
 def click_product_nav(context: BrowserContext, page: Page) -> Page:
     """点击千牛工作台的商品入口。
 
@@ -91,6 +96,7 @@ def click_product_nav(context: BrowserContext, page: Page) -> Page:
     logger.info("已点击千牛工作台商品入口")
     return next_page
 
+@qianniu_operation
 def click_publish_product(context: BrowserContext, page: Page) -> Page:
     """点击商品菜单中的发布商品入口。
 
@@ -119,6 +125,7 @@ def click_publish_product(context: BrowserContext, page: Page) -> Page:
     return next_page
 
 
+@qianniu_operation
 def click_start_button(page: Page) -> None:
     """点击发布商品页面的开启按钮。
 

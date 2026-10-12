@@ -1,5 +1,6 @@
 """账号业务流程，复用当前任务的浏览器上下文。"""
-from ecommerce.infrastructure.browser.session import browser_session, save_session
+from ecommerce.infrastructure.browser.session import save_session
+from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.platforms.qianniu.login import check_login, login_with_qrcode
 from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
@@ -23,15 +24,15 @@ def authenticate(context, page, settings: Settings, allow_login: bool = True) ->
     return page
 
 
-def login(settings: Settings) -> str:
+def login(settings: Settings, on_attention=None) -> str:
     """登录并保存状态；参数：配置；返回：结果说明。"""
-    with browser_session(settings) as (context, page):
+    with browser_session(settings, on_attention=on_attention) as (context, page):
         authenticate(context, page, settings)
     return "登录成功，已保存可复用的会话"
 
 
-def check(settings: Settings) -> str:
+def check(settings: Settings, on_attention=None) -> str:
     """在线检查已存会话；参数：配置；返回：结果说明。"""
-    with browser_session(settings) as (context, page):
+    with browser_session(settings, on_attention=on_attention) as (context, page):
         authenticate(context, page, settings, allow_login=False)
     return "店铺登录状态有效"

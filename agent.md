@@ -50,3 +50,12 @@
 - 自动测试使用临时目录和脱敏样例；真实店铺行为单独验证。
 - 第一阶段 Web 默认仅本机访问；需要远程访问时再落实身份验证与权限。
 - 暂不引入插件系统、分布式任务队列或微服务。
+
+## 千牛验证接入约定
+
+- 所有千牛业务必须使用 platforms.qianniu.session.browser_session，禁止直接创建无验证守卫的基础浏览器会话。
+- platforms/qianniu 新增公开页面操作必须加 @qianniu_operation；长轮询内部调用 checkpoint，优先 Locator 点击/填写及 expect 断言，禁止 force=True 绕过检查。
+- 当前人工验证处理器必须等待明确反馈，之后复查验证是否消失。没有反馈不得继续；输入通道关闭转为 needs_attention。
+- 扩展验证处理器实现 VerificationHandler；处理器返回不代表通过，守卫必须复查。处理器不得重放发布、保存、上传等业务动作。
+- 验证处理时间可能超过 Playwright 原操作超时，遇到结果不确定时转 needs_attention，先核对结果，不自动重放整段业务。
+- 识别规则集中在 verification.py；出现新验证页面先补充识别规则与测试，不宣称未知验证已被覆盖。

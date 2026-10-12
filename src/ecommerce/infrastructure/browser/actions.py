@@ -1,7 +1,7 @@
 """共用浏览器等待和元素查找方法。"""
 import random
 import time
-from playwright.sync_api import BrowserContext, Page, ElementHandle, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import BrowserContext, Page, ElementHandle, Locator, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 PAGE_TIMEOUT_MS = 60000
 SHORT_TIMEOUT_MS = 5000
 
@@ -11,7 +11,7 @@ def wait_for_visible_element(
     *,
     element_name: str,
     timeout: int = SHORT_TIMEOUT_MS,
-) -> ElementHandle:
+) -> Locator:
     """按顺序尝试定位规则，返回主页面中首个命中的可见元素。
 
     element_name 用于失败提示；timeout 是每条规则的等待时间（毫秒），
@@ -20,9 +20,9 @@ def wait_for_visible_element(
     last_error: Exception | None = None
     for selector in selectors:
         try:
-            element = page.wait_for_selector(selector, state="visible", timeout=timeout)
-            if element is not None:
-                return element
+            element = page.locator(selector).first
+            element.wait_for(state="visible", timeout=timeout)
+            return element
         except PlaywrightTimeoutError as error:
             last_error = error
 

@@ -59,7 +59,7 @@ class AppTests(unittest.TestCase):
         calls = []
 
         @contextmanager
-        def session(settings):
+        def session(settings, on_attention=None):
             """模拟一次浏览器生命周期；参数：配置；返回：上下文和页面。"""
             calls.append("open")
             yield context, page
