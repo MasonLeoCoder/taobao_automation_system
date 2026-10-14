@@ -38,7 +38,12 @@ def browser_session(settings: Settings):
     from playwright.sync_api import sync_playwright
     settings.profile_path.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(str(settings.profile_path), headless=settings.headless)
+        context = playwright.chromium.launch_persistent_context(
+            str(settings.profile_path), headless=settings.headless,
+            no_viewport=not settings.headless,
+            viewport={"width": 1440, "height": 1000} if settings.headless else None,
+            args=[] if settings.headless else ["--start-maximized"],
+        )
         try:
             context.set_default_timeout(settings.timeout_ms)
             context.set_default_navigation_timeout(settings.timeout_ms)

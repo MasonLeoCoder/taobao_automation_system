@@ -48,9 +48,6 @@ def upload_detail_images(page: Page, files: list[Path]) -> None:
     expect(content).to_have_count(1, timeout=WAIT_MS)
     if content.locator(":scope > *").count():
         raise NeedsAttention("详情编辑区已有内容，请先核对；不会自动覆盖或重复添加")
-    viewport = page.viewport_size
-    if viewport and (viewport["width"] < 1440 or viewport["height"] < 1000):
-        page.set_viewport_size({"width": max(1440, viewport["width"]), "height": max(1000, viewport["height"])})
     expected = []
     batch_id = uuid4().hex[:12]
     def intercept(chooser):

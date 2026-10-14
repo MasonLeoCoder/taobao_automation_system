@@ -55,11 +55,6 @@ def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1"
     """执行主图上传；参数：页面、五张图片；返回：无，外层负责请求拦截。"""
     if len(files) != 5 or any(not path.is_file() for path in files):
         raise ValueError("必须提供五张存在的主图文件")
-    # 素材上传窗口约900x510，小视口中打开3:4区域会把底部完成按钮裁到屏幕外。
-    viewport = page.viewport_size
-    if viewport is not None and (viewport["width"] < 1440 or viewport["height"] < 1000):
-        page.set_viewport_size({"width": max(1440, viewport["width"]),
-                                "height": max(1000, viewport["height"])})
     logger = logging.getLogger(__name__)
     group = _image_group(page, aspect_ratio)
     group.wait_for(state="visible", timeout=WAIT_MS)

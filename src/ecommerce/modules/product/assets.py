@@ -57,3 +57,13 @@ def load_detail_images(directory: Path) -> list[Path]:
         if not 0 < path.stat().st_size <= 6 * 1024 * 1024:
             raise ValueError(f"详情图为空或超过6MB：{path.name}")
     return sorted(files, key=lambda path: int(path.stem))
+
+
+def load_product_video(path: Path) -> Path:
+    """检查本地商品视频；参数：MP4路径；返回：存在且非空的绝对路径。"""
+    path = path.resolve()
+    if not path.is_file() or path.suffix.lower() != ".mp4":
+        raise ValueError(f"商品视频必须是存在的MP4文件：{path}")
+    if not path.stat().st_size:
+        raise ValueError(f"商品视频为空：{path.name}")
+    return path

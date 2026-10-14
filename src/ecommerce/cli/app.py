@@ -17,12 +17,15 @@ def parser() -> argparse.ArgumentParser:
     product.add_argument("action", choices=("open",))
     product.add_argument("--start", action="store_true", help="尝试点击开启按钮，旧定位问题待验证")
     product.add_argument("--no-wait", action="store_true", help="完成后立即关闭浏览器")
+    product.add_argument("--submit", action="store_true", help="填写后提交到仓库，失败时提示音并等待人工检查")
     product.add_argument("--keyword", help="进入发布页面后搜索指定关键词")
     product.add_argument("--category", help="点击搜索结果中的完整类目路径，使用 > 分隔")
     product.add_argument("--brand", help="选择指定品牌并点击确认下一步，需同时提供类目")
     product.add_argument("--main-images-dir", help="按编号1～5上传五张1:1主图，相对路径基于项目根目录")
     product.add_argument("--portrait-images-dir", help="按顺序上传五张3:4主图，相对路径基于项目根目录")
     product.add_argument("--detail-images-dir", help="按数字编号上传全部详情图，长图使用平台完整分割")
+    product.add_argument("--video-file", help="上传指定MP4商品视频，相对路径基于项目根目录")
+    product.add_argument("--product-info-file", help="读取固定格式商品Excel，填写已接入的店铺分类、标题、商品属性及SKU信息")
     commands.add_parser("status", help="显示当前功能状态")
     commands.add_parser("tasks", help="查看最近 50 条任务记录")
     web = commands.add_parser("web", help="启动本地网页")
@@ -72,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             legacy = args.command == "upload"
             if legacy:
                 print("旧命令 upload 对应 product open --start；尚不支持完整上架。", file=sys.stderr)
-            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None))
+            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None), getattr(args, "video_file", None), getattr(args, "product_info_file", None), submit=getattr(args, "submit", False))
         print(f"[{result.status}] {result.message}")
         if result.task_id:
             print(f"任务编号：{result.task_id}")
