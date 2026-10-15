@@ -1,6 +1,7 @@
 """千牛任务级验证检测、人工处理和可替换处理器接口。"""
 import logging
 from collections.abc import Callable
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -265,9 +266,27 @@ def expect(actual, message=None):
     return _RecoverableAssertions(playwright_expect(actual, message), message)
 
 
+@contextmanager
+def intercept_file_dialogs(page):
+    """在上传操作全程接管系统选文件请求；参数：页面；返回：退出时释放监听的作用域。
+
+    临时的获取请求监听结束后，组件仍可能发出额外请求。持续监听避免其弹出系统窗口；
+    此处不提供文件、不重放上传，只有调用方明确捕获的请求可以设置文件。
+    """
+    def intercept(chooser):
+        """接管选文件请求；参数：请求；返回：无，不提供文件或重放上传。"""
+        logging.getLogger(__name__).debug("上传期间已接管文件选择请求，不打开系统文件窗口")
+    page.on("filechooser", intercept)
+    try:
+        yield
+    finally:
+        page.remove_listener("filechooser", intercept)
+
+
 def choose_file_dialog(page, trigger, timeout=30000):
     """获取一次文件选择请求；参数：页面、入口定位器、等待时限；返回：文件选择器，不上传文件。
 
+    上传调用方须用intercept_file_dialogs覆盖完整操作；本函数仅临时捕获本次请求。
     在人工等待导致点击超时后复用已捕获的请求，避免再次点击或丢失文件请求。
     """
     captured = []

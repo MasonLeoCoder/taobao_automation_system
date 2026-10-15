@@ -26,6 +26,7 @@ def parser() -> argparse.ArgumentParser:
     product.add_argument("--detail-images-dir", help="按数字编号上传全部详情图，长图使用平台完整分割")
     product.add_argument("--video-file", help="上传指定MP4商品视频，相对路径基于项目根目录")
     product.add_argument("--product-info-file", help="读取固定格式商品Excel，填写已接入的店铺分类、标题、商品属性及SKU信息")
+    product.add_argument("--sku-images-dir", help="SKU图片目录，按销售规格名称匹配扩展名；默认Excel所在目录的sku图文件夹")
     commands.add_parser("status", help="显示当前功能状态")
     commands.add_parser("tasks", help="查看最近 50 条任务记录")
     web = commands.add_parser("web", help="启动本地网页")
@@ -75,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
             legacy = args.command == "upload"
             if legacy:
                 print("旧命令 upload 对应 product open --start；尚不支持完整上架。", file=sys.stderr)
-            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None), getattr(args, "video_file", None), getattr(args, "product_info_file", None), submit=getattr(args, "submit", False))
+            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None), getattr(args, "video_file", None), getattr(args, "product_info_file", None), submit=getattr(args, "submit", False), sku_images_dir=getattr(args, "sku_images_dir", None))
         print(f"[{result.status}] {result.message}")
         if result.task_id:
             print(f"任务编号：{result.task_id}")

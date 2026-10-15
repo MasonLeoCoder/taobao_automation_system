@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8">
+<button id="local" onclick="uploadPanel()">本地上传</button>
+<div id="library"></div><button id="confirm" hidden onclick="confirmSpec()">确定</button>
+<script>
+const kind=new URLSearchParams(location.search).get('kind');let selected=null;
+function renderLibrary(){
+ const library=document.querySelector('#library');library.replaceChildren();
+ parent.assets.forEach(asset=>{
+   const tile=document.createElement('div');tile.className='PicList_pic_background-fixture';
+   tile.innerHTML='<div class="PicList_pic_imgBox-fixture"><img style="width:60px;height:60px" src="'+asset.source+'_320x320.jpg"></div><span></span><input type="checkbox">';
+   tile.querySelector('span').textContent=asset.name;
+   tile.querySelector('.PicList_pic_imgBox-fixture').onclick=()=>{
+     if(kind==='search'){parent.chooseSearch(asset.source)}else{
+       document.querySelectorAll('#library input').forEach(c=>c.checked=false);tile.querySelector('input').checked=true;selected=asset;
+       const confirm=document.querySelector('#confirm');confirm.hidden=false;confirm.textContent='确定（1）';
+     }
+   };library.append(tile);
+ });
+}
+function uploadPanel(){
+ const dialog=document.createElement('div');dialog.setAttribute('role','dialog');
+ dialog.innerHTML='<input type="file" hidden><span id="drop">点击/拖拽，批量导入文件</span><div id="status"></div><button id="complete" hidden>完成</button>';
+ dialog.querySelector('#drop').onclick=()=>dialog.querySelector('input').click();
+ dialog.querySelector('input').onchange=event=>{
+   parent.uploadCount++;const name=event.target.files[0].name;
+   parent.assets.push({name,source:'https://qianniu.test/assets/'+name});
+   dialog.querySelector('#status').textContent='1 个文件上传成功';dialog.querySelector('#complete').hidden=false;
+   if(parent.injectUnknownOnUpload){parent.injectUnknownOnUpload=false;parent.showUnknown()}
+ };
+ dialog.querySelector('#complete').onclick=()=>{dialog.remove();renderLibrary();parent.requestExtraFile()};
+ document.body.append(dialog);
+}
+function confirmSpec(){parent.chooseSpec(selected.source)}
+renderLibrary();
+</script>

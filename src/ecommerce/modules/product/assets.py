@@ -1,5 +1,7 @@
 """商品本地图片输入检查。"""
 from pathlib import Path
+from dataclasses import dataclass
+from logging import getLogger
 
 
 def load_main_images(directory: Path) -> list[Path]:
@@ -67,3 +69,47 @@ def load_product_video(path: Path) -> Path:
     if not path.stat().st_size:
         raise ValueError(f"商品视频为空：{path.name}")
     return path
+
+
+@dataclass(frozen=True)
+class SkuImageInputs:
+    """规格名对应的唯一图片及跳过原因；不改变本地素材。"""
+    files: dict[str, Path]
+    missing: dict[str, str]
+
+
+def load_sku_images(directory: Path, names: list[str]) -> SkuImageInputs:
+    """按完整规格名匹配任意图片扩展名；参数：目录、规格名；返回：文件与逐项缺失原因。"""
+    directory = directory.resolve()
+    if not names or any(not isinstance(name, str) or not name.strip() for name in names) or len(set(names)) != len(names):
+        raise ValueError("SKU图片匹配需要非空、唯一的销售规格名称")
+    files, missing = {}, {}
+    directory_error = None
+    try:
+        candidates = [path for path in directory.iterdir() if path.is_file() and path.suffix] if directory.is_dir() else []
+    except OSError as error:
+        candidates = []
+        directory_error = f"SKU图片目录无法读取：{directory}；原因={error}"
+    for name in names:
+        matches = [path for path in candidates if path.stem == name]
+        reason = None
+        if directory_error:
+            reason = directory_error
+        elif not directory.is_dir():
+            reason = f"SKU图片目录不存在：{directory}"
+        elif not matches:
+            reason = f"未找到图片：{directory / (name + '.*')}"
+        elif len(matches) != 1:
+            reason = "同名图片不唯一：" + "、".join(sorted(path.name for path in matches))
+        else:
+            try:
+                if not 0 < matches[0].stat().st_size <= 20 * 1024 * 1024:
+                    reason = f"SKU图片为空或超过20MB：{matches[0].name}"
+            except OSError as error:
+                reason = f"SKU图片无法读取：{error}"
+        if reason:
+            missing[name] = reason
+            getLogger(__name__).warning("SKU图片跳过：规格=%s；缺少SKU搜索主图、商品规格图片；原因=%s", name, reason)
+        else:
+            files[name] = matches[0]
+    return SkuImageInputs(files, missing)

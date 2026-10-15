@@ -44,10 +44,12 @@ def _business_rules(operation: str) -> dict:
     """按操作限定业务窗口；参数：模块.函数；返回：允许的结构特征，不按宽泛标题放行。"""
     module = operation.split(".")[0]
     rules = {"selectors": [], "frame_sources": [], "crop": False}
-    if module in {"product_images", "product_details"}:
+    if module in {"product_images", "product_details", "product_sku_media"}:
         rules["selectors"].append('iframe[src*="sucai-selector-ng"]')
         rules["frame_sources"].append("sucai-selector-ng")
         rules["crop"] = module == "product_details"
+    if module == "product_sku_media":
+        rules["selectors"].extend([".sku-component-sku-detail-drawer", ".batch-fill-sku-image-dialog"])
     if module == "product_video":
         rules["selectors"].append('iframe[src*="videoSelector.htm"]')
         rules["frame_sources"].append("videoSelector.htm")

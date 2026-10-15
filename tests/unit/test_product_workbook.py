@@ -11,6 +11,7 @@ from ecommerce.platforms.qianniu import product_shop_category as platform
 from ecommerce.shared.config import load_settings
 from ecommerce.platforms.qianniu.product_attributes import ApplicableSceneResult
 from ecommerce.platforms.qianniu.product_shop_category import ShopCategoryResult
+from ecommerce.platforms.qianniu.product_sku_media import SkuMediaResult
 
 
 class ProductWorkbookTests(unittest.TestCase):
@@ -81,6 +82,9 @@ class ProductWorkbookTests(unittest.TestCase):
             strength_writer = stack.enter_context(patch.object(service,"select_adhesion_strength",return_value=ApplicableSceneResult(None,"默认粘度","Excel未提供")))
             specifications_writer = stack.enter_context(patch.object(service,"create_sales_specifications"))
             details_writer = stack.enter_context(patch.object(service,"fill_sku_details"))
+            media_writer = stack.enter_context(patch.object(service,"fill_sku_media", return_value=SkuMediaResult(
+                {"规格一": ["SKU搜索标题"], "规格二": ["SKU搜索标题"]},
+                {"规格一": {"SKU搜索主图": "缺图", "商品规格图片": "缺图"}, "规格二": {"SKU搜索主图": "缺图", "商品规格图片": "缺图"}})))
             fixed_price_writer = stack.enter_context(patch.object(service,"fill_fixed_price"))
             merchant_writer = stack.enter_context(patch.object(service,"fill_merchant_code"))
             discount_enabler = stack.enter_context(patch.object(service,"enable_multi_item_discount"))
@@ -103,6 +107,9 @@ class ProductWorkbookTests(unittest.TestCase):
                 {"销售规格": "规格一", "价格": "11", "数量": "10", "商家编码": "T001"},
                 {"销售规格": "规格二", "价格": "22", "数量": "20", "商家编码": "T002"}])
             self.assertIn("SKU明细=2项",result)
+            media_writer.assert_called_once_with(page,["规格一", "规格二"],unittest.mock.ANY,"测试导购标题")
+            self.assertEqual(media_writer.call_args.args[2].files,{})
+            self.assertIn("SKU补充信息已核对2项，跳过4项",result)
             fixed_price_writer.assert_called_once_with(page,"11")
             merchant_writer.assert_called_once_with(page,"00123")
             discount_enabler.assert_called_once_with(page)
@@ -213,7 +220,7 @@ class ProductWorkbookTests(unittest.TestCase):
                                      brand="无品牌", product_info_file="产品信息.xlsx")
             browser.assert_not_called()
 
-    def test_empty_guide_title_prevents_browser_start(self):
+    def test_empty_guide_title_logs_skip_and_allows_other_information(self):
         from openpyxl import load_workbook
         with tempfile.TemporaryDirectory() as root, patch.object(service, "browser_session") as browser:
             file = self.make_file(root)
@@ -221,8 +228,10 @@ class ProductWorkbookTests(unittest.TestCase):
             book["Sheet1"]["E2"] = None
             book.save(file)
             book.close()
-            with self.assertRaisesRegex(ValueError, "导购标题"):
+            browser.side_effect=RuntimeError("已到达浏览器步骤")
+            with self.assertLogs(service.__name__,level="WARNING") as logs, self.assertRaisesRegex(RuntimeError,"已到达浏览器步骤"):
                 service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", product_info_file="产品信息.xlsx")
-            browser.assert_not_called()
+            browser.assert_called_once()
+            self.assertIn("跳过基础导购标题及每个SKU的搜索标题",logs.output[0])
 

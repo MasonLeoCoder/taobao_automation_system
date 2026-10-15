@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import checkpoint, qianniu_operation, expect, page_step, choose_file_dialog
+from .verification import checkpoint, qianniu_operation, expect, page_step, choose_file_dialog, intercept_file_dialogs
 
 DETAIL = "#sell-field-descRepublicOfSell"
 CONTENT = f'{DETAIL} [class*="panel_edit_content"]'
@@ -50,19 +50,13 @@ def upload_detail_images(page: Page, files: list[Path]) -> None:
         raise NeedsAttention("详情编辑区已有内容，请先核对；不会自动覆盖或重复添加")
     expected = []
     batch_id = uuid4().hex[:12]
-    def intercept(chooser):
-        """全程接管文件选择，防止额外系统文件窗口阻塞。"""
-        logging.getLogger(__name__).debug("已拦截详情图文件选择请求")
-    page.on("filechooser", intercept)
-    try:
+    with intercept_file_dialogs(page):
         for offset in range(0, len(files), BATCH_SIZE):
             checkpoint(f"上传详情图 {offset + 1}～{min(offset + BATCH_SIZE, len(files))}")
             expected.extend(_upload_batch(page, files[offset:offset+BATCH_SIZE], batch_id, offset))
             verify_detail_order(page, expected)
             logging.getLogger(__name__).info("详情图已填入 %s/%s 张源图，共 %s 个模块，顺序核对通过",
                                              min(offset+BATCH_SIZE, len(files)), len(files), len(expected))
-    finally:
-        page.remove_listener("filechooser", intercept)
 
 
 def _upload_batch(page, files, batch_id, offset):

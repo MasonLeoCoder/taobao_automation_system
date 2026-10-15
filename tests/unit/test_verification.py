@@ -93,3 +93,45 @@ class VerificationTests(unittest.TestCase):
         with patch("builtins.input", side_effect=EOFError), patch("builtins.print"):
             with self.assertRaises(NeedsAttention):
                 prompt_manual_verification("【验证尚未通过】")
+
+    def test_file_dialog_scope_never_uploads_and_always_releases_its_own_listener(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                page, chooser = MagicMock(), MagicMock()
+                def run_scope():
+                    with v.intercept_file_dialogs(page):
+                        event, listener = page.on.call_args.args
+                        self.assertEqual(event, 'filechooser')
+                        listener(chooser)
+                        chooser.set_files.assert_not_called()
+                        page.remove_listener.assert_not_called()
+                        if fail:
+                            raise RuntimeError('上传中断')
+                if fail:
+                    with self.assertRaisesRegex(RuntimeError, '上传中断'):
+                        run_scope()
+                else:
+                    run_scope()
+                event, listener = page.on.call_args.args
+                page.remove_listener.assert_called_once_with(event, listener)
+
+    def test_sku_entry_keeps_file_dialog_scope_until_entire_operation_finishes(self):
+        from ecommerce.platforms.qianniu import product_sku_media as sku
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                page = MagicMock()
+                expected = sku.SkuMediaResult({'规格': ['SKU搜索标题']}, {})
+                def fill(*args):
+                    page.on.assert_called_once()
+                    page.remove_listener.assert_not_called()
+                    if fail:
+                        raise RuntimeError('保存中断')
+                    return expected
+                with patch.object(sku, '_fill_sku_media', side_effect=fill):
+                    if fail:
+                        with self.assertRaisesRegex(RuntimeError, '保存中断'):
+                            sku.fill_sku_media(page, ['规格'], MagicMock(), '导购标题')
+                    else:
+                        self.assertIs(sku.fill_sku_media(page, ['规格'], MagicMock(), '导购标题'), expected)
+                event, listener = page.on.call_args.args
+                page.remove_listener.assert_called_once_with(event, listener)

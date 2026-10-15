@@ -6,7 +6,7 @@ from uuid import uuid4
 from collections.abc import Callable
 
 from playwright.sync_api import Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
-from .verification import has_human_verification, wait_for_human_verification, qianniu_operation, expect, page_step, choose_file_dialog
+from .verification import has_human_verification, wait_for_human_verification, qianniu_operation, expect, page_step, choose_file_dialog, intercept_file_dialogs
 
 MAIN_GROUP = "#sell-field-mainImagesGroup"
 PICKER = 'iframe[src*="sucai-selector-ng"]:visible'
@@ -32,23 +32,13 @@ def open_main_image_picker(page: Page, position: int, aspect_ratio: str = "1:1")
 @qianniu_operation
 def upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1", on_attention: Callable[[str], None] | None = None) -> None:
     """上传并填入五张主图；参数：商品页、有序的五张图片、比例；返回：无，失败抛错。"""
-    # expect_file_chooser 的临时监听在获取文件请求后就结束了。
-    # 在整个上传步骤保留监听，防止上传组件的额外请求弹出系统窗口。
-    # 实际文件仍由下方捕获到的 FileChooser.set_files 提供。
-    def intercept_file_chooser(chooser) -> None:
-        """保持文件选择请求由 Playwright 接管；参数：请求；返回：无。"""
-        logging.getLogger(__name__).debug("已拦截主图组件的文件选择请求")
-
-    page.on("filechooser", intercept_file_chooser)
-    try:
+    with intercept_file_dialogs(page):
         if on_attention is not None:
             _upload_main_images(page, files, aspect_ratio, on_attention=on_attention)
         elif aspect_ratio == "1:1":
             _upload_main_images(page, files)
         else:
             _upload_main_images(page, files, aspect_ratio)
-    finally:
-        page.remove_listener("filechooser", intercept_file_chooser)
 
 
 def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1", on_attention: Callable[[str], None] | None = None) -> None:

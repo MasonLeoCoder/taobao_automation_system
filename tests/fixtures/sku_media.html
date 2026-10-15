@@ -1,0 +1,89 @@
+<!doctype html><meta charset="utf-8">
+<style>
+td {padding:8px;min-width:100px} input,textarea {width:150px}
+.sku-component-sku-detail-drawer,.batch-fill-sku-image-dialog {position:fixed;inset:0;background:white;z-index:5;overflow:auto}
+.batch-fill-sku-image-dialog {z-index:8} iframe {width:650px;height:480px}
+.skuImagesHocContainer-fixture {position:relative;width:70px;height:70px}
+.maskOverlay-fixture {position:absolute;inset:0}
+.empty-container,.sku-image-container {width:60px;height:60px;border:1px solid #aaa}
+.selected {outline:2px solid blue} img {width:50px;height:50px}
+.sku-item {display:inline-block;padding:8px}
+</style>
+<div id="sell-field-sku"><table><tbody></tbody></table></div>
+<script>
+window.records=[]; window.assets=[]; window.uploadCount=0; window.saveCount=0; window.openCount=0;
+window.injectUnknownOnUpload=false;
+window.extraFileRequests=false; window.extraFileRequestsSent=0;
+window.requestExtraFile=()=>{
+ if(!extraFileRequests)return;
+ const input=document.createElement('input');input.type='file';input.hidden=true;
+ document.body.append(input);extraFileRequestsSent++;input.click();
+};
+const empty='<div class="empty-container">图片</div>';
+function rowOf(record,index,detail=false){
+ const row=document.createElement('tr'); row.className='sku-table-row';
+ function cell(suffix,html){const c=document.createElement('td');c.id=index+'-'+suffix;c.innerHTML=html;row.append(c);return c}
+ const pic=cell('skuPicture','<div class="skuImagesHocContainer-fixture">'+(record.search?'<img src="'+record.search+'">':empty)+'<div class="maskOverlay-fixture"></div></div>');
+ const spec=cell('custom_-1',(record.spec?'<img src="'+record.spec+'">':empty)+'<div class="sku-unique-title-textarea"><textarea data-real="true"></textarea></div>');
+ spec.querySelector('textarea').value=record.name;
+ for(const [suffix,key] of [['skuPrice','price'],['skuStock','stock'],['skuOuterId','code']]){
+   cell(suffix,'<input>').querySelector('input').value=record[key];
+ }
+ cell('skuQuality','<span class="next-select-values"><em title="单品">单品</em></span><input role="combobox" readonly value="单品">');
+ const title=cell('skuTitle',detail?'<input><span class="content-after"><span>0/30</span></span>':'<button></button>');
+ if(detail){
+   const field=title.querySelector('input');field.value=record.title||'';
+   field.oninput=()=>{draft.title=field.value;title.querySelector('.content-after > span').textContent=Array.from(field.value).reduce((n,c)=>n+(c.charCodeAt(0)<128?1:2),0)+'/30'};
+   field.oninput(); pic.firstChild.onclick=()=>openBatch();
+   if(spec.querySelector('.empty-container'))spec.querySelector('.empty-container').onclick=()=>openPicker('spec');
+ }else{
+   title.firstChild.textContent=record.title||'去填写';title.firstChild.onclick=()=>openDetail(index);
+ }
+ cell('skuStatus','<button role="switch" aria-checked="true">启用</button>');
+ return row;
+}
+function render(){const body=document.querySelector('#sell-field-sku tbody');body.replaceChildren(...records.map((r,i)=>rowOf(r,i)))}
+window.seedRows=data=>{records=data;render()};
+function openDetail(index){
+ window.currentIndex=index; window.draft={...records[index]};openCount++;
+ const drawer=document.createElement('div');drawer.className='sku-component-sku-detail-drawer';drawer.setAttribute('role','dialog');
+ drawer.innerHTML='<div style="height:100%;overflow:auto"><h2>详情</h2><table><tbody></tbody></table><div class="button-set"><button class="save">确定</button><button class="cancel">取消</button></div></div>';
+ drawer.querySelector('tbody').append(rowOf(draft,index,true));
+ drawer.querySelector('.save').onclick=()=>{records[index]={...draft};saveCount++;drawer.remove();render();requestExtraFile()};
+ drawer.querySelector('.cancel').onclick=()=>drawer.remove();document.body.append(drawer);
+}
+function updateDraftImage(key,source){
+ draft[key]=source;const cell=document.querySelector('.sku-component-sku-detail-drawer [id$="'+(key==='search'?'-skuPicture':'-custom_-1')+'"]');
+ const old=cell.querySelector('img,.empty-container');const img=document.createElement('img');img.src=source;old.replaceWith(img);
+}
+function openBatch(){
+ const dialog=document.createElement('div');dialog.className='batch-fill-sku-image-dialog';dialog.setAttribute('role','dialog');
+ dialog.innerHTML='<h2>批量填充SKU搜索主图</h2><div class="image-section"></div><div class="sku-list"></div><button class="ok">确定</button><button class="cancel">取消</button>';
+ window.batchImages=records.map((r,i)=>i===currentIndex?draft.search:r.search);
+ records.forEach((r,i)=>{
+   const item=document.createElement('div');item.className='sku-item';const label=document.createElement('div');label.className='sku-text';label.textContent=r.name;
+   const slot=document.createElement('div');slot.className='sku-image-container'+(i===0?' selected':'');slot.dataset.index=i;
+   if(batchImages[i])slot.innerHTML='<img src="'+batchImages[i]+'">';
+   slot.onclick=()=>slot.classList.toggle('selected');item.append(label,slot);dialog.querySelector('.sku-list').append(item);
+ });
+ dialog.querySelector('.ok').onclick=()=>{
+   records.forEach((r,i)=>{if(i!==currentIndex)r.search=batchImages[i]});
+   updateDraftImage('search',batchImages[currentIndex]);dialog.remove();
+ };
+ dialog.querySelector('.cancel').onclick=()=>dialog.remove();document.body.append(dialog);
+ openPicker('search',dialog.querySelector('.image-section'));
+}
+function openPicker(kind,container){
+ const frame=document.createElement('iframe');frame.dataset.kind=kind;
+ frame.src='https://qianniu.test/sucai-selector-ng/index?kind='+kind;
+ if(kind==='spec'){frame.id='sku-param';frame.style.cssText='position:fixed;inset:60px;z-index:10;background:white';}
+ (container||document.body).append(frame);
+}
+window.chooseSearch=source=>{
+ document.querySelectorAll('.batch-fill-sku-image-dialog .selected').forEach(slot=>{batchImages[+slot.dataset.index]=source;slot.innerHTML='<img src="'+source+'">'});
+};
+window.chooseSpec=source=>{updateDraftImage('spec',source);document.querySelector('#sku-param').remove()};
+window.showUnknown=()=>{
+ document.querySelector('.sku-component-sku-detail-drawer').insertAdjacentHTML('beforeend','<div role="dialog" class="unknown" style="position:fixed;inset:0;z-index:20;background:white">未知公告，需要人工关闭</div>');
+};
+</script>

@@ -1,15 +1,16 @@
-"""商品业务流程，当前提供发布入口导航。"""
+"""单商品填写、素材匹配及提交到仓库的业务流程。"""
 from collections.abc import Callable
 from logging import getLogger
 from uuid import uuid4
 from pathlib import Path
-from ecommerce.modules.product.assets import load_main_images, load_portrait_images, load_detail_images, load_product_video
+from ecommerce.modules.product.assets import load_main_images, load_portrait_images, load_detail_images, load_product_video, load_sku_images
 from ecommerce.platforms.qianniu.product_images import upload_main_images, upload_portrait_images
 from ecommerce.modules.product.workbook import load_product_workbook
 from ecommerce.platforms.qianniu.product_attributes import select_applicable_scene, select_pet_type, select_handle_shape, select_adhesive_material, select_adhesion_strength
 from ecommerce.platforms.qianniu.product_basic import fill_product_title, fill_guide_title, fill_fixed_price, fill_merchant_code, enable_multi_item_discount, select_warehouse_listing
 from ecommerce.platforms.qianniu.product_shop_category import select_shop_categories
 from ecommerce.platforms.qianniu.product_sku import create_sales_specifications, fill_sku_details
+from ecommerce.platforms.qianniu.product_sku_media import fill_sku_media
 from ecommerce.platforms.qianniu.product_details import upload_detail_images
 from ecommerce.platforms.qianniu.product_submit import SubmissionResult, submit_product_to_warehouse, inspect_submission_result
 from ecommerce.platforms.qianniu.session import browser_session
@@ -81,10 +82,12 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
     return message
 
 
-def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None) -> str:
-    """打开发布入口；参数：配置、开启开关、就绪回调、搜索词、完整类目、品牌、1:1主图目录、3:4主图目录、人工处理回调、详情图目录；返回：结果说明。"""
+def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None) -> str:
+    """填写单商品；参数：配置、导航选项、素材、Excel、人工回调及提交开关；SKU目录默认Excel同级sku图；返回：如实填写及提交说明。"""
     if submit and (brand is None or product_info_file is None):
         raise ValueError("提交需要提供品牌和商品Excel，以完成填写并选择放入仓库")
+    if sku_images_dir is not None and product_info_file is None:
+        raise ValueError("填写SKU图片需要提供商品Excel，以按销售规格匹配")
     submission_message = None
     if keyword is not None and not keyword.strip():
         raise ValueError("搜索关键词不能为空")
@@ -132,6 +135,8 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
     guide_title = None
     sales_specifications = None
     sku_details = None
+    sku_images = None
+    sku_media_result = None
     fixed_price = None
     merchant_code = None
     if product_info_file is not None:
@@ -141,9 +146,15 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         product_info = load_product_workbook(path if path.is_absolute() else settings.root / path)
         shop_categories = product_info.shop_categories()
         product_title = product_info.text("宝贝标题")
-        guide_title = product_info.text("导购标题")
+        raw_guide_title = product_info.fields.get("导购标题")
+        if isinstance(raw_guide_title, str) and raw_guide_title.strip():
+            guide_title = raw_guide_title.strip()
+        else:
+            getLogger(__name__).warning("Excel缺少有效导购标题，跳过基础导购标题及每个SKU的搜索标题；其他信息继续填写")
         sales_specifications = product_info.sales_specifications()
         sku_details = product_info.sku_details()
+        image_directory = Path(sku_images_dir) if sku_images_dir is not None else product_info.source.parent / "sku图"
+        sku_images = load_sku_images(image_directory if image_directory.is_absolute() else settings.root / image_directory, sales_specifications)
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
     with browser_session(settings, on_attention=on_attention) as (context, page):
@@ -187,6 +198,7 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             adhesion_strength_result = select_adhesion_strength(page, product_info.fields.get("粘性强度"))
             create_sales_specifications(page, sales_specifications)
             fill_sku_details(page, sku_details)
+            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, guide_title)
             fill_fixed_price(page, fixed_price)
             fill_merchant_code(page, merchant_code)
             enable_multi_item_discount(page)
@@ -199,4 +211,6 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             submission_message = submit_with_review(settings, page, on_submit_attention)
         if on_ready is not None:
             on_ready()
-    return "已完成发布入口导航" + ("及开启按钮操作" if start else "") + ("及发品搜索" if keyword is not None else "") + ("及类目点击" if category is not None else "") + ("及品牌确认下一步" if brand is not None else "") + ("及五张1:1主图填写" if images else "") + ("及五张3:4主图填写" if portrait_images else "") + (f"及{len(detail_images)}张详情图填写" if detail_images else "") + ("及商品视频上传" if video_path else "") + (f"；店铺分类匹配：已选{len(category_result.selected)}项，跳过{len(category_result.skipped)}项" if category_result is not None else "") + ("及宝贝标题填写" if product_title else "") + ("及导购标题填写" if guide_title else "") + (f"；适用场景={scene_result.selected}" + ("（默认第一项）" if scene_result.fallback_reason else "") if scene_result is not None else "") + (f"；适用宠物类型={pet_type_result.selected}" + ("（默认第一项）" if pet_type_result.fallback_reason else "") if pet_type_result is not None else "") + (f"；握柄形态={handle_shape_result.selected}" + ("（默认第一项）" if handle_shape_result.fallback_reason else "") if handle_shape_result is not None else "") + (f"；粘面材质={adhesive_material_result.selected}" + ("（默认第一项）" if adhesive_material_result.fallback_reason else "") if adhesive_material_result is not None else "") + (f"；粘性强度={adhesion_strength_result.selected}" + ("（默认第一项）" if adhesion_strength_result.fallback_reason else "") if adhesion_strength_result is not None else "") + (f"；销售规格={len(sales_specifications)}项" if sales_specifications is not None else "") + (f"；SKU明细={len(sku_details)}项" if sku_details is not None else "") + (f"；一口价={fixed_price}元" if fixed_price is not None else "") + (f"；商品级商家编码={merchant_code}" if merchant_code is not None else "") + ("；多件优惠已启用" if product_info is not None else "") + ("；上架时间=放入仓库" if product_info is not None else "") + (f"；商品提交已确认：{submission_message}" if submission_message is not None else "；未提交发布")
+    sku_media_message = (f"；SKU补充信息已核对{sum(len(fields) for fields in sku_media_result.filled.values())}项，跳过{sum(len(fields) for fields in sku_media_result.skipped.values())}项"
+                         if sku_media_result is not None else "")
+    return "已完成发布入口导航" + ("及开启按钮操作" if start else "") + ("及发品搜索" if keyword is not None else "") + ("及类目点击" if category is not None else "") + ("及品牌确认下一步" if brand is not None else "") + ("及五张1:1主图填写" if images else "") + ("及五张3:4主图填写" if portrait_images else "") + (f"及{len(detail_images)}张详情图填写" if detail_images else "") + ("及商品视频上传" if video_path else "") + (f"；店铺分类匹配：已选{len(category_result.selected)}项，跳过{len(category_result.skipped)}项" if category_result is not None else "") + ("及宝贝标题填写" if product_title else "") + ("及导购标题填写" if guide_title else "") + (f"；适用场景={scene_result.selected}" + ("（默认第一项）" if scene_result.fallback_reason else "") if scene_result is not None else "") + (f"；适用宠物类型={pet_type_result.selected}" + ("（默认第一项）" if pet_type_result.fallback_reason else "") if pet_type_result is not None else "") + (f"；握柄形态={handle_shape_result.selected}" + ("（默认第一项）" if handle_shape_result.fallback_reason else "") if handle_shape_result is not None else "") + (f"；粘面材质={adhesive_material_result.selected}" + ("（默认第一项）" if adhesive_material_result.fallback_reason else "") if adhesive_material_result is not None else "") + (f"；粘性强度={adhesion_strength_result.selected}" + ("（默认第一项）" if adhesion_strength_result.fallback_reason else "") if adhesion_strength_result is not None else "") + (f"；销售规格={len(sales_specifications)}项" if sales_specifications is not None else "") + (f"；SKU明细={len(sku_details)}项" if sku_details is not None else "") + sku_media_message + (f"；一口价={fixed_price}元" if fixed_price is not None else "") + (f"；商品级商家编码={merchant_code}" if merchant_code is not None else "") + ("；多件优惠已启用" if product_info is not None else "") + ("；上架时间=放入仓库" if product_info is not None else "") + (f"；商品提交已确认：{submission_message}" if submission_message is not None else "；未提交发布")
