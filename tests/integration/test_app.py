@@ -100,3 +100,17 @@ class AppTests(unittest.TestCase):
                     raise RuntimeError("业务失败")
         context.close.assert_called_once()
         page.screenshot.assert_called_once()
+
+    def test_new_tab_load_timeout_is_not_mistaken_for_same_tab(self):
+        """新页已经打开但加载超时应保留错误，不能退回旧页继续。"""
+        from ecommerce.infrastructure.browser.actions import click_and_get_next_page
+        from playwright.sync_api import TimeoutError
+        context, page, element, popup = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        context.pages = [page]
+        popup.is_closed.return_value = False
+        element.click.side_effect = lambda: context.pages.append(popup)
+        popup.wait_for_load_state.side_effect = TimeoutError("新标签页加载超时")
+        with self.assertRaisesRegex(TimeoutError, "新标签页加载超时"):
+            click_and_get_next_page(context, page, element)
+        element.click.assert_called_once()
+        popup.bring_to_front.assert_not_called()

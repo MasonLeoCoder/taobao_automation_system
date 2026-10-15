@@ -2,9 +2,9 @@
 import re
 from decimal import Decimal, InvalidOperation
 from logging import getLogger
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import checkpoint, qianniu_operation
+from .verification import checkpoint, qianniu_operation, expect, page_step
 
 SKU_GROUP = "#sell-field-sku"
 DRAWER = ".sku-decouple-drawer:visible"
@@ -60,7 +60,7 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
         logger.info("销售规格已存在且数量、顺序一致：共%d项；未重复创建", len(names))
         return names
     if not drawer.count():
-        group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS)
+        page_step(lambda: group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS), completed=lambda: drawer.count() == 1)
     expect(drawer).to_have_count(1, timeout=WAIT_MS)
     custom = drawer.get_by_role("radio", name="自定义填写规格", exact=True)
     if not custom.is_checked():
@@ -68,7 +68,7 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
         standard_values = drawer.locator(".sale-props-value input").evaluate_all("els => els.map(e => e.value).filter(Boolean)")
         if standard_values:
             raise NeedsAttention("规格面板已有标准属性内容，请先核对，未切换模式")
-        custom.check(timeout=WAIT_MS)
+        page_step(lambda: custom.check(timeout=WAIT_MS), completed=custom.is_checked)
     expect(custom).to_be_checked(timeout=WAIT_MS)
     fields = drawer.get_by_placeholder("输入规格", exact=True)
     expect(fields.first).to_be_visible(timeout=WAIT_MS)
@@ -81,12 +81,12 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
             add = drawer.locator("button.add")
             expect(add).to_have_count(1, timeout=WAIT_MS)
             expect(add).to_be_enabled(timeout=WAIT_MS)
-            add.click(timeout=WAIT_MS)
+            page_step(lambda: add.click(timeout=WAIT_MS), completed=lambda: fields.count() == index + 1)
             expect(fields).to_have_count(index + 1, timeout=WAIT_MS)
         field = fields.nth(index)
         if field.input_value() != name:
-            field.fill(name, timeout=WAIT_MS)
-        field.press("Tab", timeout=WAIT_MS)
+            page_step(lambda: field.fill(name, timeout=WAIT_MS))
+        page_step(lambda: field.press("Tab", timeout=WAIT_MS), completed=lambda: field.evaluate("e=>document.activeElement!==e"))
         expect(field).to_have_value(name, timeout=WAIT_MS)
         _check_drawer_errors(drawer)
         logger.info("销售规格第%d/%d项已填写并回读核对：%s", index + 1, len(names), name)
@@ -95,7 +95,7 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
         raise NeedsAttention("确认创建前销售规格的数量或顺序不一致")
     expect(drawer.locator(".props-label")).to_have_text(f"商品规格({len(names)})", timeout=WAIT_MS)
     _check_drawer_errors(drawer)
-    drawer.get_by_role("button", name="确认创建", exact=True).click(timeout=WAIT_MS)
+    page_step(lambda: drawer.get_by_role("button", name="确认创建", exact=True).click(timeout=WAIT_MS), completed=lambda: drawer.count() == 0 and group.locator("tr.sku-table-row").count() == len(names))
     expect(drawer).to_have_count(0, timeout=WAIT_MS)
     _verify_created(group, names)
     logger.info("销售规格创建完成并核对数量、顺序：共%d项，实际规格=%r", len(names), names)
@@ -119,8 +119,8 @@ def _fill_sku_field(field, value: str, numeric: bool) -> None:
         except InvalidOperation:
             same = False
     if not same:
-        field.fill(value, timeout=WAIT_MS)
-    field.press("Tab", timeout=WAIT_MS)
+        page_step(lambda: field.fill(value, timeout=WAIT_MS))
+    page_step(lambda: field.press("Tab", timeout=WAIT_MS), completed=lambda: field.evaluate("e=>document.activeElement!==e"))
     expect(field).to_have_value(_numeric_pattern(value) if numeric else value, timeout=WAIT_MS)
 
 
@@ -131,14 +131,14 @@ def _select_sku_category(page: Page, row, category: str, name: str) -> None:
     field = cell.get_by_role("combobox")
     if label.count() != 1 or label.inner_text() != category:
         if field.get_attribute("aria-expanded") != "true":
-            field.click(timeout=WAIT_MS)
+            page_step(lambda: field.click(timeout=WAIT_MS), completed=lambda: field.get_attribute("aria-expanded") == "true")
         popup = page.locator(CATEGORY_POPUP)
         expect(popup).to_have_count(1, timeout=WAIT_MS)
         option = popup.get_by_title(category, exact=True)
         if option.count() != 1:
             getLogger(__name__).warning("SKU分类未唯一匹配：规格=%s，预期分类=%s，匹配数=%d", name, category, option.count())
             raise NeedsAttention(f"规格“{name}”未找到唯一的SKU分类“{category}”")
-        option.click(timeout=WAIT_MS)
+        page_step(lambda: option.click(timeout=WAIT_MS), completed=lambda: popup.count() == 0)
         expect(popup).to_have_count(0, timeout=WAIT_MS)
     expect(field).to_have_attribute("aria-expanded", "false", timeout=WAIT_MS)
     expect(label).to_have_count(1, timeout=WAIT_MS)
@@ -197,10 +197,10 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
         expect(row.locator(CATEGORY_CELL).get_by_role("combobox")).to_have_count(1, timeout=WAIT_MS)
     guide = group.get_by_role("button", name="我知道了", exact=True)
     if guide.count() == 1 and guide.is_visible():
-        guide.click(timeout=WAIT_MS)
+        page_step(lambda: guide.click(timeout=WAIT_MS), completed=lambda: not guide.is_visible())
     preview = page.locator(".preview-pannel.show:not(.collapsed) .header svg.expand")
     if preview.count() == 1 and preview.is_visible():
-        preview.click(timeout=WAIT_MS)
+        page_step(lambda: preview.click(timeout=WAIT_MS), completed=lambda: not preview.is_visible())
     for index, detail in enumerate(details, start=1):
         name = detail["销售规格"]
         checkpoint(f"填写SKU明细 {index}/{len(details)}：{name}")

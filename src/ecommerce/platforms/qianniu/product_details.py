@@ -3,9 +3,9 @@ import logging
 import re
 from pathlib import Path
 from uuid import uuid4
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import checkpoint, qianniu_operation
+from .verification import checkpoint, qianniu_operation, expect, page_step, choose_file_dialog
 
 DETAIL = "#sell-field-descRepublicOfSell"
 CONTENT = f'{DETAIL} [class*="panel_edit_content"]'
@@ -68,16 +68,15 @@ def upload_detail_images(page: Page, files: list[Path]) -> None:
 def _upload_batch(page, files, batch_id, offset):
     """上传一个批次并核对选中序号；返回此批次预期的详情模块地址。"""
     names = [f"detail-{batch_id}-{offset+i:04d}{p.suffix.lower()}" for i,p in enumerate(files, 1)]
-    page.locator(DETAIL).locator('[data-type="pic"]').click()
+    page_step(lambda: page.locator(DETAIL).locator('[data-type="pic"]').click(), completed=lambda: page.locator(PICKER).count() == 1)
     expect(page.locator(PICKER)).to_have_count(1, timeout=WAIT_MS)
     picker = page.frame_locator(PICKER)
-    picker.get_by_role("button", name="本地上传", exact=True).click()
-    with page.expect_file_chooser() as chooser:
-        picker.get_by_text("点击/拖拽，批量导入文件", exact=True).click()
-    chooser.value.set_files([{"name": name, "mimeType": "image/png" if p.suffix.lower()==".png" else "image/jpeg",
+    page_step(lambda: picker.get_by_role("button", name="本地上传", exact=True).click(), completed=lambda: picker.get_by_text("点击/拖拽，批量导入文件", exact=True).is_visible())
+    chooser = choose_file_dialog(page, picker.get_by_text("点击/拖拽，批量导入文件", exact=True))
+    chooser.set_files([{"name": name, "mimeType": "image/png" if p.suffix.lower()==".png" else "image/jpeg",
                              "buffer": p.read_bytes()} for p,name in zip(files,names)])
     expect(picker.get_by_text(re.compile(rf"^{len(files)}\s*个文件上传成功$"))).to_be_visible(timeout=180000)
-    picker.get_by_role("button", name="完成", exact=True).click()
+    page_step(lambda: picker.get_by_role("button", name="完成", exact=True).click(), completed=lambda: not picker.get_by_role("button", name="完成", exact=True).is_visible())
     expected = []
     for index, name in enumerate(names, 1):
         tile = picker.locator(TILE).filter(has=picker.get_by_text(name, exact=True))
@@ -91,9 +90,10 @@ def _upload_batch(page, files, batch_id, offset):
             raise NeedsAttention(f"无法核对详情图尺寸或地址：{name}")
         expected.extend(expected_segments(source.split("_320x320")[0], *map(int, match.groups())))
     expect(picker.locator('input[type="checkbox"]:checked')).to_have_count(len(files), timeout=WAIT_MS)
-    picker.get_by_role("button", name=f"确定（{len(files)}）", exact=True).click()
+    old_count = page.locator(IMAGES).count()
+    page_step(lambda: picker.get_by_role("button", name=f"确定（{len(files)}）", exact=True).click(), completed=lambda: page.locator(PICKER).count() == 0 or page.get_by_role("button", name="确认全部分割", exact=True).is_visible() or page.locator(IMAGES).count() > old_count)
     if len(expected) > len(files):
         logging.getLogger(__name__).info("此批次含长图，使用平台分割保留全部内容：%s 张源图 → %s 个模块", len(files), len(expected))
-        page.get_by_role("button", name="确认全部分割", exact=True).click(timeout=WAIT_MS)
+        page_step(lambda: page.get_by_role("button", name="确认全部分割", exact=True).click(timeout=WAIT_MS), completed=lambda: page.locator(IMAGES).count() == old_count + len(expected))
     expect(page.locator(PICKER)).to_have_count(0, timeout=WAIT_MS)
     return expected

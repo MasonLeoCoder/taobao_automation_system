@@ -2,9 +2,9 @@
 import re
 from decimal import Decimal
 from logging import getLogger
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import qianniu_operation
+from .verification import qianniu_operation, expect, page_step
 
 TITLE_GROUP = "#sell-field-title"
 GUIDE_TITLE_GROUP = "#sell-field-shopping_title"
@@ -28,8 +28,8 @@ def _fill_title(page: Page, title: str, selector: str, field_name: str, limit: i
     if current and current != title and not replace:
         raise NeedsAttention(f"页面已有不同的{field_name}，请核对后处理；没有自动覆盖")
     if current != title:
-        field.fill(title, timeout=WAIT_MS)
-    field.blur()
+        page_step(lambda: field.fill(title, timeout=WAIT_MS))
+    page_step(field.blur)
     expect(field).to_have_value(title, timeout=WAIT_MS)
     counter = group.locator(".content-after > span").first
     expect(counter).to_have_text(re.compile(rf"^\d+/{limit}$"), timeout=WAIT_MS)
@@ -70,8 +70,8 @@ def fill_fixed_price(page: Page, price: str) -> None:
         raise ValueError(f"一口价超过页面{limit}字符限制")
     current = field.input_value()
     # fill会先清除旧内容再输入，已有值也按用户要求覆盖。
-    field.fill(price, timeout=WAIT_MS)
-    field.press("Tab", timeout=WAIT_MS)
+    page_step(lambda: field.fill(price, timeout=WAIT_MS))
+    page_step(lambda: field.press("Tab", timeout=WAIT_MS), completed=lambda: field.evaluate("e=>document.activeElement!==e"))
     whole, _, fraction = price.partition(".")
     fraction = fraction.rstrip("0")
     decimal = rf"\.{re.escape(fraction)}0*" if fraction else r"(?:\.0+)?"
@@ -97,8 +97,8 @@ def fill_merchant_code(page: Page, code: str) -> None:
         raise ValueError(f"商品级商家编码超过页面{limit}字符限制")
     previous = field.input_value()
     if previous != code:
-        field.fill(code, timeout=WAIT_MS)
-    field.press("Tab", timeout=WAIT_MS)
+        page_step(lambda: field.fill(code, timeout=WAIT_MS))
+    page_step(lambda: field.press("Tab", timeout=WAIT_MS), completed=lambda: field.evaluate("e=>document.activeElement!==e"))
     expect(field).to_have_value(code, timeout=WAIT_MS)
     if limit:
         counter = group.locator(".next-input-len")
@@ -124,7 +124,7 @@ def enable_multi_item_discount(page: Page) -> None:
     checkbox = group.get_by_role("checkbox")
     expect(checkbox).to_have_count(1, timeout=WAIT_MS)
     # check确保已勾选，重复执行不会把已有勾选取消。
-    checkbox.check(timeout=WAIT_MS)
+    page_step(lambda: checkbox.check(timeout=WAIT_MS), completed=checkbox.is_checked)
     expect(checkbox).to_be_checked(timeout=WAIT_MS)
     promotion = group.get_by_role("combobox")
     discount = group.get_by_role("textbox")
@@ -144,7 +144,7 @@ def select_warehouse_listing(page: Page) -> None:
     expect(group).to_be_visible(timeout=WAIT_MS)
     warehouse = group.get_by_role("radio", name="放入仓库", exact=True)
     expect(warehouse).to_have_count(1, timeout=WAIT_MS)
-    warehouse.check(timeout=WAIT_MS)
+    page_step(lambda: warehouse.check(timeout=WAIT_MS), completed=warehouse.is_checked)
     expect(warehouse).to_be_checked(timeout=WAIT_MS)
     checked_count = group.get_by_role("radio").evaluate_all("els => els.filter(e => e.checked).length")
     if checked_count != 1:

@@ -3,8 +3,8 @@ import re
 import time
 from dataclasses import dataclass
 from logging import getLogger
-from playwright.sync_api import Page, Error as PlaywrightError, expect
-from .verification import checkpoint, qianniu_operation
+from playwright.sync_api import Page, Error as PlaywrightError
+from .verification import checkpoint, qianniu_operation, expect
 
 EDITOR = "#sell-field-title"
 WAREHOUSE_GROUP = "#sell-field-startTime"
@@ -81,7 +81,9 @@ def _wait_result(page: Page, baseline_pages: tuple[Page, ...], wait_ms: int) -> 
     deadline = time.monotonic() + wait_ms / 1000
     context = page.context
     while True:
+        before_check = time.monotonic()
         checkpoint("等待商品提交结果")
+        deadline += time.monotonic() - before_check
         candidates = [current for current in context.pages if current == page or current not in baseline_pages]
         for current in reversed(candidates):
             try:

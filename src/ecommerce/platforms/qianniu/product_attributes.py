@@ -2,9 +2,9 @@
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import qianniu_operation
+from .verification import qianniu_operation, expect, page_step
 
 ATTRIBUTE_GROUP = ".sell-component-info-wrapper-wrap.sell-component-item-prop-item"
 OPTIONS_POPUP = ".sell-o-select-popup-overlay:visible"
@@ -27,12 +27,12 @@ def _select_attribute(page: Page, field_name: str, value: Any) -> AttributeSelec
     expect(group).to_be_visible(timeout=WAIT_MS)
     field = group.get_by_role("combobox")
     if field.get_attribute("aria-expanded") != "true":
-        field.click(timeout=WAIT_MS)
+        page_step(lambda: field.click(timeout=WAIT_MS), completed=lambda: field.get_attribute("aria-expanded") == "true")
     popup = page.locator(OPTIONS_POPUP)
     expect(popup).to_have_count(1, timeout=WAIT_MS)
     search = popup.get_by_role("textbox")
     if search.count() == 1 and search.input_value():
-        search.fill("")
+        page_step(lambda: search.fill(""))
     options = popup.locator(".options-item")
     # 该控件用自定义列表而不是role=option，读取实际显示名称，不自行拼接属性值。
     expect(options.first).to_be_visible(timeout=WAIT_MS)
@@ -56,8 +56,8 @@ def _select_attribute(page: Page, field_name: str, value: Any) -> AttributeSelec
             reason = f"匹配到{len(matches)}个同名选项，无法唯一匹配"
         logger.warning("%s准备回退至第一项：Excel原值=%r；原因=%s；第一项=%s", field_name, value, reason, names[0])
     selected = names[index]
-    options.nth(index).click(timeout=WAIT_MS)
-    field.blur()
+    page_step(lambda: options.nth(index).click(timeout=WAIT_MS), completed=lambda: popup.count() == 0)
+    page_step(field.blur)
     expect(popup).to_have_count(0, timeout=WAIT_MS)
     if field.get_attribute("readonly") is not None:
         # 只读选择器把真实选中值放在标签里，搜索input的value始终为空。
@@ -124,9 +124,9 @@ def fill_item_number(page: Page, item_number: str) -> None:
     if current and current != item_number:
         raise NeedsAttention("页面已有不同的货号，请核对后处理；没有自动覆盖")
     if current != item_number:
-        field.fill(item_number, timeout=WAIT_MS)
+        page_step(lambda: field.fill(item_number, timeout=WAIT_MS))
     # Tab触发组件失焦并关闭提示列表；直接blur可能让空提示层残留。
-    field.press("Tab", timeout=WAIT_MS)
+    page_step(lambda: field.press("Tab", timeout=WAIT_MS), completed=lambda: field.get_attribute("aria-expanded") == "false")
     expect(field).to_have_attribute("aria-expanded", "false", timeout=WAIT_MS)
     expect(field).to_have_value(item_number, timeout=WAIT_MS)
     errors = group.locator(".sell-component-info-wrapper-msg-content.error:visible")

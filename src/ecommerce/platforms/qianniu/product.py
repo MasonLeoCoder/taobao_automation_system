@@ -1,13 +1,15 @@
 """千牛商品入口操作，迁移现有选择器。"""
-from .verification import qianniu_operation, checkpoint
+from .verification import qianniu_operation, checkpoint, page_step
 from logging import getLogger as get_logger
 import re
+from urllib.parse import urlsplit
 from ecommerce.infrastructure.browser.actions import (
     click_and_get_next_page,
     wait_for_page_ready,
     wait_for_visible_element,
 )
-from playwright.sync_api import BrowserContext, Page
+from playwright.sync_api import BrowserContext, Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from .popups import _dismiss_known_sku
 
 PRODUCT_NAV_SELECTORS = (
     "a[data-index='3'][href*='/home.htm/_firstmenuid_/2274']",
@@ -28,19 +30,47 @@ START_BUTTON_SELECTORS = (
 SEARCH_INPUT_SELECTOR = "input[placeholder*='可输入产品名称']"
 
 
+def _safe_location(page: Page) -> str:
+    """生成不含查询参数的诊断地址；参数：页面；返回：地址。"""
+    location = urlsplit(page.url)
+    return f"{location.scheme}://{location.netloc}{location.path}"
+
+
+def _dismiss_sku_notice(page: Page) -> bool:
+    """关闭已识别的SKU公告；参数：页面；返回：是否关闭，其他弹窗不作处理。"""
+    checkpoint("关闭SKU管理页引导公告")
+    return _dismiss_known_sku(page)
+
+
+def _navigate(context, page, element):
+    """恢复一次只读导航；参数：上下文、原页面、入口；返回：新页面，已跳转时不再点击。"""
+    baseline = tuple(context.pages)
+    original = page.url
+    def navigate():
+        opened = [current for current in context.pages if current not in baseline and not current.is_closed()]
+        if opened:
+            wait_for_page_ready(opened[0])
+            return opened[0]
+        if not page.is_closed() and page.url != original:
+            wait_for_page_ready(page)
+            return page
+        return click_and_get_next_page(context, page, element)
+    return page_step(navigate)
+
+
 @qianniu_operation
 def select_brand_and_continue(page: Page, brand: str) -> Page:
     """选择品牌并进入下一步；参数：类目页、完整品牌名称；返回：后续页面。"""
     if not brand.strip():
         raise ValueError("品牌不能为空")
-    page.get_by_placeholder("请输入", exact=True).click()
+    page_step(lambda: page.get_by_placeholder("请输入", exact=True).click(), completed=lambda: page.locator("input:focus").count() == 1)
     # 下拉框展开后，搜索输入框获得焦点，避免填写顶部的商品搜索框。
-    page.locator("input:focus").fill(brand.split("/", 1)[0])
-    page.get_by_text(brand, exact=True).click()
+    page_step(lambda: page.locator("input:focus").fill(brand.split("/", 1)[0]))
+    page_step(lambda: page.get_by_text(brand, exact=True).click(), completed=lambda: page.get_by_placeholder("请输入", exact=True).get_attribute("aria-expanded") == "false")
     get_logger(__name__).info("已选择品牌：%s", brand)
     next_button = page.get_by_role("button", name=re.compile(r"确认\s*[,，]\s*下一步"))
-    next_page = click_and_get_next_page(page.context, page, next_button)
-    wait_for_page_ready(next_page)
+    next_page = _navigate(page.context, page, next_button)
+    page_step(lambda: wait_for_page_ready(next_page))
     get_logger(__name__).info("已点击确认下一步，等待检查后续页面")
     return next_page
 
@@ -53,8 +83,9 @@ def select_publish_category(page: Page, category: str) -> None:
         raise ValueError("请提供以 > 分隔的完整类目路径")
     # 按完整路径唯一匹配，避免同名末级类目或搜索排序变化导致误选。
     pattern = re.compile(r"^\s*" + r"\s*>?\s*".join(re.escape(part) for part in parts) + r"\s*$")
-    page.get_by_text(pattern).click()
-    wait_for_page_ready(page)
+    original_url = page.url
+    page_step(lambda: page.get_by_text(pattern).click(), completed=lambda: page.url != original_url)
+    page_step(lambda: wait_for_page_ready(page))
     get_logger(__name__).info("已点击类目：%s", " > ".join(parts))
 
 
@@ -65,13 +96,22 @@ def search_publish_products(page: Page, keyword: str) -> None:
     if not keyword:
         raise ValueError("搜索关键词不能为空")
     logger = get_logger(__name__)
+    logger.info("准备搜索发品：关键词=%s；操作页面=%s", keyword, _safe_location(page))
     search_input = page.locator(SEARCH_INPUT_SELECTOR)
-    search_input.wait_for(state="visible")
-    search_input.fill(keyword)
-    page.get_by_role("button", name="搜索", exact=True).click()
+    try:
+        page_step(lambda: search_input.wait_for(state="visible"))
+    except PlaywrightTimeoutError:
+        try:
+            controls = page.locator("input[placeholder], textarea[placeholder]").evaluate_all("els=>els.slice(0,12).map(e=>({tag:e.tagName,placeholder:e.getAttribute('placeholder'),visible:!!e.getClientRects().length}))")
+            logger.error("发布搜索框定位超时：操作页=%s；打开的标签页=%s；主页面输入控件=%s；框架数量=%d", _safe_location(page), [_safe_location(current) for current in page.context.pages], controls, len(page.frames))
+        except PlaywrightError:
+            logger.warning("发布搜索框超时诊断失败，页面可能正在跳转或已经关闭")
+        raise
+    page_step(lambda: search_input.fill(keyword))
+    page_step(lambda: page.get_by_role("button", name="搜索", exact=True).click(), completed=lambda: page.get_by_text("全部", exact=True).is_visible())
     # 初始类目选择页没有“全部”结果标签，等待搜索结果视图出现。
-    page.get_by_text("全部", exact=True).wait_for(state="visible")
-    page.get_by_text("我的商品", exact=True).first.wait_for(state="visible")
+    page_step(lambda: page.get_by_text("全部", exact=True).wait_for(state="visible"))
+    page_step(lambda: page.get_by_text("我的商品", exact=True).first.wait_for(state="visible"))
     logger.info("发品搜索结果页已显示，等待下一步操作")
 
 
@@ -87,12 +127,12 @@ def click_product_nav(context: BrowserContext, page: Page) -> Page:
         Page：点击后继续操作的页面对象。
     """
     logger = get_logger(__name__)
-    wait_for_page_ready(page)
+    page_step(lambda: wait_for_page_ready(page))
 
-    product_nav = wait_for_visible_element(
+    product_nav = page_step(lambda: wait_for_visible_element(
         page, PRODUCT_NAV_SELECTORS, element_name="千牛工作台商品入口"
-    )
-    next_page = click_and_get_next_page(context, page, product_nav)
+    ))
+    next_page = _navigate(context, page, product_nav)
     logger.info("已点击千牛工作台商品入口")
     return next_page
 
@@ -108,19 +148,18 @@ def click_publish_product(context: BrowserContext, page: Page) -> Page:
         Page：点击后继续操作的页面对象。
     """
     logger = get_logger(__name__)
-    wait_for_page_ready(page)
+    page_step(lambda: wait_for_page_ready(page))
+    _dismiss_sku_notice(page)
 
     # 点击商品菜单后鼠标仍停在菜单上，会触发悬浮菜单并遮住侧栏入口。
     # 先移到页面边缘，等待浮层收起，再查找侧栏的发布链接。
     page.mouse.move(0, 0)
-    page.locator(".next-overlay-wrapper.opened:visible").wait_for(
-        state="hidden", timeout=5_000
-    )
 
-    publish_product = wait_for_visible_element(
+    publish_product = page_step(lambda: wait_for_visible_element(
         page, PUBLISH_PRODUCT_SELECTORS, element_name="发布商品入口"
-    )
-    next_page = click_and_get_next_page(context, page, publish_product)
+    ))
+    _dismiss_sku_notice(page)
+    next_page = _navigate(context, page, publish_product)
     logger.info("已点击商品菜单中的发布商品入口")
     return next_page
 
@@ -136,10 +175,10 @@ def click_start_button(page: Page) -> None:
         无。
     """
     logger = get_logger(__name__)
-    wait_for_page_ready(page)
+    page_step(lambda: wait_for_page_ready(page))
 
-    start_button = wait_for_visible_element(
+    start_button = page_step(lambda: wait_for_visible_element(
         page, START_BUTTON_SELECTORS, element_name="发布商品页面的开启按钮"
-    )
-    start_button.click()
+    ))
+    page_step(start_button.click, completed=lambda: not start_button.is_visible())
     logger.info("已点击发布商品页面的开启按钮")

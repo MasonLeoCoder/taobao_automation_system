@@ -1,6 +1,8 @@
 """共用浏览器等待和元素查找方法。"""
 import random
 import time
+from logging import getLogger
+from urllib.parse import urlsplit
 from playwright.sync_api import BrowserContext, Page, ElementHandle, Locator, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 PAGE_TIMEOUT_MS = 60000
 SHORT_TIMEOUT_MS = 5000
@@ -134,17 +136,45 @@ def click_and_get_next_page(context: BrowserContext, page: Page, element) -> Pag
     返回：
         Page：如果点击打开新页面则返回新页面，否则返回原页面。
     """
-    clicked = False
+    baseline_pages = tuple(context.pages)
+    original_url = page.url
+    opened_pages = []
+    opens_new_tab = element.get_attribute("target") == "_blank"
+
+    def record_page(opened):
+        """只记录页面事件；参数：新页；返回：无，不在事件中操作页面。"""
+        opened_pages.append(opened)
+
+    def safe_location(current):
+        """生成不含查询参数的位置；参数：页面；返回：诊断地址。"""
+        location = urlsplit(current.url)
+        return f"{location.scheme}://{location.netloc}{location.path}"
+
+    # 先监听，再点击；等待新页的时限从点击返回后计算，避免人工验证/可操作性检查耗尽时限。
+    context.on("page", record_page)
     try:
-        with context.expect_page(timeout=SHORT_TIMEOUT_MS) as page_info:
-            element.click()
-            clicked = True
-        next_page = page_info.value
-        next_page.wait_for_load_state("domcontentloaded", timeout=PAGE_TIMEOUT_MS)
-        next_page.bring_to_front()
-        return next_page
-    except PlaywrightTimeoutError:
-        if not clicked:
-            raise
-        page.wait_for_timeout(1_000)
-        return page
+        element.click()
+        deadline = time.monotonic() + SHORT_TIMEOUT_MS / 1000
+        while True:
+            candidates = list(dict.fromkeys(
+                current for current in (*opened_pages, *context.pages)
+                if current not in baseline_pages and not current.is_closed()
+            ))
+            if candidates:
+                next_page = candidates[0]
+                # 加载超时必须向上抛出，不能捕获后误判成同标签页跳转。
+                next_page.wait_for_load_state("domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+                next_page.bring_to_front()
+                getLogger(__name__).info("点击后已接管新标签页：%s", safe_location(next_page))
+                return next_page
+            if time.monotonic() >= deadline:
+                # 千牛会拦截带_blank的链接并在原页进行SPA跳转，地址变化也是明确的导航证据。
+                if opens_new_tab and page.url == original_url:
+                    raise PlaywrightTimeoutError(f"点击目标要求打开新标签页，但点击结束后{SHORT_TIMEOUT_MS}ms内未检测到；原页面：{safe_location(page)}")
+                getLogger(__name__).info("点击后继续使用原标签页：%s", safe_location(page))
+                return page
+            if page.is_closed():
+                raise PlaywrightTimeoutError("原页面已关闭，尚未确认点击后打开的新标签页")
+            page.wait_for_timeout(100)
+    finally:
+        context.remove_listener("page", record_page)

@@ -3,9 +3,9 @@ import logging
 import re
 from pathlib import Path
 from uuid import uuid4
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import checkpoint, qianniu_operation
+from .verification import checkpoint, qianniu_operation, expect, page_step
 
 VIDEO_GROUP = "#sell-field-auctionVideos"
 VIDEO_PICKER = 'iframe[src*="videoSelector.htm"]:visible'
@@ -19,11 +19,11 @@ def _open_picker(page: Page) -> None:
     if not group.is_visible():
         toggle = page.get_by_text("展开收起项", exact=True).locator("..").get_by_role("switch").first
         if toggle.get_attribute("aria-checked") != "true":
-            toggle.click(timeout=WAIT_MS)
+            page_step(lambda: toggle.click(timeout=WAIT_MS), completed=lambda: toggle.get_attribute("aria-checked") == "true")
     expect(group).to_be_visible(timeout=WAIT_MS)
     if group.locator("img.cover").count():
         raise NeedsAttention("商品视频栏已有视频，请先核对；不会自动覆盖或重复添加")
-    group.get_by_text("上传视频", exact=True).click(timeout=WAIT_MS)
+    page_step(lambda: group.get_by_text("上传视频", exact=True).click(timeout=WAIT_MS), completed=lambda: page.locator(VIDEO_PICKER).count() == 1)
     expect(page.locator(VIDEO_PICKER)).to_have_count(1, timeout=WAIT_MS)
 
 
@@ -38,12 +38,12 @@ def _select_video(page: Page, asset_name: str) -> None:
     checkbox = tile.locator('input[type="checkbox"]')
     if not checkbox.is_checked():
         # 此选择框只在鼠标悬停时显示，先悬停，再正常点击。
-        tile.hover(timeout=WAIT_MS)
-        tile.locator("label").click(timeout=WAIT_MS)
+        page_step(lambda: tile.hover(timeout=WAIT_MS))
+        page_step(lambda: tile.locator("label").click(timeout=WAIT_MS), completed=checkbox.is_checked)
     expect(checkbox).to_be_checked(timeout=WAIT_MS)
     expect(picker.locator('input[type="checkbox"]:checked')).to_have_count(1, timeout=WAIT_MS)
-    picker.get_by_role("button", name=re.compile(r"^确认上传\s*\(\s*1\s*\)$")).click(timeout=WAIT_MS)
-    expect(page.locator(VIDEO_PICKER)).to_have_count(0, timeout=WAIT_MS)
+    page_step(lambda: picker.get_by_role("button", name=re.compile(r"^确认上传\s*\(\s*1\s*\)$")).click(timeout=WAIT_MS), completed=lambda: page.locator(VIDEO_PICKER).count() == 0 or page.locator(VIDEO_GROUP).locator("img.cover").count() == 1)
+    expect(page.locator(VIDEO_PICKER), "等待视频窗口关闭").to_have_count(0, timeout=WAIT_MS)
     cover = page.locator(VIDEO_GROUP).locator("img.cover")
     expect(cover).to_have_count(1, timeout=WAIT_MS)
     expect(cover).to_have_attribute("src", poster, timeout=WAIT_MS)
@@ -69,6 +69,6 @@ def upload_product_video(page: Page, file: Path) -> None:
     expect(picker.get_by_text("1 个文件已上传", exact=True)).to_be_visible(timeout=180000)
     expect(picker.get_by_text("发布成功", exact=True)).to_be_visible(timeout=WAIT_MS)
     # 此处“发布成功”是素材上传组件状态，商品仍未提交。
-    picker.get_by_role("button", name="完成", exact=True).click(timeout=WAIT_MS)
+    page_step(lambda: picker.get_by_role("button", name="完成", exact=True).click(timeout=WAIT_MS), completed=lambda: not picker.get_by_role("button", name="完成", exact=True).is_visible())
     checkpoint("选择已上传商品视频")
     _select_video(page, asset_name)

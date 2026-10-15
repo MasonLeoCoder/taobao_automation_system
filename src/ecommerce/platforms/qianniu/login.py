@@ -1,5 +1,5 @@
 """千牛登录页面操作，业务流程由账号模块编排。"""
-from .verification import qianniu_operation, checkpoint
+from .verification import qianniu_operation, checkpoint, page_step
 import time
 from logging import getLogger as get_logger
 from urllib.parse import urlsplit
@@ -73,7 +73,9 @@ def check_login(page: Page) -> bool:
                 return False
             deadline = time.monotonic() + PAGE_TIMEOUT_MS / 1000
             while time.monotonic() < deadline:
+                before_check = time.monotonic()
                 checkpoint("检查登录状态")
+                deadline += time.monotonic() - before_check
                 if _is_authenticated(page):
                     logger.info("已确认千牛工作台登录：%s", _safe_location(page))
                     return True
@@ -97,9 +99,9 @@ def login_with_qrcode(page: Page) -> Page:
     # 某些情况下登录入口自动跳回工作台，无需再次寻找二维码按钮。
     if _is_authenticated(page):
         return page
-    qrcode_button = wait_for_selector_any_frame(page, QRCODE_SELECTOR, state="visible", timeout=PAGE_TIMEOUT_MS)
+    qrcode_button = page_step(lambda: wait_for_selector_any_frame(page, QRCODE_SELECTOR, state="visible", timeout=PAGE_TIMEOUT_MS))
     checkpoint("切换扫码登录")
-    qrcode_button.click()
+    page_step(qrcode_button.click, completed=lambda: _is_authenticated(page))
     get_logger(__name__).info("请扫码登录，等待识别千牛工作台；超时后不会自动刷新并重复扫码")
     authenticated = _wait_for_login_success(page)
     get_logger(__name__).info("扫码登录成功：%s", _safe_location(authenticated))
@@ -111,7 +113,9 @@ def _wait_for_login_success(page: Page) -> Page:
     context = page.context
     deadline = time.monotonic() + SCAN_TIMEOUT_MS / 1000
     while time.monotonic() < deadline:
+        before_check = time.monotonic()
         checkpoint("等待扫码登录")
+        deadline += time.monotonic() - before_check
         candidates = [candidate for candidate in context.pages if not candidate.is_closed()]
         for candidate in candidates:
             if _is_authenticated(candidate):

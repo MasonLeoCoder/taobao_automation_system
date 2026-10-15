@@ -2,8 +2,8 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from logging import getLogger
-from playwright.sync_api import Page, expect
-from .verification import qianniu_operation, checkpoint
+from playwright.sync_api import Page
+from .verification import qianniu_operation, checkpoint, expect, page_step
 
 SHOP_CATEGORY = "#sell-field-shopcat"
 CATEGORY_TREE = 'ul.sell-shop-category-tree-select[role="tree"]:visible'
@@ -29,11 +29,11 @@ def select_shop_categories(page: Page, names: Sequence[str]) -> ShopCategoryResu
     if not group.is_visible():
         toggle = page.get_by_text("展开收起项", exact=True).locator("..").get_by_role("switch").first
         if toggle.get_attribute("aria-checked") != "true":
-            toggle.click(timeout=WAIT_MS)
+            page_step(lambda: toggle.click(timeout=WAIT_MS), completed=lambda: toggle.get_attribute("aria-checked") == "true")
     expect(group).to_be_visible(timeout=WAIT_MS)
     trigger = group.get_by_role("combobox")
     if trigger.get_attribute("aria-expanded") != "true":
-        trigger.click(timeout=WAIT_MS)
+        page_step(lambda: trigger.click(timeout=WAIT_MS), completed=lambda: trigger.get_attribute("aria-expanded") == "true")
     tree = page.locator(CATEGORY_TREE)
     expect(tree).to_have_count(1, timeout=WAIT_MS)
     selected = []
@@ -58,7 +58,7 @@ def select_shop_categories(page: Page, names: Sequence[str]) -> ShopCategoryResu
                 elif not checkbox.is_enabled():
                     reason = "分类当前不可选择"
                 else:
-                    item.locator("label").click(timeout=WAIT_MS)
+                    page_step(lambda: item.locator("label").click(timeout=WAIT_MS), completed=checkbox.is_checked)
                     expect(checkbox).to_be_checked(timeout=WAIT_MS)
                     selected.append(name)
                     logger.info("店铺分类已选择并核对：%s", name)
@@ -70,7 +70,7 @@ def select_shop_categories(page: Page, names: Sequence[str]) -> ShopCategoryResu
             expect(tree.get_by_role("treeitem", name=name, exact=True).get_by_role("checkbox", name=name, exact=True)).to_be_checked(timeout=WAIT_MS)
     finally:
         # 不删除页面原有分类；关闭下拉框方便后续步骤继续。
-        trigger.press("Escape")
+        page_step(lambda: trigger.press("Escape"), completed=lambda: trigger.get_attribute("aria-expanded") == "false")
     expect(trigger).to_have_attribute("aria-expanded", "false", timeout=WAIT_MS)
     logger.info("店铺分类匹配完成：请求%s项，已选%s项，跳过%s项；已选=%s；跳过=%s",
                 len(names), len(selected), len(skipped), selected, skipped)
