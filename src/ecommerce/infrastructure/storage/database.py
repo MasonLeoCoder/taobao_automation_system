@@ -66,7 +66,15 @@ def finish_task(path: Path, task_id: str, status: str, message: str) -> None:
 def recover_interrupted(path: Path) -> None:
     """在持有店铺锁时标记遗留任务；参数：数据库路径；返回：无。"""
     with connect(path) as connection:
-        connection.execute("UPDATE tasks SET status='needs_attention',finished_at=?,message=? WHERE status='running'", (now(), "上次执行异常中断，请核对页面结果后重新运行"))
+        connection.execute("UPDATE tasks SET status='needs_attention',finished_at=?,message=? WHERE status='running' OR (status='needs_attention' AND finished_at IS NULL)", (now(), "上次执行异常中断，请核对页面结果后重新运行"))
+
+
+def update_task_progress(path: Path, task_id: str, status: str, message: str) -> None:
+    """更新仍在执行的任务，不写入结束时间。"""
+    if status not in {"running", "needs_attention"}:
+        raise ValueError("执行中状态只能是 running 或 needs_attention")
+    with connect(path) as connection:
+        connection.execute("UPDATE tasks SET status=?,message=? WHERE id=? AND finished_at IS NULL", (status, message, task_id))
 
 
 def list_tasks(path: Path, limit: int = 50) -> list[dict]:

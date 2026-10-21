@@ -1,5 +1,5 @@
 """CLI 公共人工验证交互。"""
-from ecommerce.shared.exceptions import NeedsAttention
+from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 
 
 def _play_attention_sound() -> None:
@@ -43,5 +43,28 @@ def prompt_submission_review(message: str) -> None:
         if feedback in {"继续", "已完成", "完成", "continue"}:
             return
         print("尚未收到检查完成反馈，保持浏览器打开并等待。", flush=True)
+
+
+def prompt_taobao_attention(message: str) -> str:
+    """淘宝严格反馈：明确继续或停止；原生弹窗单独决定确认或取消。"""
+    native = message.startswith(("【需要人工决定原生弹窗】", "【原生弹窗尚未决定】"))
+    if message.startswith(("【需要人工验证】", "【需要人工决定原生弹窗】")):
+        _play_attention_sound()
+    print(message, flush=True)
+    while True:
+        try:
+            from ecommerce.platforms.taobao.verification import active_guard
+            guard = active_guard()
+            prompt = "输入“确认”/“取消”（或“停止”结束任务）：" if native else "处理完成后输入“继续”（或“停止”结束任务）："
+            feedback = guard.read_feedback(prompt, allowed={"确认", "取消"} if native else {"继续"}) if guard is not None else input(prompt).strip()
+        except EOFError as error:
+            raise NeedsAttention("淘宝人工反馈输入通道已关闭，未收到继续指令") from error
+        if feedback == "停止":
+            raise TaskStopped("用户已停止淘宝任务，未继续后续操作")
+        if native and feedback in {"确认", "取消"}:
+            return feedback
+        if not native and feedback == "继续":
+            return feedback
+        print("未收到有效指令，保持暂停。", flush=True)
 
 

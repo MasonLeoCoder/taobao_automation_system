@@ -1,0 +1,583 @@
+{
+  "tag": "div",
+  "attrs": {
+    "class": "tbpc-col search-content-col tbpc-col-lg-12 tbpc-col-xl-12 tbpc-col-xxl-10 tbpc-col-xxxl-col_7 tbpc-col-xxxxl-col_7 tbpc-col-xxxxxl-col_7 tbpc-col tbpc-col-horizon-8 search-content-col tbpc-col-lg-12 tbpc-col-xl-12 tbpc-col-xxl-10 tbpc-col-xxxl-col_7 tbpc-col-xxxxl-col_7 tbpc-col-xxxxxl-col_7"
+  },
+  "children": [
+    {
+      "tag": "a",
+      "attrs": {
+        "class": "\n              doubleCardWrapperAdapt--mEcC7olq \n               \n              \n            ",
+        "target": "_blank",
+        "id": "item_id_1007759256325",
+        "style": "overflow: visible; transition: none;",
+        "href": "https://click.simba.taobao.com/cc_im?id=1007759256325&a=skuId%3D6001949700618"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "attrs": {
+            "class": "doubleCard--gO3Bz6bu",
+            "style": ""
+          },
+          "children": [
+            {
+              "tag": "div",
+              "attrs": {
+                "class": "mainPicAndDesc--Q5PYrWux"
+              },
+              "children": [
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "class": "imageSwitch--fJ9SrtEb",
+                    "style": "position: absolute; pointer-events: none; visibility: hidden; opacity: 0;"
+                  },
+                  "children": [
+                    {
+                      "tag": "img",
+                      "attrs": {
+                        "class": "mainImg--sPh_U37m",
+                        "src": "http://img.alicdn.com/img/O1CN01e8XvVGqQGTF1chua_!!4611686018427381850-0-item_pic.jpg_580x580q90.jpg_.webp"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "hoverWrapper--n7nBxYOi"
+                      },
+                      "children": [
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "hoverCell--ULGjJlG9"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "hoverCell--ULGjJlG9"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "hoverCell--ULGjJlG9"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "hoverCell--ULGjJlG9"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "hoverCell--ULGjJlG9"
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "tag": "img",
+                      "attrs": {
+                        "class": "mainP4pPic--RlLduUci",
+                        "src": "https://img.alicdn.com/imgextra/i3/O1CN01njPHBL1iDAvy7mi2J_!!6000000004378-2-tps-42-27.png"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "pageHoaderWrapper--leVWCzcO"
+                      },
+                      "children": [
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "holder--TIypCJLt holderActive--l_GvjhcL",
+                            "style": "border: 1px solid rgba(0, 0, 0, 0.16);"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "holder--TIypCJLt",
+                            "style": "border: 1px solid rgba(0, 0, 0, 0.16);"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "holder--TIypCJLt",
+                            "style": "border: 1px solid rgba(0, 0, 0, 0.16);"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "holder--TIypCJLt",
+                            "style": "border: 1px solid rgba(0, 0, 0, 0.16);"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "holder--TIypCJLt",
+                            "style": "border: 1px solid rgba(0, 0, 0, 0.16);"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "class": " mainPicAdaptWrapper--V_ayd2hD",
+                    "style": ""
+                  },
+                  "children": [
+                    {
+                      "tag": "img",
+                      "attrs": {
+                        "src": "http://img.alicdn.com/img/O1CN01e8XvVGqQGTF1chua_!!4611686018427381850-0-item_pic.jpg_580x580q90.jpg_.webp",
+                        "height": "240",
+                        "width": "240",
+                        "class": "mainPic--Ds3X7I8z"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "img",
+                      "attrs": {
+                        "class": "mainP4pPic--jbnK3QAX",
+                        "src": "https://img.alicdn.com/imgextra/i3/O1CN01njPHBL1iDAvy7mi2J_!!6000000004378-2-tps-42-27.png"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "mask--lrhhnSHw adaptModCard_Img_Mask"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "hoverLayer--xr1HvOsl"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "class": "\n        descWrapper--DYCP0aQA \n        adaptMod--_cr4n9GN\n        type1Wrapper--KqtgP6BJ\n      ",
+                    "style": "margin-top: 8px;"
+                  },
+                  "children": [
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "title--ASSt27UY ",
+                        "title": "粘毛器滚筒长杆家用滚刷替换可撕式粘黏床上扫地板灰尘吸头发神器",
+                        "style": "font-size: 14px; line-height: 20px; height: 40px; -webkit-line-clamp: 2; color: rgba(9, 9, 10, 0.92);"
+                      },
+                      "children": [
+                        {
+                          "tag": "img",
+                          "attrs": {
+                            "class": "iconPic--NPt1MCjW",
+                            "src": "https://img.alicdn.com/i1/O1CN01D4FgcBoN5gC0L9Bi_!!4611686018427384654-2-atmosphere_center_image_storag-merlin-168-42.png",
+                            "style": "padding-left: 0px; height: 14px;"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "span",
+                          "attrs": {
+                            "class": "",
+                            "style": "font-size: 14px;"
+                          },
+                          "children": [
+                            {
+                              "tag": "span",
+                              "attrs": {
+                                "style": "color: rgb(255, 98, 0);"
+                              },
+                              "children": [
+                                "粘毛器"
+                              ]
+                            },
+                            "滚筒长杆家用滚刷替换可撕式粘黏床上扫地板灰尘吸头发神器"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "class": "\n      container--Mse0invQ\n      newContainer--GYTLiobE\n      adaptMod--RP02v3Fi\n      type1Container--n1uFD3yz\n      ",
+                    "style": "height: 24px; margin-top: 4px; margin-bottom: 4px;"
+                  },
+                  "children": [
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "structuredWrapper--M1po5RF8 \n        \n        type1StructuredWrapper--BkDfiFyd",
+                        "style": "height: 24px; margin-top: 0px;"
+                      },
+                      "children": [
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "rankTitleWrapper--AeHheU61 abstractWrapper2025--SgfJFx5R\n            type1AbstractWrapper--S8uiHpc4",
+                            "style": "background-color: rgb(255, 245, 235); font-weight: 500;"
+                          },
+                          "children": [
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "rankTitle--yz_cx9ah",
+                                "style": "line-height: 24px;"
+                              },
+                              "children": [
+                                "强粘宠物粘毛器热卖"
+                              ]
+                            },
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "rankSubTitle--Pm6C_LDr",
+                                "style": "line-height: 24px;"
+                              },
+                              "children": [
+                                "榜·第7名"
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "abstractWrapper--whLX5va5 abstractWrapper2025--SgfJFx5R\n            type1AbstractWrapper--S8uiHpc4",
+                            "style": "height: 24px; padding: 0px 6px;"
+                          },
+                          "children": [
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "abstractInnerWrapper--RpzRpQI1",
+                                "style": "height: 100%;"
+                              },
+                              "children": [
+                                {
+                                  "tag": "div",
+                                  "attrs": {
+                                    "class": "descBox--RunOO4S3",
+                                    "style": "margin-right: 0px;"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "span",
+                                      "attrs": {
+                                        "class": "text--eAiSCa_r",
+                                        "style": "color: rgba(49, 49, 51, 0.55);"
+                                      },
+                                      "children": [
+                                        "粘毛滚"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "abstractInnerWrapper--RpzRpQI1",
+                                "style": "height: 100%;"
+                              },
+                              "children": [
+                                {
+                                  "tag": "div",
+                                  "attrs": {
+                                    "class": "abstractDivider--WfjEb5gi"
+                                  },
+                                  "children": []
+                                },
+                                {
+                                  "tag": "div",
+                                  "attrs": {
+                                    "class": "descBox--RunOO4S3",
+                                    "style": "margin-right: 0px;"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "span",
+                                      "attrs": {
+                                        "class": "text--eAiSCa_r",
+                                        "style": "color: rgba(49, 49, 51, 0.55);"
+                                      },
+                                      "children": [
+                                        "塑料"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "abstractInnerWrapper--RpzRpQI1",
+                                "style": "height: 100%;"
+                              },
+                              "children": [
+                                {
+                                  "tag": "div",
+                                  "attrs": {
+                                    "class": "abstractDivider--WfjEb5gi"
+                                  },
+                                  "children": []
+                                },
+                                {
+                                  "tag": "div",
+                                  "attrs": {
+                                    "class": "descBox--RunOO4S3",
+                                    "style": "margin-right: 0px;"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "span",
+                                      "attrs": {
+                                        "class": "text--eAiSCa_r",
+                                        "style": "color: rgba(49, 49, 51, 0.55);"
+                                      },
+                                      "children": [
+                                        "中国大陆"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "class": "priceWrapper--dBtPZ2K1 adaptMod--uU2wpGzc\n        type1PriceWrapper--BPjNJfGo",
+                    "style": "margin-top: 0px; margin-bottom: 0px;"
+                  },
+                  "children": [
+                    {
+                      "tag": "div",
+                      "attrs": {
+                        "class": "innerNormalPriceWrapper--tlX08mH1"
+                      },
+                      "children": [
+                        {
+                          "tag": "span",
+                          "attrs": {
+                            "class": "unit--D3KGoZe2"
+                          },
+                          "children": [
+                            "¥"
+                          ]
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "innerPriceWrapper--aAJhHXD4"
+                          },
+                          "children": [
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "priceInt--yqqZMJ5a"
+                              },
+                              "children": [
+                                "13"
+                              ]
+                            },
+                            {
+                              "tag": "div",
+                              "attrs": {
+                                "class": "priceFloat--XpixvyQ1"
+                              },
+                              "children": [
+                                ".9"
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "span",
+                          "attrs": {
+                            "class": "priceDesc--jykuwuhx",
+                            "style": "visibility: visible; position: relative;"
+                          },
+                          "children": [
+                            "优惠后"
+                          ]
+                        },
+                        {
+                          "tag": "span",
+                          "attrs": {
+                            "class": "realSales--XZJiepmt"
+                          },
+                          "children": [
+                            "本月行业热销"
+                          ]
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "procity--wlcT2xH9"
+                          },
+                          "children": [
+                            {
+                              "tag": "span",
+                              "attrs": {},
+                              "children": [
+                                "浙江"
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "div",
+                          "attrs": {
+                            "class": "procity--wlcT2xH9"
+                          },
+                          "children": [
+                            {
+                              "tag": "span",
+                              "attrs": {},
+                              "children": [
+                                "金华"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "div",
+              "attrs": {
+                "class": "subIconWrapper--Vl8zAdQn adaptMod--txLgeDX4\n        type1SubIconWrapper--T1XUsjyC\n      ",
+                "title": "直接下单享优惠 包邮",
+                "style": "margin-top: 0px;"
+              },
+              "children": [
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "style": "display: flex; align-items: center; justify-content: center; margin-right: 0px; margin-bottom: 0px; vertical-align: middle; line-height: 22px; border-radius: 4px; height: 16px; font-size: 12px; background-color: rgb(255, 255, 255); border-color: transparent;"
+                  },
+                  "children": [
+                    {
+                      "tag": "span",
+                      "attrs": {
+                        "style": "font-family: \"PingFang SC\"; color: rgb(255, 80, 0);"
+                      },
+                      "children": [
+                        "直接下单享优惠"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "style": "display: flex; align-items: center; justify-content: center; margin-right: 0px; margin-bottom: 0px; vertical-align: middle; line-height: 22px; border-radius: 4px; height: 16px; font-size: 12px; background-color: transparent; border-color: transparent;"
+                  },
+                  "children": [
+                    {
+                      "tag": "span",
+                      "attrs": {
+                        "style": "font-family: \"PingFang SC\"; color: rgb(128, 128, 128);"
+                      },
+                      "children": [
+                        "包邮"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "div",
+              "attrs": {
+                "class": "shopInfo--Kmh31boz adaptMod--JjSKtdhD",
+                "style": "background: rgba(31, 31, 51, 0.08);"
+              },
+              "children": [
+                {
+                  "tag": "a",
+                  "attrs": {
+                    "class": "shopName--hdF527QA ",
+                    "target": "_blank"
+                  },
+                  "children": [
+                    {
+                      "tag": "span",
+                      "attrs": {
+                        "class": "shopNameText--DmtlsDKm"
+                      },
+                      "children": [
+                        "爱格智汇家家居旗舰店"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "attrs": {
+                    "class": "wwWrap--hD8_39lb"
+                  },
+                  "children": [
+                    {
+                      "tag": "img",
+                      "attrs": {
+                        "class": "wwIcon--F4w6DDeR",
+                        "src": "https://img.alicdn.com/imgextra/i1/O1CN01mEIcPn1pzuSywgxrG_!!6000000005432-2-tps-80-80.png"
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

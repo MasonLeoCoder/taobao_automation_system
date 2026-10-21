@@ -33,21 +33,24 @@ def save_session(context, settings: Settings) -> None:
 
 
 @contextmanager
-def browser_session(settings: Settings):
-    """为一次任务复用一个浏览器；参数：配置；返回：上下文、页面。"""
+def browser_session(settings: Settings, *, restore_state: bool = True, channel: str | None = None):
+    """为任务复用浏览器；restore_state 控制是否注入导出的状态文件。"""
     from playwright.sync_api import sync_playwright
     settings.profile_path.mkdir(parents=True, exist_ok=True)
+    launch_options = {"channel": channel} if channel is not None else {}
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             str(settings.profile_path), headless=settings.headless,
             no_viewport=not settings.headless,
             viewport={"width": 1440, "height": 1000} if settings.headless else None,
             args=[] if settings.headless else ["--start-maximized"],
+            **launch_options,
         )
         try:
             context.set_default_timeout(settings.timeout_ms)
             context.set_default_navigation_timeout(settings.timeout_ms)
-            load_session(context, settings)
+            if restore_state:
+                load_session(context, settings)
             page = context.pages[0] if context.pages else context.new_page()
             try:
                 yield context, page

@@ -9,6 +9,22 @@ timeout_ms = 60000
 # session_path = "workspace/storage/sessions/qianniu.json"
 # profile_path = "workspace/storage/browser_profiles/qianniu"
 
+[taobao]
+# 可选使用已安装的系统 Chrome 或 Edge 做兼容性对照；默认使用自带 Chromium。
+# browser_channel = "chrome" # chrome 或 msedge；不影响千牛
+# browser_mode = "native_cdp" # 普通启动连接模式，需要 chrome、可见窗口；默认 playwright
+# 淘宝买家端独立登录，不复用千牛及旧版资料；以下为默认路径。
+# session_path = "workspace/storage/sessions/taobao.json"
+# profile_path = "workspace/storage/browser_profiles/taobao"
+
+[taobao.pacing]
+# 页面就绪后附加的随机间隔（秒）；仅用于显式调用对应动作的采集步骤。
+before_search = [2, 4] # 填写关键词后、点击搜索前
+search = [2, 4]
+scroll = [1.5, 3]
+page = [4, 8]
+keyword = [8, 15]
+
 [web]
 host = "127.0.0.1"
 port = 8000

@@ -13,6 +13,27 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command")
     account = commands.add_parser("account", help="店铺账号与会话")
     account.add_argument("action", choices=("login", "check"))
+    account.add_argument("--platform", choices=("qianniu", "taobao"), default="qianniu",
+                         help="登录平台：qianniu 千牛（默认），taobao 淘宝买家端；会话独立保存")
+    account.add_argument("--no-wait", action="store_true", help="仅淘宝 login：保存会话后自动关闭浏览器，默认保留窗口")
+    taobao = commands.add_parser("taobao", help="淘宝关键词搜索、列表采集、详情页入口与任务控制")
+    taobao_actions = taobao.add_subparsers(dest="action", required=True)
+    for action, description in (("pause", "暂停当前任务"), ("stop", "停止当前任务"), ("continue", "向当前提示发送继续"),
+                                ("confirm", "确认当前原生弹窗"), ("cancel", "取消当前原生弹窗")):
+        taobao_actions.add_parser(action, help=description)
+    search = taobao_actions.add_parser("search", help="通过淘宝首页搜索并确认首屏结果")
+    search.add_argument("--keyword", required=True, help="搜索关键词，1～100 个字符")
+    search.add_argument("--no-wait", action="store_true", help="搜索确认并保存记录后关闭浏览器，默认保留窗口")
+    collect = taobao_actions.add_parser("collect", help="按销量排序后采集第一页已加载商品，保存 JSON/CSV")
+    collect.add_argument("--keyword", required=True, help="搜索关键词，1～100 个字符")
+    collect.add_argument("--limit", type=int, default=None, help="最多保存的有效商品数，须为正整数；默认不限制当前页条数")
+    collect.add_argument("--no-wait", action="store_true", help="保存商品记录后关闭浏览器，默认保留窗口")
+    detail = taobao_actions.add_parser("detail", help="输入商品 ID 或链接打开详情页，供 DOM 字段核对")
+    detail.add_argument("--input", required=True, help="纯数字商品 ID，或完整淘宝/天猫详情链接")
+    detail.add_argument("--video", action="store_true", help="采集并下载主图区域的视频；无视频则返回无视频并跳过")
+    detail.add_argument("--main-images", action="store_true", help="按图集顺序下载五张主图，保存至商品目录的 1-1主图")
+    detail.add_argument("--skus", action="store_true", help="采集标题、售出件数、逐项SKU价格及图片，图片按规格名称保存至 sku图")
+    detail.add_argument("--no-wait", action="store_true", help="保存入口记录后关闭浏览器，默认保留窗口")
     product = commands.add_parser("product", help="商品入口导航")
     product.add_argument("action", choices=("open",))
     product.add_argument("--start", action="store_true", help="尝试点击开启按钮，旧定位问题待验证")
@@ -47,6 +68,23 @@ def main(argv: list[str] | None = None) -> int:
         settings = load_settings(args.config)
         prepare_workspace(settings)
         setup_logging(settings)
+        if args.command == "taobao":
+            if args.action in {"search", "collect", "detail"}:
+                from ecommerce.cli.commands.collection import execute, execute_collect, execute_detail
+                if args.action == "search":
+                    result = execute(settings, args.keyword, wait=not args.no_wait)
+                elif args.action == "collect":
+                    result = execute_collect(settings, args.keyword, limit=args.limit, wait=not args.no_wait)
+                else:
+                    result = execute_detail(settings, args.input, wait=not args.no_wait, video=args.video, main_images=args.main_images, skus=args.skus)
+                print(f"[{result.status}] {result.message}")
+                if result.task_id:
+                    print(f"任务编号：{result.task_id}")
+                return result.exit_code
+            else:
+                from ecommerce.modules.account.taobao_control import request_control
+                print(request_control(settings, args.action))
+                return 0
         if args.command == "download":
             print("旧 download 只有登录骨架，报表下载尚未实现；登录请使用 account login。", file=sys.stderr)
             return 2
@@ -70,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "account":
             from ecommerce.cli.commands.account import execute
-            result = execute(settings, args.action)
+            if args.no_wait and (args.platform != "taobao" or args.action != "login"):
+                cli.error("account --no-wait 仅支持 login --platform taobao")
+            result = execute(settings, args.action, args.platform, wait=not args.no_wait)
         else:
             from ecommerce.cli.commands.product import execute
             legacy = args.command == "upload"

@@ -27,8 +27,20 @@ python -m venv .venv
 
 ```powershell
 python main.py status                    # 已实现与待实现的功能
-python main.py account login             # 复用会话，必要时人工扫码
-python main.py account check             # 在线检查会话，失效返回需人工处理
+python main.py account login             # 千牛登录，复用会话，必要时人工扫码
+python main.py account check             # 在线检查千牛会话
+python main.py account login --platform taobao # 淘宝买家端独立登录，按页面选择登录方式
+python main.py account check --platform taobao # 在线检查淘宝会话
+python main.py taobao search --keyword "粘毛器" # 首页搜索，确认首屏后保留窗口
+python main.py taobao collect --keyword "粘毛器" # 按销量采集当前第一页，默认不限制条数，保存 JSON/CSV
+python main.py taobao collect --keyword "粘毛器" --limit 20 # 显式指定时最多保存 20 件有效商品
+python main.py taobao detail --input "1007759256325" # ID 拼接详情地址，打开后保留窗口供 DOM 字段核对
+python main.py taobao detail --input "https://item.taobao.com/item.htm?id=1007759256325" # 按输入链接直接打开
+python main.py taobao detail --input "1050158363561" --main-images # 五张主图按顺序保存到商品目录的 1-1主图
+python main.py taobao detail --input "1050158363561" --skus # 标题、售出件数、逐项SKU价格及按名称保存的sku图
+python main.py taobao pause              # 在另一个终端请求暂停当前淘宝任务
+python main.py taobao stop               # 请求停止，不启动新浏览器
+python main.py taobao continue           # 向当前人工提示发送继续，需先完成页面处理
 python main.py product open              # 打开发布入口，回车关闭浏览器
 python main.py product open --keyword "粘毛器" # 搜索后停留在结果页，回车关闭浏览器
 python main.py product open --start      # 额外尝试点击“开启”
@@ -87,6 +99,31 @@ python main.py --config config/settings.toml status
 设置 `browser.session_path`、`browser.profile_path` 可覆盖自动选择。
 文件存在仅代表本地有资料，不能证明会话在线有效。
 
+淘宝买家端和千牛独立登录。`account` 不指定 `--platform` 时仍默认千牛，商品发布也继续使用千牛。
+淘宝默认使用 `workspace/storage/sessions/taobao.json` 和 `workspace/storage/browser_profiles/taobao`，
+不导入千牛的 Cookie、状态文件或旧版浏览器目录。可在配置 `[taobao]` 中设置 `session_path`、`profile_path`，两个平台不能共用资料路径。
+已有淘宝持久化资料时优先复用其中的新状态，导出的会话文件仅用于初始化新资料，避免旧文件覆盖刚完成的人工验证。
+淘宝登录打开买家端页面，由用户自行选择扫码、短信或密码并完成验证；不会自动刷新二维码，等待不设超时。
+只有在淘宝首页识别到可见账号昵称，且在线复核通过后才保存状态；仅进入首页或存在本地文件不会视为登录成功。
+淘宝登录成功后会立即提示会话已保存，并保留浏览器窗口，直到用户手动关闭。
+需要保存后立即关闭时使用 `account login --platform taobao --no-wait`。
+登录前可关闭淘宝浏览器或按 Ctrl+C 取消。淘宝登录检查不会自动要求扫码，检查结束后关闭窗口，状态未确认时返回需要人工处理。
+浏览器任务仍串行执行；请先结束千牛任务再启动淘宝登录。
+
+淘宝登录与检查已接入独立的验证及弹窗守卫。遇到常见验证、未知对话框/遮罩、意外新标签页或相关访问异常时记录现场并提示人工处理。
+须明确输入“继续”，且页面复查通过后才恢复；输入“停止”结束任务。原生确认框先选择“确认”或“取消”，再输入“继续”。
+暂停期间保留浏览器，不设人工等待超时，也不自动重放操作。终端输入关闭时继续保持暂停，可从另一个终端发送 `taobao continue`；原生弹窗用 `taobao confirm`/`taobao cancel`，先明确决定后再继续。
+跨进程反馈绑定当前提示编号，旧反馈不会放行下一次验证，也可通过 `taobao stop` 请求停止。
+事件记录在 `workspace/logs/taobao`，截图在 `workspace/logs/screenshots`；任务列表会显示执行中的人工等待状态。
+关键词搜索入口和首屏校验已接入；2026-10-21 使用普通 Chrome 启动连接模式完成一次真实的“粘毛器”自动搜索、首屏复核及摘要保存，日志确认仅提交一次且未出现验证阻断。本次成功不代表后续不会验证。
+搜索摘要在 `workspace/output/raw/taobao_search`，提交前按 `[taobao.pacing].before_search` 停顿并重新核对关键词，首屏确认后按 `.search` 停顿并复核；两者默认均为 2～4 秒。
+搜索动作和实际主页面导航分别记入任务事件，便于检查重复提交。默认保留窗口，增加 `--no-wait` 可结束后关闭。
+`taobao collect --keyword "粘毛器"` 默认搜索后点击“销量”，确认页签选中且列表更新，再读取第一页已加载的标题、展示价格及条件、店铺、销量提示原文、地区和可确认的商品 ID/链接，保存 JSON/中文 CSV 至 `workspace/output/raw/taobao_products`。已选销量时不重复点击，排序不明或未确认列表更新时暂停待人工，不按综合排序继续采集。`taobao search` 仍只搜索并保存摘要。
+2026-10-21 已在真实搜索页完成 20 件字段采集，并单独通过 Playwright 点击销量、确认页签及列表更新；整合后的正式流程已接入本地模拟页面测试。广告标记未识别时明确记录，不猜测。
+新版以 `#content_items_wrapper` 直接子格子为边界，按已确认的 DOM 读取完整标题、显示主图、价格、销量提示、店铺、榜单/标签、视频及图标信息；广告图片命中则标注，调查卡跳过，同ID不同位置保留，并区分字段缺失原因及核对整页分类数量。
+默认不限制当前页商品条数，只有传入 `--limit 正整数` 时才限制有效商品数量，无固定 50 件上限。调查卡及结构与标题均匹配的“大家都在搜”推荐词卡单独统计并跳过，不占商品数量。需要时同页分段滚动加载主图，不翻页、不打开详情，数量不足按实保存，不同批次保留历史。验证和页面条件异常继续暂停待人工，明确继续并复核后恢复。
+PowerShell 命令、字段含义、验证处理和文件位置见 [使用指南](docs/使用指南.md) 的“淘宝关键词搜索本地测试”和“淘宝第一页商品采集”两节。详情及翻页仍待接入；采集间隔和恢复接口见 [淘宝采集执行约定](docs/淘宝采集约定.md)。
+
 ## 架构
 
 ```text
@@ -98,7 +135,7 @@ src/ecommerce/
     account/                    登录流程
     product/                    商品业务流程
     monitoring/                 工作台与任务状态查询
-    collection/                 采集（预留）
+    collection/                 淘宝关键词搜索、第一页字段与 JSON/CSV 导出
     selection/                  选品（预留）
     reports/                    报表（预留）
     analysis/                   分析（预留）
@@ -149,6 +186,15 @@ SQLite 是任务状态和执行结果的唯一来源，报表导出为派生结�
 ```
 
 测试使用临时数据库和模拟业务依赖，不操作真实店铺。
+淘宝守卫的真实浏览器测试显式启用，所有网页及响应均由本地模拟，不访问淘宝：
+
+```powershell
+$env:TAOBAO_BROWSER_TESTS="1"
+.venv\Scripts\python.exe -m unittest tests.integration.test_taobao_guard_browser -v
+.venv\Scripts\python.exe -m unittest tests.integration.test_taobao_search_browser -v
+.venv\Scripts\python.exe -m unittest tests.integration.test_taobao_collection_browser -v
+```
+
 覆盖配置兼容、跨进程锁、异常结果、遗留任务、网页状态、HTML 转义、外部目录启动及单浏览器编排。
 已在真实千牛页面验证当前粘毛器类目的素材上传、字段填写及提交到仓库。自动测试使用临时数据与本地页面，更多类目仍需逐项适配和验证。
 
@@ -158,7 +204,7 @@ SQLite 是任务状态和执行结果的唯一来源，报表导出为派生结�
 原始代码和未提交差异备份在 `workspace/backups/before-refactor/`，原有手工计时脚本归档为该备份目录中的 `test.py`。
 旧 `logs/`、`output/`、`storage/` 已清理；根目录 `state.json` 保留以尝试恢复登录状态。浏览器资料将自动建立在 `workspace/storage/browser_profiles/`，必要时重新扫码。新版日志写入 `workspace/logs`。
 打包生成的 `build/`、`workspace/build/` 和源码缓存已清理，后续运行或打包可能再次生成。`src/*.egg-info/` 是可编辑安装的元数据，保留供当前安装使用。
-尚未实现业务按优先级：Excel → 千牛草稿；生意参谋/万相台报表及网页分析；关键词/竞品采集与选品。
+尚未实现业务按优先级：Excel → 千牛草稿；生意参谋/万相台报表及网页分析；多页/详情采集与选品分析。
 
 ### 千牛全局验证守卫
 

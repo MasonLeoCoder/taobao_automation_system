@@ -3,10 +3,18 @@
 import logging
 from dataclasses import dataclass
 from collections.abc import Callable
+from contextvars import ContextVar
 from ecommerce.infrastructure.storage import database
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.shared.config import Settings
-from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
+from ecommerce.shared.exceptions import NeedsAttention, TaskBusy, TaskStopped
+
+_CURRENT_TASK = ContextVar("current_ecommerce_task", default=None)
+
+
+def current_task():
+    """返回当前执行任务的数据库路径和编号，供进度记录使用。"""
+    return _CURRENT_TASK.get()
 
 
 @dataclass(frozen=True)
@@ -27,16 +35,21 @@ def run_task(settings: Settings, name: str, action: Callable[[], str]) -> TaskRe
         with shop_lock(settings.profile_path):
             database.recover_interrupted(settings.database)
             task_id = database.create_task(settings.database, name)
+            token = _CURRENT_TASK.set((settings.database, task_id))
             try:
                 message = action()
                 status, code = "succeeded", 0
             except (KeyboardInterrupt, EOFError):
                 status, code, message = "cancelled", 130, "任务已取消"
+            except TaskStopped as error:
+                status, code, message = "cancelled", 130, str(error)
             except NeedsAttention as error:
                 status, code, message = "needs_attention", 3, str(error)
             except Exception as error:
                 logging.getLogger(__name__).exception("任务失败：%s", name)
                 status, code, message = "failed", 1, str(error)
+            finally:
+                _CURRENT_TASK.reset(token)
             database.finish_task(settings.database, task_id, status, message)
             return TaskResult(task_id, status, message, code)
     except TaskBusy as error:

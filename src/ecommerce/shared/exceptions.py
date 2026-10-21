@@ -11,3 +11,7 @@ class NeedsAttention(AutomationError):
 
 class TaskBusy(AutomationError):
     """店铺浏览器已被其他进程占用。"""
+
+
+class TaskStopped(AutomationError):
+    """用户明确停止任务；保存已有进度后退出，不视为成功。"""
