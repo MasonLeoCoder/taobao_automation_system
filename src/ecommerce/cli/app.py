@@ -6,6 +6,9 @@ from ecommerce.shared.config import load_settings, prepare_workspace
 from ecommerce.shared.logging import setup_logging
 
 
+DETAIL_STEPS = ("video", "main_images", "skus", "parameters", "detail_images", "review_summary", "reviews", "questions")
+
+
 def parser() -> argparse.ArgumentParser:
     """建立命令结构；参数：无；返回：解析器。"""
     root = argparse.ArgumentParser(description="电商自动化工作台 · 单店铺")
@@ -16,7 +19,7 @@ def parser() -> argparse.ArgumentParser:
     account.add_argument("--platform", choices=("qianniu", "taobao"), default="qianniu",
                          help="登录平台：qianniu 千牛（默认），taobao 淘宝买家端；会话独立保存")
     account.add_argument("--no-wait", action="store_true", help="仅淘宝 login：保存会话后自动关闭浏览器，默认保留窗口")
-    taobao = commands.add_parser("taobao", help="淘宝关键词搜索、列表采集、详情页入口与任务控制")
+    taobao = commands.add_parser("taobao", help="淘宝关键词搜索、列表及详情采集与任务控制")
     taobao_actions = taobao.add_subparsers(dest="action", required=True)
     for action, description in (("pause", "暂停当前任务"), ("stop", "停止当前任务"), ("continue", "向当前提示发送继续"),
                                 ("confirm", "确认当前原生弹窗"), ("cancel", "取消当前原生弹窗")):
@@ -28,12 +31,19 @@ def parser() -> argparse.ArgumentParser:
     collect.add_argument("--keyword", required=True, help="搜索关键词，1～100 个字符")
     collect.add_argument("--limit", type=int, default=None, help="最多保存的有效商品数，须为正整数；默认不限制当前页条数")
     collect.add_argument("--no-wait", action="store_true", help="保存商品记录后关闭浏览器，默认保留窗口")
-    detail = taobao_actions.add_parser("detail", help="输入商品 ID 或链接打开详情页，供 DOM 字段核对")
+    detail = taobao_actions.add_parser("detail", help="采集商品详情；不指定功能参数时采集全部已实现项目",
+        description="输入商品 ID 或完整详情链接。默认采集全部已实现的详情项目；指定一个或多个功能参数时，只执行所选项目。")
     detail.add_argument("--input", required=True, help="纯数字商品 ID，或完整淘宝/天猫详情链接")
     detail.add_argument("--video", action="store_true", help="采集并下载主图区域的视频；无视频则返回无视频并跳过")
-    detail.add_argument("--main-images", action="store_true", help="按图集顺序下载五张主图，保存至商品目录的 1-1主图")
+    detail.add_argument("--main-images", action="store_true", help="直接读取页面主图列表，按实际数量和顺序保存至 1-1主图；同来源未完成批次可补采")
     detail.add_argument("--skus", action="store_true", help="采集标题、售出件数、逐项SKU价格及图片，图片按规格名称保存至 sku图")
-    detail.add_argument("--no-wait", action="store_true", help="保存入口记录后关闭浏览器，默认保留窗口")
+    detail.add_argument("--parameters", action="store_true", help="动态读取参数信息，保留完整原文、同名项和原始HTML")
+    detail.add_argument("--detail-images", action="store_true", help="按图文详情顺序下载全部图片，数字编号保存至商品目录的详情图")
+    detail.add_argument("--review-summary", action="store_true", help="只采集评价数量、好评率和总结标签，不进入全部评价")
+    detail.add_argument("--reviews", action="store_true", help="采集全部评价列表，默认最多100条有效评价，跳过模板好评，媒体只存链接")
+    detail.add_argument("--questions", action="store_true", help="采集问大家，默认最多50个问题，每题采集页面可提供的全部回答，媒体只存链接")
+    detail.add_argument("--all", dest="all_reviews", action="store_true", help="取消已启用的评价/问题数量上限；默认全功能模式下同时取消两者上限")
+    detail.add_argument("--no-wait", action="store_true", help="所选详情步骤完成后关闭浏览器，默认保留窗口")
     product = commands.add_parser("product", help="商品入口导航")
     product.add_argument("action", choices=("open",))
     product.add_argument("--start", action="store_true", help="尝试点击开启按钮，旧定位问题待验证")
@@ -61,6 +71,13 @@ def main(argv: list[str] | None = None) -> int:
     """执行命令；参数：可选参数列表；返回：进程退出码。"""
     cli = parser()
     args = cli.parse_args(argv)
+    if args.command == "taobao" and args.action == "detail":
+        # 数量和窗口参数不选择采集功能；未选功能才默认启用全部。
+        if not any(getattr(args, step) for step in DETAIL_STEPS):
+            for step in DETAIL_STEPS:
+                setattr(args, step, True)
+        if args.all_reviews and not (args.reviews or args.questions):
+            cli.error("--all 必须与 --reviews 或 --questions 一起使用")
     if args.command is None:
         cli.print_help()
         return 0
@@ -76,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif args.action == "collect":
                     result = execute_collect(settings, args.keyword, limit=args.limit, wait=not args.no_wait)
                 else:
-                    result = execute_detail(settings, args.input, wait=not args.no_wait, video=args.video, main_images=args.main_images, skus=args.skus)
+                    result = execute_detail(settings, args.input, wait=not args.no_wait, video=args.video, main_images=args.main_images, skus=args.skus, parameters=args.parameters, detail_images=args.detail_images, review_summary=args.review_summary, reviews=args.reviews, all_reviews=args.all_reviews, questions=args.questions)
                 print(f"[{result.status}] {result.message}")
                 if result.task_id:
                     print(f"任务编号：{result.task_id}")

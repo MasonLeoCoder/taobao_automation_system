@@ -43,9 +43,13 @@ SKU_SNAPSHOT = r"""() => {
    const noStock=/缺货|无货|售罄|库存不足|暂无库存/.test(attrs)||stock==='0';
    const disabled=e.hasAttribute('disabled')||e.getAttribute('aria-disabled')==='true'||e.getAttribute('data-disabled')==='true'
      ||[...e.classList].some(c=>/^(?:isDisabled|disabled|soldOut|outOfStock)--/i.test(c));
+   const disabledEvidence=[e.hasAttribute('disabled')?'disabled属性':null,
+     e.getAttribute('aria-disabled')==='true'?'aria-disabled=true':null,
+     e.getAttribute('data-disabled')==='true'?'data-disabled=true':null,
+     ...[...e.classList].filter(c=>/^(?:isDisabled|disabled|soldOut|outOfStock)--/i.test(c)).map(c=>'class='+c)].filter(Boolean);
    return {index:oi,name,value_id:e.getAttribute('data-vid'),sku_id:e.getAttribute('data-sku-id')||e.getAttribute('data-skuid'),
     selected:[...e.classList].some(c=>c.startsWith('isSelected--'))||e.getAttribute('aria-checked')==='true',
-    disabled,no_stock:noStock,stock_evidence:noStock?(stock==='0'?'页面库存属性为0':attrs):null,
+    disabled,disabled_evidence:disabledEvidence,no_stock:noStock,stock_evidence:noStock?(stock==='0'?'页面库存属性为0':attrs):null,
     image_url:asset(image?.currentSrc||image?.getAttribute('src')),
     large_image_url:asset(e.getAttribute('data-large-image')||image?.getAttribute('data-large-image'))};
   })})):[];
@@ -231,7 +235,8 @@ class SkuReader:
             name = properties[0]['name'] if len(properties) == 1 else '_'.join(p['group'] + '-' + p['name'] for p in properties)
             record = {"index": len(records)+1, "name": name, "properties": properties, "sku_id": None,
                       "stock_status": "unknown", "stock_evidence": None, "price": None, "price_value": None,
-                      "price_label": None, "currency": None, "prices": [], "price_status": "not_read",
+                      "price_label": None, "currency": None, "prices": [], "price_status": "not_read", "price_reason": None,
+                      "unavailability_evidence": [], "sku_identity_status": "not_provided",
                       "quantity": 1, "image_url": None, "image_source": None, "image_status": "not_read"}
             current = self.wait(lambda v: not v['loading'], "规格区域仍在加载")
             # 多组规格先清空旧组合，避免上一个尺寸使目标颜色暂时不可选。
@@ -261,7 +266,9 @@ class SkuReader:
                         break
             if blocked:
                 record.update(stock_status='out_of_stock' if blocked['no_stock'] else 'unavailable_unconfirmed',
-                              stock_evidence=blocked['stock_evidence'], price_status='out_of_stock' if blocked['no_stock'] else 'unavailable_unconfirmed')
+                              stock_evidence=blocked['stock_evidence'], price_status='out_of_stock' if blocked['no_stock'] else 'unavailable_unconfirmed',
+                              unavailability_evidence=blocked.get('disabled_evidence',[]),
+                              price_reason='页面已明确显示缺货' if blocked['no_stock'] else '规格不可选，页面未提供明确缺货依据，无法识别价格')
                 if blocked['no_stock']:
                     record['price'] = OUT_OF_STOCK_PRICE
                 current = self.read()
@@ -273,7 +280,7 @@ class SkuReader:
                                     "选中 SKU 的价格、数量或请求完成状态尚未确认", stable_ms=350, minimum_ms=self.settle_ms)
                 if current['global_stock']:
                     record.update(stock_status='out_of_stock', stock_evidence=current['global_stock'],
-                                  price=OUT_OF_STOCK_PRICE, price_status='out_of_stock')
+                                  price=OUT_OF_STOCK_PRICE, price_status='out_of_stock',price_reason='页面已明确显示缺货')
                 else:
                     prices = parse_prices(current['prices'])
                     primary = prices[0]
@@ -281,9 +288,10 @@ class SkuReader:
                                   price_label=primary['label'], currency=primary['currency'], prices=prices, price_status='collected')
             options = [g['options'][i] for g, i in zip(current['groups'], indexes)]
             record['combination_confirmed'] = not blocked or len(indexes) == 1 or gi == len(indexes)-1
-            explicit_ids = {o['sku_id'] for o in options if o['sku_id']}
-            if len(explicit_ids) == 1:
+            explicit_ids = {o['sku_id'] for o in options if re.fullmatch(r'[1-9][0-9]*',o['sku_id'] or '')}
+            if len(explicit_ids) == 1 and record['combination_confirmed']:
                 record['sku_id'] = next(iter(explicit_ids))
+                record['sku_identity_status'] = 'explicit_dom_id'
             option_images = [o for o in options if o['image_url']]
             if option_images:
                 chosen = option_images[-1]
@@ -297,6 +305,7 @@ class SkuReader:
             else:
                 record['image_status'] = 'no_image'
             record['captured_at'] = now()
+            record['price_checked_at'] = record['captured_at']
             records.append(record)
             self.guard.resume_check = self.safe
             if self.on_progress:

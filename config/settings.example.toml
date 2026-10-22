@@ -24,6 +24,8 @@ search = [2, 4]
 scroll = [1.5, 3]
 page = [4, 8]
 keyword = [8, 15]
+question = [4, 8] # 问大家逐题操作间隔
+question_rest = [30, 60] # 每10题或连续操作5分钟休息；等待可暂停/停止
 
 [web]
 host = "127.0.0.1"

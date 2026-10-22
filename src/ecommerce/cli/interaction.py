@@ -48,7 +48,7 @@ def prompt_submission_review(message: str) -> None:
 def prompt_taobao_attention(message: str) -> str:
     """淘宝严格反馈：明确继续或停止；原生弹窗单独决定确认或取消。"""
     native = message.startswith(("【需要人工决定原生弹窗】", "【原生弹窗尚未决定】"))
-    if message.startswith(("【需要人工验证】", "【需要人工决定原生弹窗】")):
+    if message.startswith(("【需要人工验证】", "【需要人工检查】", "【需要人工决定原生弹窗】")):
         _play_attention_sound()
     print(message, flush=True)
     while True:

@@ -64,6 +64,25 @@ class TaobaoGuardTests(unittest.TestCase):
                     guard.perform("读取", action)
                 action.assert_not_called()
 
+    def test_business_checks_are_labeled_separately_and_still_require_explicit_feedback(self):
+        messages = []
+        def attention(message):
+            messages.append(message)
+            return '' if len(messages) == 1 else '继续'
+        event = Blockage('business', self.page, '评价结构需要检查')
+        with self.guard(attention) as guard, patch.object(guard, '_scan', side_effect=[event, None]):
+            guard.checkpoint('检查评价结构')
+        self.assertTrue(messages[0].startswith('【需要人工检查】'))
+        self.assertTrue(messages[1].startswith('【检查尚未通过】'))
+        self.assertEqual(guard.state, 'running')
+
+    def test_cli_business_check_alert_sounds_once(self):
+        with patch('builtins.input', return_value='继续'), patch('builtins.print'), \
+                patch('ecommerce.cli.interaction._play_attention_sound') as sound:
+            self.assertEqual(prompt_taobao_attention('【需要人工检查】'), '继续')
+            self.assertEqual(prompt_taobao_attention('【检查尚未通过】'), '继续')
+            sound.assert_called_once()
+
     def test_native_decision_does_not_accept_generic_continue(self):
         replies = iter(["继续", "取消"])
         dialog = MagicMock(type="confirm", message="是否执行？")

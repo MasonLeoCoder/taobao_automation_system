@@ -8,6 +8,7 @@ from pathlib import Path
 
 DEFAULT_TAOBAO_TIMING = {
     "before_search": (2, 4), "search": (2, 4), "scroll": (1.5, 3), "page": (4, 8), "keyword": (8, 15),
+    "question": (4, 8), "question_rest": (30, 60),
 }
 
 
@@ -109,7 +110,7 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
     timing = dict(DEFAULT_TAOBAO_TIMING)
     configured_timing = taobao.get("pacing", {})
     if not isinstance(configured_timing, dict) or set(configured_timing) - set(timing):
-        raise ValueError("taobao.pacing 仅支持 before_search、search、scroll、page、keyword")
+        raise ValueError("taobao.pacing 仅支持 " + "、".join(timing))
     for action, bounds in configured_timing.items():
         if not isinstance(bounds, list) or len(bounds) != 2 or any(
             type(number) not in {int, float} or not math.isfinite(number) or number < 0 for number in bounds

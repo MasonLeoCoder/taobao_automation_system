@@ -372,7 +372,8 @@ class TaobaoGuard:
             if reply in allowed:
                 return reply
             # 空回车、回调未返回明确指令都不能放行；后续不重复响铃。
-            title = "【原生弹窗尚未决定】" if allowed == {"确认", "取消"} else "【验证尚未通过】"
+            title = ("【原生弹窗尚未决定】" if allowed == {"确认", "取消"} else
+                     "【检查尚未通过】" if message.startswith(("【需要人工检查】", "【检查尚未通过】")) else "【验证尚未通过】")
             message = title + "\n未收到有效指令，保持暂停。"
 
     def _check_control(self, page):
@@ -506,7 +507,10 @@ class TaobaoGuard:
                 incident = (blockage.kind, blockage.page, blockage.source)
                 evidence = self._capture(blockage) if incident not in captured and blockage.kind != "native_done" else str(self.event_path)
                 captured.add(incident)
-                title = "【需要人工验证】" if first else "【验证尚未通过】"
+                if blockage.kind == "business":
+                    title = "【需要人工检查】" if first else "【检查尚未通过】"
+                else:
+                    title = "【需要人工验证】" if first else "【验证尚未通过】"
                 remaining = max(0, blockage.until - time.monotonic())
                 message = (f"{title}\n当前步骤：{self.step}\n原因：{blockage.source}\n记录：{evidence}\n"
                            + (f"服务器要求至少再等待 {math.ceil(remaining)} 秒。\n" if remaining else "")

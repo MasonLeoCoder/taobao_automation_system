@@ -1,4 +1,4 @@
-"""图集顺序、视频封面排除、大图下载及商品资料合并的本地浏览器检查。"""
+"""页面主图列表、图集核对、逐张进度恢复及整批发布的本地浏览器检查。"""
 import io
 import json
 import os
@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 from ecommerce.modules.collection.detail_images import collect_main_images
 from ecommerce.modules.collection.detail_storage import product_directory, save_detail_section
 from ecommerce.platforms.taobao.detail import DetailPage, resolve_detail_input
-from ecommerce.platforms.taobao.detail_images import collect_main_image_links
+from ecommerce.platforms.taobao.detail_images import HEAD_IMAGES_SOURCE, ITEM_IMAGES_SOURCE, collect_main_image_links
 from ecommerce.platforms.taobao.verification import TaobaoGuard
 from ecommerce.shared.config import DEFAULT_TAOBAO_TIMING, load_settings
 from ecommerce.shared.exceptions import TaskStopped
@@ -47,6 +47,9 @@ def gallery_html(video=True,count=5,duplicate=False):
     return f'''<div id="picGalleryEle"><div class="thumbnails--fixture">{thumbs}</div>
       <div class="mainPicWrap--fixture">{main}</div><div class="bottomSwitchTabsWrap--fixture">{tabs}</div></div>
       <script>
+      window.__ICE_APP_CONTEXT__={{loaderData:{{home:{{data:{{ssrItemId:'{ITEM_ID}',res:{{
+        item:{{itemId:'{ITEM_ID}',images:{json.dumps(urls)}}},componentsVO:{{headImageVO:{{images:{json.dumps(urls)}}}}}
+      }}}}}}}}}};
       window.imageClicks=[];window.entries={json.dumps(entries)};
       document.querySelectorAll('.thumbnail--fixture').forEach((thumb,index)=>thumb.onclick=()=>{{
         window.imageClicks.push(index+1);
@@ -118,7 +121,9 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual(record['video_cover_skipped'],1)
         self.assertEqual(record['parameters_skipped'],1)
         self.assertEqual([p['slot_index'] for p in record['images']],[2,3,4,5,6])
-        self.assertEqual(self.page.evaluate('imageClicks'),[2,3,4,5,6])
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
+        self.assertEqual(record['collection_method'],'page_data')
+        self.assertEqual(record['source_path'],ITEM_IMAGES_SOURCE)
         folder=product_directory(self.settings,ITEM_ID)/'1-1主图'
         self.assertEqual(sorted(p.name for p in folder.iterdir()),['1.png','2.png','3.png','4.png','5.png'])
         for index,image in enumerate(record['images'],1):
@@ -142,10 +147,12 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual([p['index'] for p in record['images']],[1,2,3,4,5])
         self.assertEqual(len(set(p['image_url'] for p in record['images'])),1)
 
-    def test_delayed_main_image_does_not_capture_previous_image(self):
-        self.page.evaluate('window.imageDelay=150')
+    def test_current_large_image_can_be_wrong_or_loading_without_affecting_list(self):
+        self.page.evaluate('''()=>{window.imageDelay=150;
+          document.querySelector('.mainPicWrap--fixture').innerHTML='<img id="mainPicImageEl" src="https://img.alicdn.com/other.png">'}''')
         record=self.collect()
         self.assertEqual([p['image_url'] for p in record['images']],[photo_url(i) for i in range(1,6)])
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
 
     def test_video_json_is_preserved_and_old_image_batch_remains(self):
         folder=product_directory(self.settings,ITEM_ID)
@@ -155,6 +162,8 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual(document['video']['video_url'],'original-video-url')
         self.assertEqual(document['main_images']['collected_count'],5)
         self.assertNotEqual(first['history_record_path'],second['history_record_path'])
+        self.assertEqual(second['reused_count'],0)
+        self.assertEqual(self.opener.open.call_count,10)
         old=json.loads(Path(first['history_record_path']).read_text(encoding='utf-8'))
         self.assertTrue(all(Path(p['image_path']).exists() for p in old['images']))
 
@@ -173,16 +182,80 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         document=json.loads(Path(record['record_path']).read_text(encoding='utf-8'))
         self.assertEqual(document['main_images_last_attempt']['status'],'download_failed')
 
-    def test_insufficient_images_are_recorded_as_partial(self):
+    def test_three_images_are_complete_when_all_available_images_are_saved(self):
         self.replace_gallery(count=3)
         record=self.collect()
-        self.assertEqual(record['status'],'partial')
+        self.assertEqual(record['status'],'complete')
         self.assertEqual(record['collected_count'],3)
         self.assertEqual(record['available_count'],3)
+        self.assertEqual(record['expected_count'],3)
         self.assertEqual(len(list((product_directory(self.settings,ITEM_ID)/'1-1主图').iterdir())),3)
 
+    def test_single_image_is_complete_with_or_without_video(self):
+        for video in (False,True):
+            with self.subTest(video=video):
+                self.replace_gallery(count=1,video=video)
+                record=self.collect()
+                self.assertEqual(record['status'],'complete')
+                self.assertEqual((record['expected_count'],record['available_count'],record['collected_count']),(1,1,1))
+                self.assertEqual(record['images'][0]['slot_index'],2 if video else 1)
+
+    def test_more_than_five_images_are_not_truncated(self):
+        self.replace_gallery(count=8)
+        record=self.collect()
+        self.assertEqual(record['status'],'complete')
+        self.assertEqual((record['expected_count'],record['available_count'],record['collected_count']),(8,8,8))
+        self.assertEqual([p['image_url'] for p in record['images']],[photo_url(i) for i in range(1,9)])
+        self.assertEqual(self.opener.open.call_count,8)
+
+    def test_shorter_gallery_replaces_latest_but_preserves_longer_history(self):
+        self.replace_gallery(count=7)
+        first=self.collect()
+        self.replace_gallery(count=3)
+        second=self.collect()
+        folder=product_directory(self.settings,ITEM_ID)/'1-1主图'
+        self.assertEqual(sorted(p.name for p in folder.iterdir()),['1.png','2.png','3.png'])
+        self.assertEqual(second['status'],'complete')
+        self.assertEqual(second['expected_count'],3)
+        self.assertTrue(all(Path(p['image_path']).is_file() for p in json.loads(Path(first['history_record_path']).read_text(encoding='utf-8'))['images']))
+
+    def test_empty_or_unloaded_gallery_is_not_published_as_complete(self):
+        self.html='<div id="picGalleryEle"><div class="thumbnails--fixture"><div class="thumbnail--fixture">参数</div></div><div class="mainPicWrap--fixture"></div></div>'
+        self.page.reload()
+        with self.guard(lambda _:'停止'),self.assertRaises(TaskStopped):
+            collect_main_image_links(self.result,100)
+        self.assertFalse(list(self.settings.workspace.rglob('main_images.json')))
+
+    def test_parameter_panel_and_hover_handlers_are_not_used_to_get_images(self):
+        self.replace_gallery(count=3,video=False)
+        self.page.evaluate('''()=>{window.parameterSwitches=0;const thumbs=[...document.querySelectorAll('.thumbnail--fixture')];
+          const last=thumbs[thumbs.length-2],params=thumbs[thumbs.length-1];let timer;
+          last.onmouseenter=()=>{timer=setTimeout(()=>{if(!last.matches(':hover'))return;window.parameterSwitches++;
+            thumbs.forEach(t=>t.classList.remove('thumbnailActive--fixture'));params.classList.add('thumbnailActive--fixture');
+            document.querySelector('.mainPicWrap--fixture').innerHTML='参数'},100)};
+          last.onmouseleave=()=>clearTimeout(timer)}''')
+        self.page.evaluate('''()=>{document.querySelector('.mainPicWrap--fixture').innerHTML='参数';
+          const thumbs=[...document.querySelectorAll('.thumbnail--fixture')];
+          thumbs.forEach(t=>t.classList.remove('thumbnailActive--fixture'));thumbs.at(-1).classList.add('thumbnailActive--fixture')}''')
+        record=self.collect()
+        self.assertEqual(record['status'],'complete')
+        self.assertEqual(record['collected_count'],3)
+        self.assertEqual(self.page.evaluate('window.parameterSwitches'),0)
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
+        self.assertEqual(self.page.locator('.mainPicWrap--fixture').inner_text(),'参数')
+
+    def test_main_image_uses_provided_list_instead_of_click_driven_transformed_urls(self):
+        self.replace_gallery(count=2)
+        self.settings=replace(self.settings,timeout_ms=1800)
+        self.page.evaluate('''()=>document.querySelectorAll('.thumbnail--fixture').forEach((thumb,i)=>{
+          const click=thumb.onclick;thumb.onclick=()=>{click();const entry=window.entries[i];if(entry.type==='image')
+            setTimeout(()=>document.querySelector('#mainPicImageEl').src=entry.url+'?quality=final',350)}})''')
+        record=self.collect()
+        self.assertEqual([p['image_url'] for p in record['images']],[photo_url(i) for i in (1,2)])
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
+
     def test_wrong_image_source_requires_manual_review(self):
-        self.page.evaluate("window.wrongSource='https://img.alicdn.com/other.png'")
+        self.page.evaluate("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[2]='https://img.alicdn.com/other.png'")
         with self.guard(lambda message:'停止'):
             with self.assertRaises(TaskStopped):
                 collect_main_image_links(self.result,100)
@@ -190,14 +263,176 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
 
     def test_metadata_failure_restores_existing_folder_and_json(self):
         first=self.collect()
-        original=Path(first['record_path']).read_bytes()
+        original=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))['main_images']
         with self.guard(),patch('ecommerce.modules.collection.detail_images.build_opener',return_value=self.opener),\
-                patch('ecommerce.modules.collection.detail_images.save_detail_section',side_effect=OSError('disk full')):
+                patch('ecommerce.modules.collection.detail_images.save_detail_sections',side_effect=OSError('disk full')):
             with self.assertRaises(OSError):collect_main_images(self.settings,self.result)
-        self.assertEqual(Path(first['record_path']).read_bytes(),original)
+        document=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
+        self.assertEqual(document['main_images'],original)
+        self.assertEqual(document['main_images_last_attempt']['status'],'interrupted')
         self.assertTrue(all(Path(p['image_path']).read_bytes()==png(p['index']) for p in first['images']))
         folder=product_directory(self.settings,ITEM_ID)
         self.assertFalse(list(folder.glob('.main-images-*')))
+
+    def test_verified_head_image_list_is_used_when_item_list_is_absent(self):
+        self.page.evaluate('delete window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images')
+        record=self.collect()
+        self.assertEqual(record['source_path'],HEAD_IMAGES_SOURCE)
+        self.assertEqual(record['collected_count'],5)
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
+
+    def test_missing_mismatched_or_invalid_data_pauses_without_click_or_download(self):
+        cases=[
+            ('delete window.__ICE_APP_CONTEXT__','未提供'),
+            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.itemId='999'",'商品ID'),
+            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.ssrItemId='999'",'商品ID'),
+            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images.pop()','数量'),
+            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.componentsVO.headImageVO.images.reverse()','顺序'),
+            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images=[]','为空'),
+            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images={url:"not-a-list"}','格式'),
+            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[0]='https://example.com/main1.png'",'无效地址'),
+            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[0]='https://img.alicdn.com/other/main1.png'",'来源'),
+            ('''(()=>{const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
+                 res.recommendations={images:res.item.images};delete res.item.images;delete res.componentsVO.headImageVO.images})()''','未提供'),
+        ]
+        for expression,reason in cases:
+            with self.subTest(reason=reason,expression=expression):
+                self.page.reload();self.page.evaluate(expression)
+                messages=[]
+                with self.guard(lambda message:messages.append(message) or '停止'),self.assertRaises(TaskStopped):
+                    collect_main_image_links(self.result,50)
+                self.assertTrue(any(reason in message for message in messages))
+                self.assertEqual(self.page.evaluate('imageClicks'),[])
+        self.opener.open.assert_not_called()
+
+    def test_thumbnail_bytes_do_not_need_to_load_for_source_order_validation(self):
+        self.context.route('**/*_q50.jpg_.webp',lambda route:route.abort())
+        self.page.reload()
+        self.assertTrue(self.page.locator('.thumbnailPic--fixture').first.evaluate('e=>e.complete&&!e.naturalWidth'))
+        record=self.collect()
+        self.assertEqual(record['status'],'complete')
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
+
+    def fail_third_download(self):
+        """制造下载中断样例，返回已成功保存两张的批次。"""
+        original=self.opener.open.side_effect
+        def response(request,timeout):
+            if request.full_url==photo_url(3):
+                return Response(request.full_url,png(3)[:40])
+            return original(request,timeout)
+        self.opener.open.side_effect=response
+        first=self.collect()
+        self.opener.open.side_effect=original
+        self.opener.open.reset_mock()
+        return first
+
+    def test_failed_download_persists_each_status_and_resumes_only_unfinished_images(self):
+        first=self.fail_third_download()
+        progress=json.loads(Path(first['history_record_path']).read_text(encoding='utf-8'))
+        self.assertEqual(progress['collected_count'],2)
+        self.assertEqual([p['status'] for p in progress['image_results']],['downloaded','downloaded','failed','pending','pending'])
+        second=self.collect()
+        self.assertEqual(second['status'],'complete')
+        self.assertEqual((second['collected_count'],second['reused_count'],second['downloaded_count']),(5,2,3))
+        self.assertEqual(second['resumed_from_batch_id'],first['batch_id'])
+        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (3,4,5)])
+        self.assertTrue(all(Path(p['image_path']).is_file() for p in first['images']))
+
+    def test_modified_history_image_is_redownloaded_instead_of_reused(self):
+        first=self.fail_third_download()
+        Path(first['images'][0]['image_path']).write_bytes(b'damaged')
+        second=self.collect()
+        self.assertEqual(second['reused_count'],1)
+        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (1,3,4,5)])
+
+    def test_changed_source_address_does_not_reuse_old_batch(self):
+        self.fail_third_download()
+        self.page.evaluate('''()=>{const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
+          res.item.images=res.item.images.map(u=>u+'?revision=2');res.componentsVO.headImageVO.images=[...res.item.images]}''')
+        record=self.collect()
+        self.assertIsNone(record['resumed_from_batch_id'])
+        self.assertEqual(record['reused_count'],0)
+        self.assertEqual(self.opener.open.call_count,5)
+
+    def test_cancel_mid_file_keeps_completed_progress_and_cleans_partial_file(self):
+        original=self.opener.open.side_effect
+        class InterruptedResponse(Response):
+            def read(self,size=-1):
+                if self.tell():
+                    raise TaskStopped('用户停止')
+                return super().read(size)
+        def response(request,timeout):
+            return InterruptedResponse(request.full_url,png(3)) if request.full_url==photo_url(3) else original(request,timeout)
+        self.opener.open.side_effect=response
+        with self.assertRaises(TaskStopped):
+            self.collect()
+        document=json.loads((product_directory(self.settings,ITEM_ID)/f'{ITEM_ID}.json').read_text(encoding='utf-8'))
+        self.assertEqual(document['main_images_last_attempt']['status'],'interrupted')
+        self.assertEqual(document['main_images_last_attempt']['collected_count'],2)
+        self.assertEqual(document['main_images_last_attempt']['image_results'][2]['status'],'interrupted')
+        self.assertFalse(list(self.settings.workspace.rglob('*.part')))
+        self.opener.open.side_effect=original;self.opener.open.reset_mock()
+        record=self.collect()
+        self.assertEqual(record['reused_count'],2)
+        self.assertEqual(self.opener.open.call_count,3)
+
+    def test_cancel_during_resume_keeps_access_to_successful_images_from_earlier_batch(self):
+        from ecommerce.modules.collection import detail_images
+        first=self.fail_third_download()
+        original=detail_images._reuse_image
+        def interrupt(image,previous,directory):
+            if image['index']==2:
+                raise TaskStopped('补采中再次停止')
+            return original(image,previous,directory)
+        with patch.object(detail_images,'_reuse_image',side_effect=interrupt),self.assertRaises(TaskStopped):
+            self.collect()
+        document=json.loads((product_directory(self.settings,ITEM_ID)/f'{ITEM_ID}.json').read_text(encoding='utf-8'))
+        second=document['main_images_last_attempt']
+        self.assertEqual(second['collected_count'],1)
+        self.assertEqual(second['resumed_from_batch_id'],first['batch_id'])
+        self.opener.open.assert_not_called()
+        third=self.collect()
+        self.assertEqual(third['reused_count'],2)
+        self.assertEqual([p.get('reused_from_batch_id') for p in third['images'][:2]],[second['batch_id'],first['batch_id']])
+        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (3,4,5)])
+
+    def test_keyboard_interrupt_during_publish_restores_existing_files(self):
+        first=self.collect()
+        original=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))['main_images']
+        with patch('ecommerce.modules.collection.detail_images.save_detail_sections',side_effect=KeyboardInterrupt),self.assertRaises(KeyboardInterrupt):
+            self.collect()
+        document=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
+        self.assertEqual(document['main_images'],original)
+        self.assertTrue(all(Path(p['image_path']).read_bytes()==png(p['index']) for p in first['images']))
+        self.assertFalse(list(product_directory(self.settings,ITEM_ID).glob('.main-images-*')))
+
+    def test_partial_new_batch_preserves_previously_published_images(self):
+        first=self.collect()
+        self.fail_third_download()
+        document=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
+        self.assertEqual(document['main_images']['batch_id'],first['batch_id'])
+        self.assertEqual(document['main_images_last_attempt']['status'],'download_failed')
+        self.assertTrue(all(Path(p['image_path']).read_bytes()==png(p['index']) for p in first['images']))
+
+    def test_source_change_during_download_waits_for_restoration_without_replaying_download(self):
+        original=self.opener.open.side_effect
+        def response(request,timeout):
+            if request.full_url==photo_url(1):
+                self.page.evaluate('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images.reverse()')
+            return original(request,timeout)
+        self.opener.open.side_effect=response
+        messages=[]
+        def restore(message):
+            messages.append(message)
+            self.page.evaluate('''()=>{const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
+                res.item.images=[...res.componentsVO.headImageVO.images]}''')
+            return '继续'
+        with self.guard(restore),patch('ecommerce.modules.collection.detail_images.build_opener',return_value=self.opener):
+            record=collect_main_images(self.settings,self.result)
+        self.assertEqual(record['status'],'complete')
+        self.assertEqual(self.opener.open.call_count,5)
+        self.assertTrue(any('顺序' in message for message in messages))
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
 
 
 if __name__=='__main__':

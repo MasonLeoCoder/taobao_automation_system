@@ -4,6 +4,7 @@
 当前已接通粘毛器类目的单商品资料读取、自动填写及提交到仓库；商品草稿、报表下载、选品和经营分析按模块逐步接入。
 
 CMD 命令、参数说明和一个完整示例见 [简短使用指南](D:/VSCodeProject/taobao_automation_system/docs/使用指南.md)。
+详情页完整采集命令和参数表见 [使用指南：淘宝单商品详情页入口](docs/使用指南.md#淘宝单商品详情页入口powershell)。
 
 ## 快速开始
 
@@ -34,10 +35,19 @@ python main.py account check --platform taobao # 在线检查淘宝会话
 python main.py taobao search --keyword "粘毛器" # 首页搜索，确认首屏后保留窗口
 python main.py taobao collect --keyword "粘毛器" # 按销量采集当前第一页，默认不限制条数，保存 JSON/CSV
 python main.py taobao collect --keyword "粘毛器" --limit 20 # 显式指定时最多保存 20 件有效商品
-python main.py taobao detail --input "1007759256325" # ID 拼接详情地址，打开后保留窗口供 DOM 字段核对
-python main.py taobao detail --input "https://item.taobao.com/item.htm?id=1007759256325" # 按输入链接直接打开
-python main.py taobao detail --input "1050158363561" --main-images # 五张主图按顺序保存到商品目录的 1-1主图
-python main.py taobao detail --input "1050158363561" --skus # 标题、售出件数、逐项SKU价格及按名称保存的sku图
+python main.py taobao detail --input "1007759256325" # 默认采集全部已实现详情项目，评价100条、问题50个
+python main.py taobao detail --input "https://item.taobao.com/item.htm?id=1007759256325" # 链接同样默认采集全部项目
+python main.py taobao detail --input "1007759256325" --all # 全部项目，并取消评价和问题数量上限
+python main.py taobao detail --input "1007759256325" --video --parameters # 显式指定时只采集视频和参数
+python main.py taobao detail --input "1050158363561" --main-images # 直接读取页面主图列表，按实际数量保存到 1-1主图；重跑可补采未完成项
+python main.py taobao detail --input "1050158363561" --skus # 标题、销量、逐项价格及sku图；孤立不可选警告可继续后续模块
+python main.py taobao detail --input "1050158363561" --parameters # 动态读取参数信息，保留原文、同名项和原始HTML
+python main.py taobao detail --input "1050158363561" --detail-images # 图文详情全部图片按序保存到商品目录的详情图
+python main.py taobao detail --input "1050158363561" --review-summary # 评价数量、好评率与总结标签
+python main.py taobao detail --input "1050158363561" --reviews # 默认100条有效评价，模板好评跳过，媒体只存链接
+python main.py taobao detail --input "1050158363561" --reviews --all # 取消上限，采集页面可加载的全部评价
+python main.py taobao detail --input "1050158363561" --questions # 默认50个问题，每题采集页面可提供的全部回答
+python main.py taobao detail --input "1050158363561" --questions --all # 取消问题数量上限
 python main.py taobao pause              # 在另一个终端请求暂停当前淘宝任务
 python main.py taobao stop               # 请求停止，不启动新浏览器
 python main.py taobao continue           # 向当前人工提示发送继续，需先完成页面处理

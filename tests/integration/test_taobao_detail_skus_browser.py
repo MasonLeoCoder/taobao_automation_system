@@ -9,6 +9,7 @@ import zlib
 from dataclasses import replace
 from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest.mock import MagicMock, patch
 
 from playwright.sync_api import sync_playwright
@@ -50,7 +51,7 @@ def html(config):
         (config.lockFirstColor&&g===0&&o===1&&selected[1]===0)}
       function render(){
        root.innerHTML=config.groups.map((g,gi)=>'<div class="skuItem--fixture"><div class="ItemLabel--fixture">'+g.name+'</div><div>'+g.options.map((o,oi)=>
-        '<div class="valueItem--fixture '+(selected[gi]===oi?'isSelected--fixture':'')+'" data-vid="'+gi+'-'+oi+'" data-disabled="'+disabled(gi,oi)+'" '+(o.outOfStock?'data-stock="0"':'')+'>'+
+        '<div class="valueItem--fixture '+(selected[gi]===oi?'isSelected--fixture':'')+'" data-vid="'+(o.valueId??gi+'-'+oi)+'" '+(o.skuId?'data-sku-id="'+o.skuId+'" ':'')+'data-disabled="'+disabled(gi,oi)+'" '+(o.outOfStock?'data-stock="0"':'')+'>'+
         (o.noImage?'':'<img class="valueItemImg--fixture" src="https://img.alicdn.com/sku'+(o.image||oi+1)+'.png">')+
         '<span class="valueItemText--fixture" title="'+o.name.replaceAll('"','&quot;')+'">'+o.name.replaceAll('&','&amp;').replaceAll('<','&lt;')+'</span></div>').join('')+'</div></div>').join('');
        root.querySelectorAll('.skuItem--fixture').forEach((g,gi)=>g.querySelectorAll('.valueItem--fixture').forEach((e,oi)=>e.onclick=()=>{
@@ -176,6 +177,14 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.assertEqual(record['skus'][1]['stock_status'], 'unavailable_unconfirmed')
         self.assertIsNone(record['skus'][1]['price'])
         self.assertNotIn([0, 1], self.page.evaluate('clicks'))
+        self.assertTrue(record['continuation_allowed'])
+        self.assertEqual(record['warnings'][0]['sku_name'],'3卷替换纸')
+        self.assertEqual(record['skus'][1]['unavailability_evidence'],['data-disabled=true'])
+        self.assertIn('无法识别价格',record['skus'][1]['price_reason'])
+        self.assertEqual(record['summary']['option_count'],3)
+        self.assertEqual(record['summary']['explicit_sku_id_count'],0)
+        self.assertEqual(record['result_section'],'sku_details_last_attempt')
+        self.assertTrue(Path(record['image_directory']).is_dir())
 
     def test_multiple_groups_reset_old_selection_before_linked_options(self):
         self.config.update(groups=[{'name': '颜色', 'options': [{'name': '红'}, {'name': '蓝'}]},
@@ -210,6 +219,7 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.opener.open.side_effect = lambda request, timeout: Response(request.full_url, b'not an image')
         second = self.collect()
         self.assertEqual(second['status'], 'partial')
+        self.assertFalse(second['continuation_allowed'])
         document = json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
         self.assertEqual(document['sku_details']['batch_id'], first['batch_id'])
         self.assertEqual(document['sku_details_last_attempt']['summary']['image_failed_count'], 3)
@@ -218,12 +228,15 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
 
     def test_publish_failure_restores_images_and_json(self):
         first = self.collect()
-        original = Path(first['record_path']).read_bytes()
+        original = json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
         with self.guard(), patch('ecommerce.modules.collection.detail_images.build_opener', return_value=self.opener), \
                 patch('ecommerce.modules.collection.detail_skus.save_detail_sections', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
                 collect_skus(self.settings, self.result, settle_ms=100)
-        self.assertEqual(Path(first['record_path']).read_bytes(), original)
+        current=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
+        self.assertEqual(current['sku_details'],original['sku_details'])
+        self.assertEqual(current['product_info'],original['product_info'])
+        self.assertEqual(current['sku_details_last_attempt']['status'],'interrupted')
         self.assertTrue(all(Path(s['image']['image_path']).exists() for s in first['skus']))
         self.assertFalse(list(product_directory(self.settings, ITEM_ID).glob('.sku-images-*')))
 
@@ -283,10 +296,12 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         paths = list(folder.rglob('sku_progress.json'))
         self.assertEqual(len(paths), 1)
         progress = json.loads(paths[0].read_text(encoding='utf-8'))
-        self.assertEqual(progress['status'], 'in_progress')
+        self.assertEqual(progress['status'], 'interrupted')
         self.assertEqual(progress['processed_count'], 1)
         self.assertEqual(progress['skus'][0]['price_value'], '3.35')
-        self.assertFalse((folder / (ITEM_ID+'.json')).exists())
+        document=json.loads((folder/(ITEM_ID+'.json')).read_text(encoding='utf-8'))
+        self.assertNotIn('sku_details',document)
+        self.assertEqual(document['sku_details_last_attempt']['status'],'interrupted')
 
     def test_hidden_duplicate_options_are_excluded_from_count_and_clicks(self):
         self.page.locator('#skuOptionsArea').evaluate("e=>{const c=e.firstElementChild.cloneNode(true);c.style.display='none';e.prepend(c)}")
@@ -322,6 +337,132 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.assertEqual(len(prompts), 1)
         self.assertEqual(data['skus'][1]['price_value'], '7.90')
         self.assertEqual(self.page.evaluate('clicks'), [[0,1], [0,2]])
+
+    def interrupt_images(self,index=2):
+        """保留前面的真实下载结果，在指定图片开始时模拟用户中断。"""
+        from ecommerce.modules.collection import detail_skus
+        original=detail_skus.download_image
+        def download(image,*args,**kwargs):
+            if image['index']==index:
+                raise TaskStopped('测试中断图片阶段')
+            return original(image,*args,**kwargs)
+        with patch.object(detail_skus,'download_image',side_effect=download),self.assertRaises(TaskStopped):
+            self.collect()
+        document=json.loads((product_directory(self.settings,ITEM_ID)/f'{ITEM_ID}.json').read_text(encoding='utf-8'))
+        self.opener.open.reset_mock()
+        return document['sku_details_last_attempt']
+
+    def test_resume_reuses_verified_images_but_refreshes_every_price(self):
+        first=self.interrupt_images()
+        old_path=Path(first['skus'][0]['image']['image_path'])
+        self.config['prices'].update({'0':'8.88','1':'6.60','2':'8.80'})
+        self.reload()
+        self.page.locator('.text--fixture').evaluate("e=>e.textContent='8.88'")
+        second=self.collect()
+        self.assertEqual(second['status'],'complete')
+        self.assertEqual([s['price_value'] for s in second['skus']],['8.88','6.60','8.80'])
+        self.assertEqual(second['price_refresh_policy'],'always_current_run')
+        self.assertTrue(all(s['price_checked_at'] for s in second['skus']))
+        self.assertEqual(second['summary']['image_reused_count'],1)
+        self.assertEqual(self.opener.open.call_count,2)
+        self.assertEqual(second['skus'][0]['image']['reused_from_batch_id'],first['batch_id'])
+        self.assertEqual(old_path.read_bytes(),png())
+        self.assertNotEqual(old_path,Path(second['skus'][0]['image']['image_path']))
+
+    def test_resume_after_cancellation_during_price_refresh_keeps_earlier_images(self):
+        first=self.interrupt_images()
+        self.config['prices']['1']='价格待确认'
+        self.reload();self.settings=replace(self.settings,timeout_ms=300)
+        with self.guard(lambda _:'停止'),self.assertRaises(TaskStopped):
+            collect_skus(self.settings,self.result,settle_ms=100)
+        self.config['prices']['1']='7.90'
+        self.reload();self.settings=replace(self.settings,timeout_ms=1800)
+        record=self.collect()
+        self.assertEqual(record['summary']['image_reused_count'],1)
+        self.assertEqual(record['skus'][0]['image']['reused_from_batch_id'],first['batch_id'])
+        self.assertEqual(self.opener.open.call_count,2)
+
+    def test_corrupt_history_file_is_redownloaded_and_other_success_is_reused(self):
+        first=self.interrupt_images(index=3)
+        Path(first['skus'][0]['image']['image_path']).write_bytes(b'damaged')
+        record=self.collect()
+        self.assertEqual(record['summary']['image_reused_count'],1)
+        self.assertEqual(self.opener.open.call_count,2)
+        self.assertEqual(record['skus'][0]['image_status'],'downloaded')
+
+    def test_changed_inventory_disables_reuse(self):
+        self.interrupt_images(index=3)
+        self.config['groups'][0]['options'][0]['name']='另一种商品规格'
+        self.reload()
+        record=self.collect()
+        self.assertIsNone(record['resumed_from_batch_id'])
+        self.assertEqual(record['summary']['image_reused_count'],0)
+        self.assertEqual(self.opener.open.call_count,3)
+
+    def test_changed_image_address_is_not_reused_even_with_same_option_names(self):
+        self.interrupt_images(index=3)
+        self.config['groups'][0]['options'][0]['image']=6
+        self.reload()
+        record=self.collect()
+        self.assertEqual(record['summary']['image_reused_count'],1)
+        self.assertIn('sku6.png',record['skus'][0]['image_url'])
+        self.assertEqual(self.opener.open.call_count,2)
+
+    def test_service_names_negative_value_ids_and_disabled_options_are_not_filtered(self):
+        options=self.config['groups'][0]['options']
+        options[0].update(name='运费险正常可售规格',valueId='-1',skuId='998877')
+        options[1].update(name='赠退货宝【运费险】',valueId='-2',disabled=True)
+        options[2].update(valueId='-3',skuId='-3')
+        self.reload()
+        record=self.collect()
+        self.assertEqual(record['candidate_count'],3)
+        self.assertTrue(record['continuation_allowed'])
+        self.assertEqual(record['summary']['explicit_sku_id_count'],1)
+        self.assertEqual(record['skus'][0]['sku_identity_status'],'explicit_dom_id')
+        self.assertEqual(record['skus'][1]['properties'][0]['value_id'],'-2')
+        self.assertIsNone(record['skus'][2]['sku_id'])
+        self.assertEqual(record['skus'][2]['sku_identity_status'],'not_provided')
+
+    def test_unconfirmed_multi_group_combination_remains_blocking(self):
+        self.config.update(groups=[{'name':'颜色','options':[{'name':'红'},{'name':'蓝','disabled':True}]},
+                                   {'name':'尺寸','options':[{'name':'小'},{'name':'大'}]}])
+        self.reload()
+        record=self.collect()
+        self.assertEqual(record['status'],'partial')
+        self.assertFalse(record['continuation_allowed'])
+        self.assertTrue(any(i['code']=='combination_unconfirmed' for i in record['blocking_issues']))
+
+    def test_http_blocking_failure_is_saved_before_manual_feedback_without_retry(self):
+        original=self.opener.open.side_effect
+        def download(request,timeout):
+            if 'sku2.png' in request.full_url:
+                raise HTTPError(request.full_url,403,'Forbidden',{},None)
+            return original(request,timeout)
+        self.opener.open.side_effect=download
+        messages=[]
+        def attention(message):
+            messages.append(message)
+            doc=json.loads((product_directory(self.settings,ITEM_ID)/f'{ITEM_ID}.json').read_text(encoding='utf-8'))
+            self.assertEqual(doc['sku_details_last_attempt']['skus'][1]['image_status'],'download_failed')
+            return '继续'
+        with self.guard(attention),patch('ecommerce.modules.collection.detail_images.build_opener',return_value=self.opener):
+            record=collect_skus(self.settings,self.result,settle_ms=100)
+        self.assertEqual(len(messages),1)
+        self.assertEqual(self.opener.open.call_count,3)
+        self.assertFalse(record['continuation_allowed'])
+        self.assertEqual(record['summary']['image_failed_count'],1)
+
+    def test_user_interrupt_while_publishing_restores_old_complete_result(self):
+        first=self.collect()
+        original=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
+        with patch('ecommerce.modules.collection.detail_skus.save_detail_sections',side_effect=KeyboardInterrupt),self.assertRaises(KeyboardInterrupt):
+            self.collect()
+        document=json.loads(Path(first['record_path']).read_text(encoding='utf-8'))
+        self.assertEqual(document['sku_details'],original['sku_details'])
+        self.assertEqual(document['product_info'],original['product_info'])
+        self.assertEqual(document['sku_details_last_attempt']['status'],'interrupted')
+        self.assertFalse(list(product_directory(self.settings,ITEM_ID).glob('.sku-images-*')))
+        self.assertTrue(all(Path(s['image']['image_path']).is_file() for s in first['skus']))
 
 
 if __name__ == '__main__':
