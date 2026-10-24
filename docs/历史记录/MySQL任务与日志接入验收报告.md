@@ -1,5 +1,7 @@
 # MySQL 任务与日志接入验收报告
 
+状态：历史归档。用途：清空前任务与日志接入的验收记录；旧证据已删除，历史阶段结论不表示当前实施范围。当前进度见[功能验收清单](../功能逐项验收清单.md)。
+
 状态说明：本报告为清空前的历史验收记录。2026-10-23 已按用户要求删除旧任务、日志、来源文件、切换标记及全部备份，报告中的旧证据路径已失效；当前状态见 [从零测试说明](从零测试说明.md)。
 
 日期：2026-10-23。本阶段已完成任务与日志接入、历史导入和正式查询切换；采集明细入库及 Web 实时推送留在后续阶段。
@@ -58,12 +60,12 @@
 
 机器证据：
 
-- [最终只读验收](../workspace/output/reports/mysql_task_final_acceptance_20261023.json)
-- [正式切换与首次内容核对](../workspace/output/reports/mysql_task_cutover_20261023.json)
-- [正式库实际结构](../workspace/output/reports/mysql_formal_schema_20261023.json)
-- [来源版本口径复核](../workspace/output/reports/mysql_task_source_version_20261023.json)
-- [最新备份恢复核对](../workspace/output/reports/mysql_task_backup_restore_20261023_104224.json)
-- [旧来源完整性核对](../workspace/output/reports/mysql_task_original_sources_20261023.json)
+- 最终只读验收（清空前证据，已删除；原路径：`workspace/output/reports/mysql_task_final_acceptance_20261023.json`）
+- 正式切换与首次内容核对（清空前证据，已删除；原路径：`workspace/output/reports/mysql_task_cutover_20261023.json`）
+- 正式库实际结构（清空前证据，已删除；原路径：`workspace/output/reports/mysql_formal_schema_20261023.json`）
+- 来源版本口径复核（清空前证据，已删除；原路径：`workspace/output/reports/mysql_task_source_version_20261023.json`）
+- 最新备份恢复核对（清空前证据，已删除；原路径：`workspace/output/reports/mysql_task_backup_restore_20261023_104224.json`）
+- 旧来源完整性核对（清空前证据，已删除；原路径：`workspace/output/reports/mysql_task_original_sources_20261023.json`）
 
 ## 5. 可用命令与下一阶段
 
@@ -78,7 +80,7 @@ cd /d "%TAOBAO_PROJECT%"
 "%TAOBAO_PROJECT%\.venv\Scripts\python.exe" "%TAOBAO_PROJECT%\main.py" web --port 8000
 ```
 
-网页目前支持历史查询及手动刷新，任务内游标为后续实时显示提供基础；全局自增编号只用于历史分页，不承诺全局实时无遗漏推送。更多参数、验证库命令及故障操作见 [使用指南](使用指南.md)。
+网页目前支持历史查询及手动刷新，任务内游标为后续实时显示提供基础；全局自增编号只用于历史分页，不承诺全局实时无遗漏推送。更多参数、验证库命令及故障操作见 [使用指南](../使用指南.md)。
 
 本报告记录任务日志阶段验收时点，该时点采集表为空。后续采集阶段已完成搜索/列表和商品详情各模块的采集结果及历史数据接入，当前状态见 [采集数据接入验收报告](MySQL采集数据接入验收报告.md)。Web 实时日志仍待后续实现。
 

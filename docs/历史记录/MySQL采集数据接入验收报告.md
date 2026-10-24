@@ -1,5 +1,7 @@
 # MySQL 采集数据接入验收报告
 
+状态：历史归档。用途：清空前采集接入的验收记录；旧证据已删除。当前进度见[功能验收清单](../功能逐项验收清单.md)。
+
 状态说明：本报告为清空前的历史验收记录。2026-10-23 已按用户要求删除旧采集数据、输入素材、登录资料及全部备份，报告中的旧证据路径已失效；当前状态见 [从零测试说明](从零测试说明.md)。
 
 日期：2026-10-23。采集资料已导入本机正式库 `taobao_automation`，配置 `task_backend="mysql"`、`collection_backend="mysql"` 已启用。任务、日志和结构化采集资料使用同一数据库；命令行输出及 `workspace/logs/run.log` 继续保留。
@@ -55,7 +57,7 @@
 
 测试全部使用临时目录、脱敏样例及本地模拟页面。独立库 `taobao_automation_verify` 的 22 张业务表最终均为空；清理按测试归属及已核实记录执行。正式 CLI 商品、批次、回答及结构检查，Web 采集页面和接口均完成实际查询核对。
 
-结构仍为 `0001_mysql_foundation`：22 张业务表加 1 张迁移版本表、276 个字段、47 个外键；中文原生表/字段备注、字段类型及约束与文档一致。复用已建结构，没有修改已执行迁移。完整字典和应用 JSON 口径同步更新，见 [字段字典](数据库字段字典.md)、[表关系说明](数据库表关系说明.md)。
+结构仍为 `0001_mysql_foundation`：22 张业务表加 1 张迁移版本表、276 个字段、47 个外键；中文原生表/字段备注、字段类型及约束与文档一致。复用已建结构，没有修改已执行迁移。完整字典和应用 JSON 口径同步更新，见 [字段字典](../数据库字段字典.md)、[表关系说明](../数据库表关系说明.md)。
 
 ## 5. 备份、原件与证据
 
@@ -67,13 +69,13 @@
 
 机器证据：
 
-- [切换及首次核对](../workspace/output/reports/mysql_collection_cutover_20261023.json)
-- [最终只读验收](../workspace/output/reports/mysql_collection_final_acceptance_20261023.json)
-- [备份恢复核对](../workspace/output/reports/mysql_collection_backup_restore_20261023_135135.json)
-- [固定来源清单](../workspace/backups/collection_history_20261023_135019_f21137a4/manifest.json)
+- 切换及首次核对（清空前证据，已删除；原路径：`workspace/output/reports/mysql_collection_cutover_20261023.json`）
+- 最终只读验收（清空前证据，已删除；原路径：`workspace/output/reports/mysql_collection_final_acceptance_20261023.json`）
+- 备份恢复核对（清空前证据，已删除；原路径：`workspace/output/reports/mysql_collection_backup_restore_20261023_135135.json`）
+- 固定来源清单（清空前证据，已删除；原路径：`workspace/backups/collection_history_20261023_135019_f21137a4/manifest.json`）
 
 ## 6. 当前入口与边界
 
-使用 `collections products`、`collections batches`、`collections records` 查询；本地工作台进入“采集资料”查看。完整 CMD 示例和参数见 [使用指南](使用指南.md#mysql-采集资料查询cmd)。
+使用 `collections products`、`collections batches`、`collections records` 查询；本地工作台进入“采集资料”查看。完整 CMD 示例和参数见 [使用指南](../操作参考/命令参考.md#mysql-采集资料查询cmd)。
 
 历史查询和手动刷新已接入，Web 自动实时日志推送尚未实现。数据库保存已确认采集资料，不表示已实现任意业务断点续跑；平台采集仍遵循原模块恢复条件及人工验证流程。
