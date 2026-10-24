@@ -16,7 +16,6 @@ import sqlalchemy as sa
 from ecommerce.infrastructure.storage import database
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError
 from ecommerce.infrastructure.storage.task_store import task_store,fingerprint
-from ecommerce.infrastructure.storage.task_history_import import snapshot_history,import_history,audit_history
 from ecommerce.infrastructure.tasks.events import TaskEvents,EventJournal,notify,current_events,replay_events
 from ecommerce.infrastructure.tasks.ownership import execution_key,owner_alive
 from ecommerce.infrastructure.tasks.runner import run_task
@@ -40,7 +39,6 @@ class MySQLTasksTests(unittest.TestCase):
         self.store.initialize()
         self.task_ids=set()
         self.event_keys=set()
-        self.run_ids=set()
         self.addCleanup(self.cleanup_records)
 
     def cleanup_records(self):
@@ -57,18 +55,9 @@ class MySQLTasksTests(unittest.TestCase):
                     self.task_ids.add(row['task_id'])
         tables=self.store.tables
         with self.store.engine.begin() as connection:
-            owned=connection.execute(sa.select(tables['import_runs'].c.id,tables['import_runs'].c.scope)).all()
-            self.run_ids.update(row.id for row in owned if str((row.scope or {}).get('manifest','')).startswith(str(self.base.root)))
-            if self.run_ids:
-                source_ids=sa.select(tables['import_sources'].c.id).where(tables['import_sources'].c.import_run_id.in_(self.run_ids))
-                connection.execute(tables['import_row_mappings'].delete().where(tables['import_row_mappings'].c.source_id.in_(source_ids)))
-                connection.execute(tables['import_issues'].delete().where(tables['import_issues'].c.import_run_id.in_(self.run_ids)))
-                connection.execute(tables['import_sources'].delete().where(tables['import_sources'].c.import_run_id.in_(self.run_ids)))
             events=tables['task_events']
-            connection.execute(events.delete().where(sa.or_(events.c.event_key.in_(self.event_keys),events.c.task_id.in_(self.task_ids),events.c.import_run_id.in_(self.run_ids))))
+            connection.execute(events.delete().where(sa.or_(events.c.event_key.in_(self.event_keys),events.c.task_id.in_(self.task_ids))))
             connection.execute(tables['tasks'].delete().where(tables['tasks'].c.id.in_(self.task_ids)))
-            if self.run_ids:
-                connection.execute(tables['import_runs'].delete().where(tables['import_runs'].c.id.in_(self.run_ids)))
 
     def new_session(self):
         """创建可追踪合成任务；参数：无；返回：事件会话。"""
@@ -164,47 +153,6 @@ class MySQLTasksTests(unittest.TestCase):
         row=next(r for r in self.store.list_tasks() if r['id']==result.task_id)
         self.assertEqual((row['status'],row['message']),('succeeded','真实业务完成'))
 
-    def test_import_is_idempotent_conflicts_rollback_and_history_never_recovers(self):
-        """原状态保留，固定快照重复导入无新增，内容冲突整批回滚。"""
-        database.initialize(self.base.database)
-        task_id=database.create_task(self.base.database,'example.history')
-        self.task_ids.add(task_id)
-        database.finish_task(self.base.database,task_id,'cancelled','原样取消')
-        event_dir=self.base.log_dir/'taobao'
-        event_dir.mkdir(parents=True)
-        event={'time':'2026-10-20T12:00:00+08:00','task_id':task_id,'event':'manual_wait','step':'检查样例','state':'needs_attention'}
-        (event_dir/(task_id+'.jsonl')).write_text(json.dumps(event)+'\n',encoding='utf-8')
-        (self.base.log_dir/'run.log').write_text('2026-10-20 12:00:00,000 [ERROR] ecommerce.example - 多行\nTraceback\n  续行\n',encoding='utf-8')
-        manifest=snapshot_history(self.base)
-        report=import_history(self.store,manifest)
-        self.run_ids.add(report['import_run_id'])
-        self.assertEqual((report['counts']['tasks_inserted'],report['counts']['events_inserted']),(1,2))
-        self.assertEqual(audit_history(self.store,manifest)['verified_records'],{'tasks':1,'task_events':2})
-        with self.store.engine.connect() as connection:
-            source=self.store.tables['import_sources']
-            versions=dict(connection.execute(sa.select(source.c.source_kind,source.c.schema_version).where(source.c.import_run_id==report['import_run_id'])).all())
-        self.assertEqual(versions,{'task_sqlite':1,'taobao_events':None,'text_log':None})
-        repeated=import_history(self.store,manifest)
-        self.assertTrue(repeated['already_committed'])
-        self.assertEqual(len(self.store.list_events(task_id=task_id)['events']),1)
-        with (event_dir/(task_id+'.jsonl')).open('a',encoding='utf-8') as handle:
-            handle.write(json.dumps(dict(event,time='2026-10-20T12:00:01+08:00'))+'\n')
-        extended=snapshot_history(self.base)
-        appended=import_history(self.store,extended)
-        self.run_ids.add(appended['import_run_id'])
-        self.assertEqual((appended['counts']['tasks_matched'],appended['counts']['events_matched'],appended['counts']['events_inserted']),(1,2,1))
-        self.assertTrue(audit_history(self.store,extended)['passed'])
-        self.assertEqual(len(self.store.list_events(task_id=task_id)['events']),2)
-        self.assertEqual(self.store.recover_interrupted(execution_key(self.settings),lambda *_:False),0)
-        with self.assertRaises(MySQLStorageError):
-            self.store.apply_operation(self.event_operation(task_id))
-        with database.connect(self.base.database) as connection:
-            connection.execute('UPDATE tasks SET message=? WHERE id=?',('被修改',task_id))
-        changed=snapshot_history(self.base)
-        with self.assertRaises(MySQLStorageError):
-            import_history(self.store,changed)
-        row=next(r for r in self.store.list_tasks() if r['id']==task_id)
-        self.assertEqual((row['status'],row['message']),('cancelled','原样取消'))
 
     def test_web_and_cli_share_filters_escape_html_and_return_503(self):
         """历史接口校验、HTML转义及断库错误明确，不返回假的空记录。"""
@@ -228,22 +176,6 @@ class MySQLTasksTests(unittest.TestCase):
             self.assertEqual(client.get('/tasks').status_code,503)
         self.assertTrue(session.finish('succeeded','接口验证通过'))
 
-    def test_uncommitted_import_roots_are_hidden(self):
-        """未发布的导入任务及事件均不可从正常历史查询看见。"""
-        tasks,runs=self.store.tables['tasks'],self.store.tables['import_runs']
-        task_id=uuid4().hex
-        self.task_ids.add(task_id)
-        with self.store.engine.begin() as connection:
-            run_id=connection.execute(runs.insert().values(started_at=datetime.now(timezone.utc).replace(tzinfo=None),status='running',
-                manifest_sha256=fingerprint(task_id),parser_version='test')).inserted_primary_key[0]
-            self.run_ids.add(run_id)
-            connection.execute(tasks.insert().values(id=task_id,name='example.hidden',status='succeeded',origin='historical',
-                started_at=datetime.now(timezone.utc).replace(tzinfo=None),import_run_id=run_id))
-            connection.execute(self.store.tables['task_events'].insert().values(task_id=task_id,task_sequence=1,
-                event_type='hidden',message='暂存样例',origin='historical',event_key='test:'+uuid4().hex,
-                time_basis='unknown',recorded_at=datetime.now(timezone.utc).replace(tzinfo=None),import_run_id=run_id))
-        self.assertNotIn(task_id,[r['id'] for r in self.store.list_tasks(500)])
-        self.assertEqual(self.store.list_events(task_id=task_id)['events'],[])
 
     def test_recovery_checks_resource_and_process_identity(self):
         """不恢复仍存活任务，恢复当前失效资源不影响另一资源。"""

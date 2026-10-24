@@ -17,11 +17,10 @@ from ecommerce.infrastructure.storage.collection_queries import batches,records,
 from ecommerce.infrastructure.tasks.events import current_events,replay_events
 from ecommerce.infrastructure.tasks.runner import run_task
 from ecommerce.modules.collection.detail_storage import save_detail_section
-from ecommerce.modules.collection.history import snapshot_history,preview_history,import_history,audit_history
 from ecommerce.shared.config import load_settings
 from ecommerce.shared.logging import setup_logging
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError
-from tests.collection_fixture import create_sources
+from tests.collection_fixture import create_sources,save_fixture
 from ecommerce.web.app import create_app
 
 
@@ -53,26 +52,18 @@ class MySQLCollectionTests(unittest.TestCase):
                     self.task_ids.add(row['task_id'])
         t=self.store.tables
         with self.store.engine.begin() as connection:
-            owned_runs=[row.id for row in connection.execute(sa.select(t['import_runs'].c.id,t['import_runs'].c.scope))
-                        if str((row.scope or {}).get('manifest','')).startswith(str(self.base.root))]
             product_ids=list(connection.execute(sa.select(t['products'].c.id).where(t['products'].c.platform_product_id.in_(self.external_ids))).scalars())
-            batch_ids=list(connection.execute(sa.select(t['collection_batches'].c.id).where(sa.or_(
-                t['collection_batches'].c.task_id.in_(self.task_ids),t['collection_batches'].c.import_run_id.in_(owned_runs)))).scalars())
-            collection_runs=list(connection.execute(sa.select(t['collection_runs'].c.id).where(sa.or_(
-                t['collection_runs'].c.task_id.in_(self.task_ids),t['collection_runs'].c.import_run_id.in_(owned_runs)))).scalars())
+            batch_ids=list(connection.execute(sa.select(t['collection_batches'].c.id).where(t['collection_batches'].c.task_id.in_(self.task_ids))).scalars())
+            collection_runs=list(connection.execute(sa.select(t['collection_runs'].c.id).where(t['collection_runs'].c.task_id.in_(self.task_ids))).scalars())
             media=t['media_references']
+            # 仅解除本测试拥有的新来源边，再按旧顺序清理；不碰其他任务数据。
+            connection.execute(t['collection_runs'].update().where(t['collection_runs'].c.id.in_(collection_runs)).values(entry_record_id=None))
+            connection.execute(t['search_records'].update().where(t['search_records'].c.task_id.in_(self.task_ids)).values(source_list_observation_id=None))
             media_where=sa.or_(media.c.batch_id.in_(batch_ids),media.c.task_id.in_(self.task_ids))
             file_ids=set(connection.execute(sa.select(media.c.file_asset_id).where(media_where,media.c.file_asset_id.is_not(None))).scalars())
             files=t['file_assets']
             owned_paths=sa.or_(*(files.c.relative_path.startswith('output/raw/taobao_details/'+identifier+'/',autoescape=True) for identifier in self.external_ids))
             file_ids.update(connection.execute(sa.select(files.c.id).where(owned_paths)).scalars())
-            if owned_runs:
-                source_ids=sa.select(t['import_sources'].c.id).where(t['import_sources'].c.import_run_id.in_(owned_runs))
-                file_ids.update(int(value) for value in connection.execute(sa.select(t['import_row_mappings'].c.target_key).where(
-                    t['import_row_mappings'].c.source_id.in_(source_ids),t['import_row_mappings'].c.target_table=='file_assets')).scalars())
-                connection.execute(t['import_row_mappings'].delete().where(t['import_row_mappings'].c.source_id.in_(source_ids)))
-                connection.execute(t['import_issues'].delete().where(t['import_issues'].c.import_run_id.in_(owned_runs)))
-                connection.execute(t['import_sources'].delete().where(t['import_sources'].c.import_run_id.in_(owned_runs)))
             connection.execute(t['products'].update().where(t['products'].c.id.in_(product_ids)).values(title_source_batch_id=None))
             connection.execute(t['product_current_sections'].delete().where(t['product_current_sections'].c.product_id.in_(product_ids)))
             connection.execute(t['task_events'].delete().where(t['task_events'].c.task_id.in_(self.task_ids)))
@@ -84,11 +75,10 @@ class MySQLCollectionTests(unittest.TestCase):
             connection.execute(t['collection_batches'].delete().where(t['collection_batches'].c.id.in_(batch_ids)))
             connection.execute(t['collection_steps'].delete().where(t['collection_steps'].c.run_id.in_(collection_runs)))
             connection.execute(t['collection_runs'].delete().where(t['collection_runs'].c.id.in_(collection_runs)))
-            connection.execute(t['search_records'].delete().where(sa.or_(t['search_records'].c.task_id.in_(self.task_ids),t['search_records'].c.import_run_id.in_(owned_runs))))
+            connection.execute(t['search_records'].delete().where(t['search_records'].c.task_id.in_(self.task_ids)))
             connection.execute(t['file_assets'].delete().where(t['file_assets'].c.id.in_(file_ids)))
             connection.execute(t['products'].delete().where(t['products'].c.id.in_(product_ids)))
             connection.execute(t['tasks'].delete().where(t['tasks'].c.id.in_(self.task_ids)))
-            connection.execute(t['import_runs'].delete().where(t['import_runs'].c.id.in_(owned_runs)))
 
     def fixture(self):
         """生成已登记任务下的历史样例；参数：无；返回：临时来源。"""
@@ -100,17 +90,13 @@ class MySQLCollectionTests(unittest.TestCase):
     def test_all_modules_roundtrip_idempotence_and_scope(self):
         """数量、价格空值、模糊总量、重复位置、参数重名及问答父子关系保持一致。"""
         fixture=self.fixture()
-        manifest=snapshot_history(self.base)
-        preview=preview_history(self.base,manifest)
-        imported=import_history(self.base,manifest)
-        self.assertEqual(imported['status'],'committed')
-        self.assertEqual(imported['counts']['inserted']['collection_batches'],9)
-        self.assertTrue(audit_history(self.base,manifest)['passed'])
-        repeated=import_history(self.base,manifest)
-        self.assertTrue(repeated['already_committed'])
-        next_snapshot=snapshot_history(self.base)
-        again=import_history(self.base,next_snapshot)
-        self.assertTrue(again['already_committed'])
+        with self.store.engine.begin() as connection:
+            saved=save_fixture(self.base,connection,fixture)
+        self.assertEqual(len(saved),9)
+        before=batches(self.base,product_id=self.external_id)['batches']
+        with self.store.engine.begin() as connection:
+            save_fixture(self.base,connection,fixture)
+        self.assertEqual([row['id'] for row in before],[row['id'] for row in batches(self.base,product_id=self.external_id)['batches']])
         rows=batches(self.base,product_id=self.external_id)['batches']
         by_module={row['module']:row for row in rows}
         self.assertEqual((by_module['reviews']['coverage_status'],by_module['reviews']['end_confirmed']),('limit_reached',False))
@@ -130,7 +116,6 @@ class MySQLCollectionTests(unittest.TestCase):
         self.assertNotIn('sku_details',document)
         self.assertEqual(document['sku_details_last_attempt']['status'],'partial')
         self.assertEqual(len(products(self.base)['products']),2)
-        self.assertEqual(preview['counts']['product_current_sections'],7)
         with self.store.engine.connect() as connection:
             listing=self.store.tables['list_observations']
             self.assertEqual(connection.scalar(sa.select(sa.func.count()).select_from(listing)),2)
@@ -140,10 +125,8 @@ class MySQLCollectionTests(unittest.TestCase):
         fixture=self.fixture()
         image=fixture['records']['main_images']['images'][0]
         Path(image['image_path']).unlink()
-        manifest=snapshot_history(self.base)
-        report=import_history(self.base,manifest)
-        self.assertEqual(report['counts']['quarantined_batches'],1)
-        self.assertTrue(audit_history(self.base,manifest)['passed'])
+        with self.store.engine.begin() as connection:
+            save_fixture(self.base,connection,fixture)
         self.assertNotIn('main_images',detail_document(self.base,self.external_id))
         isolated=batches(self.base,product_id=self.external_id,module='main_images',include_quarantined=True)['batches']
         self.assertEqual(isolated[0]['visibility'],'quarantined')
@@ -151,25 +134,11 @@ class MySQLCollectionTests(unittest.TestCase):
         record=json.loads(path.read_text(encoding='utf-8'))
         record['items'][0]['value']='冲突的新值'
         path.write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
-        changed=snapshot_history(self.base)
         with self.assertRaises(MySQLStorageError):
-            import_history(self.base,changed)
+            with self.store.engine.begin() as connection:
+                save_fixture(self.base,connection,fixture)
         self.assertEqual(detail_document(self.base,self.external_id)['parameters']['items'][0]['value'],'值1')
 
-    def test_later_historical_import_preserves_live_current_section(self):
-        """实时批次已推进后导入较早历史，指针及执行期有效分区均不得回退。"""
-        self.fixture()
-        manifest=snapshot_history(self.base)
-        settings=replace(self.base,collection_backend='mysql')
-        result=run_task(settings,'example.collection.newer',lambda:self._parameter_action(settings))
-        self.assertEqual(result.status,'succeeded')
-        before=detail_document(settings,self.external_id)['parameters']
-        imported=import_history(self.base,manifest)
-        self.assertEqual(imported['status'],'committed')
-        self.assertTrue(audit_history(self.base,manifest)['passed'])
-        after=detail_document(settings,self.external_id)['parameters']
-        self.assertEqual(after['batch_id'],before['batch_id'])
-        self.assertEqual(after['items'],before['items'])
 
     def test_live_derivation_cycle_is_rejected(self):
         """同任务的部分批次也不能形成环，失败后原派生关系保持不变。"""
@@ -195,7 +164,7 @@ class MySQLCollectionTests(unittest.TestCase):
             parent=connection.scalar(sa.select(table.c.derived_from_batch_id).where(table.c.source_batch_key==keys[0]))
             self.assertIsNone(parent)
 
-    def _parameter_action(self,settings):
+    def _parameter_action(self,settings,*,value='当前任务实际保存的样例',status='complete'):
         """创建实际可确认的脱敏参数观察；参数：临时配置；返回：任务结语。"""
         session=current_events()
         task_id=session.task_id
@@ -204,13 +173,32 @@ class MySQLCollectionTests(unittest.TestCase):
         root=settings.workspace/'output/raw/taobao_details'/self.external_id
         path=root/'history'/batch/'parameters.json'
         path.parent.mkdir(parents=True)
-        record={'schema_version':1,'task_id':task_id,'batch_id':batch,'product_id':self.external_id,'status':'complete',
+        record={'schema_version':1,'task_id':task_id,'batch_id':batch,'product_id':self.external_id,'status':status,
             'scope':'product_parameters','captured_at':'2026-10-20T04:00:00+00:00',
             'history_record_file':path.relative_to(root).as_posix(),
-            'items':[{'index':1,'name':'参数','value':'当前任务实际保存的样例','status':'read'}]}
+            'items':[{'index':1,'name':'参数','value':value,'status':'read'}]}
         path.write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
-        save_detail_section(root,self.external_id,'parameters',record)
+        save_detail_section(root,self.external_id,'parameters' if status=='complete' else 'parameters_last_attempt',record)
         return '脱敏观察已保存'
+
+    def test_recollection_updates_valid_section_and_partial_attempt_keeps_it(self):
+        """同商品同范围重采切换有效批次，部分尝试不替换且三次历史均保留。"""
+        settings=replace(self.base,collection_backend='mysql')
+        def action():
+            """经实际持久流水保存三轮参数；参数：无；返回：结束说明。"""
+            for value,status in [('第一版','complete'),('第二版','complete'),('未完成版本','partial')]:
+                self._parameter_action(settings,value=value,status=status)
+                current_events().checkpoint('本地参数结果已确认')
+            return '重采与部分结果保留验证完成'
+        result=run_task(settings,'example.collection.recollect',action)
+        self.assertEqual(result.status,'succeeded',result.message)
+        rows=batches(settings,product_id=self.external_id,module='parameters')['batches']
+        self.assertEqual(len(rows),3)
+        self.assertCountEqual([row['status'] for row in rows],['partial','complete','complete'])
+        document=detail_document(settings,self.external_id)
+        self.assertEqual(document['parameters']['items'][0]['value'],'第二版')
+        self.assertEqual(document['parameters_last_attempt']['items'][0]['value'],'未完成版本')
+        self.assertEqual({records(settings,row['id'])['records'][0]['value'] for row in rows},{'第一版','第二版','未完成版本'})
 
     def test_runtime_collection_is_ordered_before_finish_and_does_not_write_old_task_db(self):
         """完成事件必须排在采集事务之后，新的任务结果不写旧任务 SQLite。"""
@@ -296,9 +284,9 @@ class MySQLCollectionTests(unittest.TestCase):
 
     def test_web_uses_same_history_filters_and_escapes_review_text(self):
         """网页和接口共用查询，参数错误明确，评价正文不执行脚本。"""
-        self.fixture()
-        manifest=snapshot_history(self.base)
-        import_history(self.base,manifest)
+        fixture=self.fixture()
+        with self.store.engine.begin() as connection:
+            save_fixture(self.base,connection,fixture)
         settings=replace(self.base,collection_backend='mysql')
         client=create_app(settings).test_client()
         rows=client.get('/api/collections/batches',query_string={'product_id':self.external_id}).get_json()['batches']
@@ -313,6 +301,72 @@ class MySQLCollectionTests(unittest.TestCase):
                      '/api/collections/batches?module=unknown','/api/collections/batches?include_quarantined=bad']:
             self.assertEqual(client.get(path).status_code,400)
         self.assertEqual(client.get('/api/collections/batches/999999999999/records').status_code,404)
+
+    def test_runtime_two_products_keep_distinct_entries_runs_and_source_context(self):
+        """统一持久流水中两商品分别关联入口与参数，逐商品上下文恢复且来源不串写。"""
+        from unittest.mock import MagicMock
+        from ecommerce.modules.collection import detail_service
+        from ecommerce.modules.collection.persistence import capture_list
+        from ecommerce.platforms.taobao.detail import DetailPage, resolve_detail_input
+        settings=replace(self.base,collection_backend='mysql')
+        outputs=[]
+        def action():
+            """用本地参数结果验证实际业务保存链；参数：无；返回：结束说明。"""
+            session=current_events()
+            self.task_ids.add(session.task_id)
+            listing={'schema_version':4,'task_id':session.task_id,'batch_id':session.task_id+'-list',
+                'keyword':'脱敏样例','search_method':'keyword','page_number':1,'sort_label':'销量','search_options':None,
+                'collection_status':'limit_reached','scope':'search_page_loaded_cards','requested_limit':2,
+                'items':[{'product_id':identifier,'product_index':i,'slot_index':i,'title':'脱敏商品','price_text':'¥2','price_value':'2'}
+                    for i,identifier in enumerate(self.external_ids,1)]}
+            path=settings.workspace/'list.json'
+            path.write_text(json.dumps(listing),encoding='utf-8')
+            capture_list(settings,listing,path)
+            session.checkpoint('本地列表已保存')
+            for index,identifier in enumerate(self.external_ids,1):
+                page=MagicMock()
+                page.url='https://item.taobao.com/item.htm?id='+identifier
+                page.screenshot.side_effect=lambda **kw:Path(kw['path']).write_bytes(b'local-screenshot-fixture')
+                detail=DetailPage(page,resolve_detail_input('https://item.taobao.com/item.htm?id='+identifier),'脱敏详情')
+                guard=MagicMock()
+                guard.task_id=session.task_id
+                guard.perform.side_effect=lambda step,action,**kw:action()
+                guard.checkpoint.side_effect=lambda step:session.checkpoint(step)
+                def collect_parameters(config,result):
+                    """保存带独立批次的本地参数；参数：配置、详情；返回：已保存结果。"""
+                    directory=config.workspace/'output/raw/taobao_details'/result.target.item_id
+                    batch=session.task_id+'-'+uuid4().hex[:8]
+                    record={'product_id':result.target.item_id,'task_id':session.task_id,'batch_id':batch,'status':'complete',
+                            'items':[{'index':1,'name':'品牌','value':'本地样例','status':'read'}],
+                            'history_record_file':'history/'+batch+'/parameters.json'}
+                    destination=directory/record['history_record_file']
+                    destination.parent.mkdir(parents=True)
+                    destination.write_text(json.dumps(record),encoding='utf-8')
+                    save_detail_section(directory,result.target.item_id,'parameters',record)
+                    return dict(record,message='本地参数已保存',record_path=str(destination))
+                source={k:listing[k] for k in ['keyword','search_method','page_number','sort_label','search_options']}
+                source['list_source']={'source_batch_key':listing['batch_id'],'product_index':index,'product_id':identifier}
+                with patch.object(detail_service,'active_guard',return_value=guard),patch.object(detail_service,'inspect_detail_entry',return_value=detail),\
+                     patch.object(detail_service,'save_session'),patch('ecommerce.modules.collection.detail_parameters.collect_parameters',collect_parameters):
+                    outputs.append(detail_service.collect_detail_page(settings,object(),detail,source=source,video=False,main_images=False,skus=False,
+                        parameters=True,detail_images=False,review_summary=False,reviews=False,questions=False))
+                self.assertIsNone(getattr(session,'detail_source',None))
+                self.assertIsNone(getattr(session,'collection_run_key',None))
+            return '两商品来源关联完成'
+        result=run_task(settings,'example.collection.list_details',action)
+        self.assertEqual(result.status,'succeeded',result.message)
+        t=self.store.tables
+        with self.store.engine.connect() as connection:
+            rows=connection.execute(sa.select(t['collection_runs']).where(t['collection_runs'].c.task_id==result.task_id)).mappings().all()
+            self.assertEqual(len(rows),2)
+            self.assertEqual(len({r['entry_record_id'] for r in rows}),2)
+            for run in rows:
+                entry=connection.execute(sa.select(t['search_records']).where(t['search_records'].c.id==run['entry_record_id'])).mappings().one()
+                self.assertEqual(entry['product_id'],run['product_id'])
+                self.assertIsNotNone(entry['source_list_observation_id'])
+                batch=connection.execute(sa.select(t['collection_batches']).where(t['collection_batches'].c.run_id==run['id'])).mappings().one()
+                self.assertEqual((batch['product_id'],batch['search_keyword']),(run['product_id'],'脱敏样例'))
+        self.assertNotEqual(outputs[0]['entry_key'],outputs[1]['entry_key'])
 
     def test_runtime_full_report_retains_sections_and_links_events(self):
         """同任务内逐模块保存后仍保留汇总、有效分区和部分SKU，事件关联真实运行。"""

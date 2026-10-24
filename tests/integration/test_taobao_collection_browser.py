@@ -378,7 +378,9 @@ class TaobaoCollectionBrowserTests(unittest.TestCase):
             }""", [ad, video, survey, video])
             service.collect_from_search(self.settings, self.context, result)
         payload = self.read_payload()
-        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload['requested_page_count'], 1)
+        self.assertFalse(payload['pagination_performed'])
         first, second, repeated = payload["items"]
         self.assertEqual(first["product_id"], "1007759256325")
         self.assertEqual(first["shop_name"], "爱格智汇家家居旗舰店")

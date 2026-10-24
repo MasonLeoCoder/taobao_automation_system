@@ -2,6 +2,8 @@
 from ecommerce.infrastructure.tasks.events import notify as print
 import json
 from importlib import import_module
+from uuid import uuid4
+from ecommerce.infrastructure.tasks.events import current_events
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -16,16 +18,40 @@ from ecommerce.shared.exceptions import NeedsAttention
 
 
 def open_detail_input(settings, value, *, wait=True, on_attention=None, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False):
+    """独立入口建立会话；参数：目标与模块开关；返回：实际采集说明。"""
     if all_reviews and not (reviews or questions):
         raise ValueError('--all 必须与 --reviews 或 --questions 一起使用')
     target = resolve_detail_input(value)
-    step_error = None
     with browser_session(settings, on_attention=on_attention) as (context, page):
         page = authenticate(context, page, settings)
         result = open_detail(page, target.url if target.input_type == "url" else target.item_id, settings.timeout_ms)
+        return collect_detail_page(settings,context,result,wait=wait,video=video,main_images=main_images,skus=skus,
+            parameters=parameters,detail_images=detail_images,review_summary=review_summary,reviews=reviews,
+            all_reviews=all_reviews,questions=questions)['message']
+
+
+def collect_detail_page(settings,context,result,*,wait=False,source=None,video=True,main_images=True,skus=True,
+                        parameters=True,detail_images=True,review_summary=True,reviews=True,all_reviews=False,questions=True):
+    """在调用方详情页执行模块；参数：会话、详情页、来源与选项；返回：独立商品运行汇总。"""
+    if all_reviews and not (reviews or questions):
+        raise ValueError('--all 必须与 --reviews 或 --questions 一起使用')
+    target=result.target
+    step_error=None
+    guard=active_guard()
+    if guard is None:
+        raise RuntimeError('详情采集必须使用当前淘宝守卫')
+    entry_key=guard.task_id+'-entry-'+uuid4().hex[:12]
+    entry_file_key=entry_key if source else guard.task_id
+    session=current_events()
+    previous_run=getattr(session,'collection_run_key',None)
+    previous_source=getattr(session,'detail_source',None)
+    if session is not None:
+        session.collection_run_key=None
+        session.detail_source=source
+    try:
         guard = active_guard()
         guard.resume_check = lambda: inspect_detail_entry(result.page, target) is not None
-        screenshot = settings.log_dir / "screenshots" / f"taobao-detail-open-{guard.task_id}.png"
+        screenshot = settings.log_dir / "screenshots" / f"taobao-detail-open-{entry_file_key}.png"
         screenshot.parent.mkdir(parents=True, exist_ok=True)
         screenshot_note = None
         while True:
@@ -41,14 +67,17 @@ def open_detail_input(settings, value, *, wait=True, on_attention=None, video=Fa
                 result = confirmed
                 break
             guard.request_attention(result.page, "保存入口记录前页面发生变化，请恢复输入商品的详情页后回复继续", step="复核详情页入口")
-            screenshot = settings.log_dir / "screenshots" / f"taobao-detail-open-{guard.task_id}.png"
+            screenshot = settings.log_dir / "screenshots" / f"taobao-detail-open-{entry_file_key}.png"
             screenshot_note = None
         record = {"task_id": guard.task_id, "product_id": target.item_id, "input_type": target.input_type,
                   "requested_url": target.canonical_url, "source_url": resolve_detail_input(result.page.url).canonical_url,
                   "status": "opened_pending_dom_review", "checked_at": now(), "document_title": result.document_title,
                   "screenshot": str(screenshot) if screenshot else None, "screenshot_note": screenshot_note,
                   "product_fields_collected": False}
-        destination = settings.workspace / "output/raw/taobao_detail_open" / f"{guard.task_id}.json"
+        record['entry_key']=entry_key
+        if source:
+            record.update(source)
+        destination = settings.workspace / "output/raw/taobao_detail_open" / f"{entry_file_key}.json"
 
         def save_record():
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +88,7 @@ def open_detail_input(settings, value, *, wait=True, on_attention=None, video=Fa
             capture_page(settings,record,destination,'detail_open')
 
         guard.perform("保存详情页入口记录", save_record)
+        guard.checkpoint("详情入口已入库，准备创建商品运行")
         save_session(context, settings)
         message = f"商品 {target.item_id} 详情页入口已打开，等待 DOM 字段核对；入口记录：{destination}"
         print(message, flush=True)
@@ -72,7 +102,7 @@ def open_detail_input(settings, value, *, wait=True, on_attention=None, video=Fa
                ('review_summary','detail_review_summary','collect_review_summary',{'complete'}),
                ('reviews','detail_reviews','collect_reviews',{'complete','no_reviews'}),
                ('questions','detail_questions','collect_questions',{'complete','no_questions'})]
-        report=DetailCollectionReport(settings,target.item_id,guard.task_id,requested) if any(requested.values()) else None
+        report=DetailCollectionReport(settings,target.item_id,guard.task_id,requested,entry_key=entry_key,source=source) if any(requested.values()) else None
         try:
             for name,module_name,function_name,accepted in steps:
                 if not requested[name] or step_error is not None:
@@ -100,8 +130,15 @@ def open_detail_input(settings, value, *, wait=True, on_attention=None, video=Fa
                 except (OSError,ValueError):
                     print('本次汇总更新失败，请查看最后保存的模块进度。',flush=True)
             raise
+        guard.checkpoint('当前商品详情及汇总已确认入库')
         if wait and not settings.headless:
             keep_detail_open(result)
         if step_error:
             raise NeedsAttention(step_error)
-    return message
+        return {'message':message,'product_id':target.item_id,'entry_key':entry_key,
+                'source_run_key':report.record['batch_id'] if report else None,
+                'status':report.record['status'] if report else 'entry_only'}
+    finally:
+        if session is not None:
+            session.collection_run_key=previous_run
+            session.detail_source=previous_source

@@ -102,6 +102,18 @@ class TaobaoDetailBrowserTests(unittest.TestCase):
                 open_detail(self.home, "1007759256325", 1000)
         self.assertEqual(len(self.detail_requests), 1)
 
+    def test_normal_close_after_retained_view_does_not_cancel_finished_detail(self):
+        """正常关闭查看标签后不再扫描已关闭页面，独立入口仍正常返回成功。"""
+        from ecommerce.platforms.taobao import session
+        @contextmanager
+        def browser(settings):
+            yield self.context,self.home
+        with patch.object(session,'base_browser_session',browser),\
+             patch('ecommerce.modules.collection.detail_service.keep_detail_open',side_effect=lambda result:result.page.close()):
+            message=open_detail_input(replace(self.settings,headless=False),'1007759256325',wait=True)
+        self.assertIn('入口已打开',message)
+        self.assertTrue(self.home.is_closed())
+
     def test_independent_service_records_entry_and_pending_dom_status(self):
         from ecommerce.platforms.taobao import session
 

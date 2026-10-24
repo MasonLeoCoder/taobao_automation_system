@@ -73,9 +73,14 @@ def matches_search_url(page, keyword):
         return False
 
 
-def canonical_search_url(keyword):
-    """输出只保留本次关键词，不保存跟踪、授权或设备参数。"""
-    return "https://s.taobao.com/search?" + urlencode({"q": keyword})
+def canonical_search_url(keyword, *, page_number=1):
+    """生成公开来源地址；参数：关键词、已由URL核对的页码；返回：不含追踪授权参数的地址。"""
+    if type(page_number) is not int or page_number < 1:
+        raise ValueError('来源页码须为正整数')
+    parameters = {"q": keyword}
+    if page_number > 1:
+        parameters['page'] = page_number
+    return "https://s.taobao.com/search?" + urlencode(parameters)
 
 
 def inspect_search(page, keyword):

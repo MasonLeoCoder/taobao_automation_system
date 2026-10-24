@@ -258,12 +258,17 @@ def batch_rows(settings,module,record,directory):
         yield media('screenshot',1,file=asset(settings,record['screenshot']))
 
 
-def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None):
+def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None,source=None):
     """建立可重放的数据快照；参数：配置、类型、原记录及来源；返回：不可变引用。"""
+    scope_record=record
+    if source:
+        if any(key in record and record[key]!=value for key,value in source.items()):
+            raise ValueError('模块原记录与详情来源上下文冲突')
+        record={**record,**source}
     source_path=Path(source_path).resolve()
     source_relative=source_path.relative_to(settings.workspace.resolve()).as_posix()
     item_id=product_id(record.get('product_id'))
-    identity=record.get('batch_id') or source_relative.casefold()
+    identity=record.get('batch_id') or record.get('entry_key') or source_relative.casefold()
     header={'kind':kind,'module':module,'task_id':record.get('task_id'),'product_id':item_id,
             'logical_key':fingerprint(['collection_v1',kind,module,identity]),'source_relative_path':source_relative}
     if record.get('search_method')=='image':
@@ -275,6 +280,8 @@ def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None
             raise ValueError('搜索输入图片不存在，不能登记为新图片搜索来源')
         header['search_image']=image_asset
     if kind=='report':
+        if record.get('entry_key'):
+            header['entry_key']=record['entry_key']
         header['values']={'source_run_key':record['batch_id'],'status':record['status'],'started_at':record.get('started_at'),
             'finished_at':record.get('finished_at'),'warnings':record.get('warnings'),'error':record.get('error') or
                 ({'type':record['error_type']} if record.get('error_type') else None)}
@@ -289,6 +296,8 @@ def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None
                     'started_at':step.get('started_at'),'finished_at':step.get('finished_at'),
                     'warnings':step.get('warnings'),'blocking_issues':step.get('blocking_issues'),'payload':payload})
     elif kind=='page':
+        if record.get('list_source'):
+            header['list_source']=record['list_source']
         header['values']={'record_type':module,'keyword':record.get('keyword'),'page_number':record.get('page_number'),
             'sort_label':record.get('sort_label'),'status':record['status'],'source_url':record.get('source_url'),
             'captured_at':record.get('checked_at'),'payload':{'record':record}}
@@ -299,7 +308,7 @@ def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None
             if record.get('screenshot'):
                 yield media('screenshot',1,file=asset(settings,record['screenshot']),payload={'page_logical_key':header['logical_key']})
     elif kind=='batch':
-        scope_key,contract,coverage=scope_contract(module,record)
+        scope_key,contract,coverage=scope_contract(module,scope_record)
         metadata={k:v for k,v in record.items() if k not in {'items','skus','images','raw_items','raw_html','image_results','unknown_fragments'}}
         status=record.get('video_status',record.get('status',record.get('collection_status')))
         header['values']={'platform':'taobao','source_batch_key':record['batch_id'],'module':module,'status':status,

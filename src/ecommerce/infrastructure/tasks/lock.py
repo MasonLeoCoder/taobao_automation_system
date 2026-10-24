@@ -1,9 +1,19 @@
 """操作系统级文件锁，进程退出自动释放。"""
 
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 from ecommerce.shared.exceptions import TaskBusy
+
+
+@contextmanager
+def all_browser_resources(settings):
+    """按固定顺序锁定两平台资源；参数：原始配置；返回：升级期间排除采集的上下文。"""
+    profiles = {settings.for_platform(name).profile_path.resolve() for name in ('qianniu', 'taobao')}
+    with ExitStack() as stack:
+        for profile in sorted(profiles, key=lambda path: str(path).casefold()):
+            stack.enter_context(shop_lock(profile))
+        yield
 
 
 @contextmanager

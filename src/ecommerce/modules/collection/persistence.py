@@ -74,7 +74,7 @@ def capture_progress(settings,module,record,path):
     state[record['batch_id']]=max(1,count*2)
     session.collection_progress=state
     context={'sections':[],'last_attempt':True,'report_key':getattr(session,'collection_run_key',None)}
-    session.collection(build_snapshot(settings,'batch',record,path,module=module),context)
+    session.collection(build_snapshot(settings,'batch',record,path,module=module,source=getattr(session,'detail_source',None)),context)
 
 
 def capture_sections(directory,item_id,sections):
@@ -88,7 +88,7 @@ def capture_sections(directory,item_id,sections):
     if 'collection_summary' in sections:
         record=sections['collection_summary']
         path=directory/record['history_record_file']
-        session.collection(build_snapshot(settings,'report',record,path),{})
+        session.collection(build_snapshot(settings,'report',record,path,source=getattr(session,'detail_source',None)),{})
         session.collection_run_key=record['batch_id']
     for section,value in sections.items():
         if section=='collection_summary':
@@ -118,7 +118,7 @@ def capture_sections(directory,item_id,sections):
         validate_publication(module,record,entry['sections'])
         context={'sections':entry['sections'],'last_attempt':entry['last_attempt'],
                  'report_key':getattr(session,'collection_run_key',None)}
-        session.collection(build_snapshot(settings,'batch',record,path,module=module),context)
+        session.collection(build_snapshot(settings,'batch',record,path,module=module,source=getattr(session,'detail_source',None)),context)
 
 
 def read_database_document(directory,item_id):

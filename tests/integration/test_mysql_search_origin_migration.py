@@ -14,6 +14,7 @@ from alembic.operations import Operations
 from ecommerce.infrastructure.storage import mysql
 from ecommerce.infrastructure.storage.mysql_migrations import schema, schema_v3
 from ecommerce.shared.config import load_settings
+from tests.mysql_migration_fixture import reset_empty_validation
 
 
 @unittest.skipUnless(os.environ.get('ECOMMERCE_MYSQL_MIGRATION_TESTS')=='1','显式启用空验证库来源迁移测试')
@@ -27,6 +28,7 @@ class SearchOriginMigrationTests(unittest.TestCase):
             self.addCleanup(engine.dispose)
             old,new=schema.build_metadata(),schema_v3.build_metadata()
             with engine.connect() as connection:
+                reset_empty_validation(connection,old,schema.REVISION)
                 self.assertTrue(all(connection.scalar(sa.select(sa.func.count()).select_from(t))==0 for t in old.tables.values()),'验证库非空')
                 connection.commit()
                 operations=Operations(MigrationContext.configure(connection))
@@ -99,8 +101,9 @@ class SearchOriginMigrationTests(unittest.TestCase):
                     self.assertEqual(mysql.current_revision(connection),schema.REVISION)
                     self.assertIsNone(connection.scalar(sa.text('SELECT search_method FROM collection_batches WHERE id=:id'),{'id':batch_id}))
                     self.assertEqual(connection.scalar(sa.select(b.c.result_payload).where(b.c.id==batch_id)),payload)
-                self.assertEqual(mysql.upgrade_schema(settings),schema_v3.REVISION)
-                self.assertEqual(mysql.upgrade_schema(settings),schema_v3.REVISION)
+                self.assertEqual(mysql.upgrade_schema(settings),mysql.REVISION)
+                self.assertEqual(mysql.upgrade_schema(settings),mysql.REVISION)
+                new=mysql.build_metadata()
                 with engine.connect() as connection:
                     row=connection.execute(sa.select(new.tables['collection_batches']).where(new.tables['collection_batches'].c.id==batch_id)).mappings().one()
                     self.assertEqual((row['search_method'],row['search_keyword'],row['page_number']),('keyword','样例',1))

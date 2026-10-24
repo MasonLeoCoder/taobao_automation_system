@@ -1,7 +1,7 @@
 """仅通过项目显式升级入口运行 Alembic，连接不包含在配置文件中。"""
 from alembic import context
 from ecommerce.infrastructure.storage.mysql import version_table
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v3 import build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v5 import build_metadata
 
 connection = context.config.attributes.get("connection")
 if connection is None:

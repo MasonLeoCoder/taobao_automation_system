@@ -1,4 +1,4 @@
-"""CLI/Web 共用的采集查询与执行期有效分区读取，隔离未提交导入。"""
+"""CLI/Web 共用的采集历史查询与执行期有效分区读取。"""
 from datetime import datetime
 from decimal import Decimal
 import copy
@@ -43,7 +43,7 @@ def _visible(store,table,*,quarantined=False,own_task=None):
     visibility=table.c.visibility.in_(states)
     if own_task:
         visibility=sa.or_(visibility,sa.and_(table.c.task_id==own_task,table.c.visibility=='staging'))
-    return sa.and_(store.tasks.visible(table),visibility)
+    return visibility
 
 
 def products(settings,*,after=0,limit=50,keyword=None):
@@ -55,7 +55,7 @@ def products(settings,*,after=0,limit=50,keyword=None):
     p,b,l,s=map(store.tables.__getitem__,['products','collection_batches','list_observations','search_records'])
     batch_exists=sa.exists(sa.select(b.c.id).where(b.c.product_id==p.c.id,_visible(store,b)))
     list_exists=sa.exists(sa.select(l.c.id).join(b,b.c.id==l.c.batch_id).where(l.c.product_id==p.c.id,_visible(store,b)))
-    page_exists=sa.exists(sa.select(s.c.id).where(s.c.product_id==p.c.id,store.tasks.visible(s)))
+    page_exists=sa.exists(sa.select(s.c.id).where(s.c.product_id==p.c.id))
     statement=sa.select(p).where(p.c.id>after,sa.or_(batch_exists,list_exists,page_exists)).order_by(p.c.id).limit(limit)
     if keyword:
         statement=statement.where(sa.or_(p.c.platform_product_id==keyword,p.c.display_title.contains(keyword,autoescape=True)))
@@ -64,7 +64,7 @@ def products(settings,*,after=0,limit=50,keyword=None):
             rows=[dict(r) for r in connection.execute(statement).mappings()]
             for item in rows:
                 item['detail_batch_count']=connection.scalar(sa.select(sa.func.count()).select_from(b).where(b.c.product_id==item['id'],_visible(store,b)))
-                item['detail_entry_count']=connection.scalar(sa.select(sa.func.count()).select_from(s).where(s.c.product_id==item['id'],s.c.record_type=='detail_open',store.tasks.visible(s)))
+                item['detail_entry_count']=connection.scalar(sa.select(sa.func.count()).select_from(s).where(s.c.product_id==item['id'],s.c.record_type=='detail_open'))
         return {'products':public(rows),'next_cursor':rows[-1]['id'] if rows else after}
     except sa.exc.SQLAlchemyError as error:
         raise MySQLStorageError(safe_error(error)) from None
@@ -182,7 +182,7 @@ def detail_document(settings,item_id,*,own_task=None):
                     result[name+'_last_attempt']=record
             runs,steps=store.tables['collection_runs'],store.tables['collection_steps']
             latest=connection.execute(sa.select(runs).join(p,p.c.id==runs.c.product_id).where(
-                p.c.platform_product_id==item_id,store.tasks.visible(runs)).order_by(runs.c.started_at.desc(),runs.c.id.desc()).limit(1)).mappings().first()
+                p.c.platform_product_id==item_id).order_by(runs.c.started_at.desc(),runs.c.id.desc()).limit(1)).mappings().first()
             if latest:
                 saved_steps=list(connection.execute(sa.select(steps).where(steps.c.run_id==latest['id']).order_by(steps.c.id)).mappings())
                 metadata=next(((step['payload'] or {}).get('run_metadata') for step in saved_steps if (step['payload'] or {}).get('run_metadata')),None)

@@ -15,6 +15,7 @@ from alembic.operations import Operations
 from ecommerce.infrastructure.storage import mysql
 from ecommerce.infrastructure.storage.mysql_migrations import schema, schema_v1, schema_v3
 from ecommerce.shared.config import load_settings
+from tests.mysql_migration_fixture import reset_empty_validation
 
 
 @unittest.skipUnless(os.environ.get('ECOMMERCE_MYSQL_MIGRATION_TESTS') == '1', '显式启用空独立库迁移验证')
@@ -30,7 +31,8 @@ class BeijingMigrationTests(unittest.TestCase):
             tasks, events = metadata.tables['tasks'], metadata.tables['task_events']
             task_id = uuid4().hex
             with engine.connect() as connection:
-                self.assertIn(mysql.current_revision(connection), (schema.PREVIOUS_REVISION, schema.REVISION, schema_v3.REVISION))
+                reset_empty_validation(connection,metadata,schema.PREVIOUS_REVISION)
+                self.assertIn(mysql.current_revision(connection), (schema.PREVIOUS_REVISION, schema.REVISION, schema_v3.REVISION, mysql.REVISION))
                 counts = {name: connection.scalar(sa.select(sa.func.count()).select_from(table))
                           for name, table in metadata.tables.items()}
                 self.assertTrue(all(n == 0 for n in counts.values()), '验证库非空，不重置时区或写入样例')
@@ -75,7 +77,8 @@ class BeijingMigrationTests(unittest.TestCase):
                     self.assertEqual(connection.scalar(sa.select(tasks.c.started_at).where(tasks.c.id == task_id)), original)
                     self.assertEqual(connection.scalar(sa.select(events.c.recorded_at).where(events.c.task_id == task_id).limit(1)), original)
                 sa.event.remove(engine, 'before_cursor_execute', fail_before_version_commit)
-                self.assertEqual(mysql.upgrade_schema(settings), schema_v3.REVISION)
+                self.assertEqual(mysql.upgrade_schema(settings), mysql.REVISION)
+                tasks,events=mysql.build_metadata().tables['tasks'],mysql.build_metadata().tables['task_events']
                 with engine.connect() as connection:
                     row = connection.execute(sa.select(tasks).where(tasks.c.id == task_id)).mappings().one()
                     self.assertEqual(row['started_at'], original+timedelta(hours=8))
@@ -86,7 +89,7 @@ class BeijingMigrationTests(unittest.TestCase):
                     self.assertIsNone(rows[1]['occurred_at'])
                     self.assertTrue(all(r['recorded_at'] == original+timedelta(hours=8) for r in rows))
                     self.assertTrue(all(r['time_raw'] == '2026-10-23T23:30:00.123456+00:00' and r['details'] == {'source': 'synthetic'} for r in rows))
-                self.assertEqual(mysql.upgrade_schema(settings), schema_v3.REVISION)
+                self.assertEqual(mysql.upgrade_schema(settings), mysql.REVISION)
                 with engine.connect() as connection:
                     self.assertEqual(connection.scalar(sa.select(tasks.c.started_at).where(tasks.c.id == task_id)), original+timedelta(hours=8))
                 actual = mysql.inspect_schema(settings)

@@ -1,6 +1,6 @@
 # 关键词与竞品采集
 
-当前能力：关键词搜索、销量列表和单商品详情八模块；运行、步骤、批次、明细及检查点已接入MySQL，CLI/Web支持历史查询。自动翻页、列表商品循环进入详情和Web实时推送待接入。下文带旧任务编号的段落为历史实测，不替代本轮人工验收；当前规则见[采集规范](../../../../docs/采集规范/淘宝采集约定.md)，进度见[验收清单](../../../../docs/功能逐项验收清单.md)。
+当前能力：关键词搜索、按--page逐页采集销量列表和单商品详情八模块；运行、步骤、批次、明细及检查点已接入MySQL，CLI/Web支持历史查询。列表商品循环进入详情和Web实时推送待接入。--page默认1，--limit为每页上限；每页一个批次，确认入库后翻下一页，跨页重复展示保留。下文带旧任务编号的段落为历史实测，不替代本轮人工验收；当前规则见[采集规范](../../../../docs/采集规范/淘宝采集约定.md)，进度见[验收清单](../../../../docs/功能逐项验收清单.md)。
 
 主图步骤 `detail_images.collect_main_images` 使用页面已有的有序图片数据，与当前商品ID及DOM图集核对后直接下载，不逐张点击缩略图；来源适配在 `platforms/taobao/detail_images.py`。按实际数量串行保存到商品 `1-1主图/`，每张完成更新历史 `main_images.json` 和商品 `main_images_last_attempt`。重新运行原命令时，仅复用上次未完成、来源完全一致且文件校验通过的图片到新批次，补采失败/未完成项；旧批次不变，全部完成才整批发布 `main_images`。记录逐张状态、来源路径、复用数量及恢复批次；原文件下载与校验继续供SKU和详情图步骤共用。用法及异常处理见 [使用指南](../../../../docs/使用指南.md)。
 
@@ -28,7 +28,7 @@ CLI不传功能参数时，默认启用视频、主图、SKU、参数、详情�
 
 2026-10-21 真实入口任务 `339f3f9cff4d4c0983d7880aba783065` 已用 ID `1007759256325` 验证：程序单次打开固定淘宝链接，平台自动跳转到同 ID 的天猫详情页，标题及现场截图已核对，窗口保留等待 DOM 字段核对。记录仍为 `opened_pending_dom_review`，不作为商品详情字段采集验收。相关 28 项单元检查与 6 项本地浏览器检查通过。
 
-旧版主图交互方案（已由文首页面数据方案替代，仅保留变更背景）：`taobao detail --input "1050158363561" --main-images` 从主图画廊排除视频封面和参数入口，按实际数量依次选择全部图片，不要求或截断为五张，从实际大图节点读取原地址。点击后移开鼠标，选中项、地址和尺寸连续稳定500毫秒后采用。DOM 逻辑在 `platforms/taobao/detail_images.py`，业务下载与发布在本模块 `detail_images.py`。原图片依序保存为商品目录 `1-1主图/1.<真实格式>`至`N.<真实格式>`，不裁剪或编码转换，文件头/长度/原生解码校验通过后发布；顺序、地址、尺寸、路径、哈希和实际数量写入统一 JSON 的 `main_images` 分区，保留视频等已有分区。少于五张但全部保存仍为complete；历史批次保存 `main_images.json` 及原图片，数量减少后最新目录不留旧尾图。更新失败恢复旧目录及 JSON，下载失败只记录最后尝试，不将未完成图片集发布为完成。可与 `--video` 同时启用；列表循环仍待接入。
+旧版主图交互方案（已由文首页面数据方案替代，仅保留变更背景）：`taobao detail --input "1050158363561" --main-images` 从主图画廊排除视频封面和参数入口，按实际数量依次选择全部图片，不要求或截断为五张，从实际大图节点读取原地址。点击后移开鼠标，选中项、地址和尺寸连续稳定500毫秒后采用。DOM 逻辑在 `platforms/taobao/detail_images.py`，业务下载与发布在本模块 `detail_images.py`。原图片依序保存为商品目录 `1-1主图/1.<真实格式>`至`N.<真实格式>`，不裁剪或编码转换，文件头/长度/原生解码校验通过后发布；顺序、地址、尺寸、路径、哈希和实际数量写入统一 JSON 的 `main_images` 分区，保留视频等已有分区。少于五张但全部保存仍为complete；历史批次保存 `main_images.json` 及原图片，数量减少后最新目录不留旧尾图。更新失败恢复旧目录及 JSON，下载失败只记录最后尝试，不将未完成图片集发布为完成。可与 `--video` 同时启用；列表循环通过`taobao collect --with-details`复用。
 
 真实主图任务 `cf962a9486854456994d69c39dbfb94b` 已取得商品 `1050158363561` 的五张800×800 WebP主图，按截图顺序保存为 `1.webp`～`5.webp`，排除视频封面及参数入口。文件校验及五张视觉核对通过，统一JSON已合并，原视频分区及视频文件哈希保持一致。26项相关回归检查及9项主图检查通过。
 
@@ -42,13 +42,13 @@ SKU图片复用 `detail_images.download_image/reuse_image_file` 的原文件下�
 
 参数步骤已接入：`taobao detail --input "1050158363561" --parameters` 复用 `detail_parameters.collect_parameters`；DOM在 `platforms/taobao/detail_parameters.py`。在唯一 `.paramsInfoArea` 内动态读取突出/普通两类参数，名称和值分别对应，完整原文优先取 `title`，同名项不覆盖，保留DOM顺序和来源。参数模块缺失时可单次定位已确认页签，有展开入口先单次展开，等待稳定再确认完整性。未知文本/媒体/结构、加载未完成或重复展开入口转人工，不将未知当作无参数。
 
-完整结果合并商品JSON的 `parameters`，字段列表与统计一并保存，已有视频/主图/SKU分区保留。原模块HTML及参数JSON按批存于商品 `history/<批次编号>/parameters.html` 和 `parameters.json`，记录HTML长度、哈希和相对路径。空值、缺失节点、明确无参数分开；总数未确认时标明。异常诊断保存 `parameters-attempt-<序号>.json/.html` 并更新 `parameters_last_attempt`，不覆盖完整结果。保存检查点参数变化须人工确认后重读，JSON保存失败保持原文件。可与其他详情步骤组合运行，默认保留窗口；列表循环待后续接入。
+完整结果合并商品JSON的 `parameters`，字段列表与统计一并保存，已有视频/主图/SKU分区保留。原模块HTML及参数JSON按批存于商品 `history/<批次编号>/parameters.html` 和 `parameters.json`，记录HTML长度、哈希和相对路径。空值、缺失节点、明确无参数分开；总数未确认时标明。异常诊断保存 `parameters-attempt-<序号>.json/.html` 并更新 `parameters_last_attempt`，不覆盖完整结果。保存检查点参数变化须人工确认后重读，JSON保存失败保持原文件。可与其他详情步骤组合运行，默认保留窗口；列表循环通过`taobao collect --with-details`复用。
 
 2026-10-22参数实测任务 `7169ee1b20114dabacf5b8334292691d` 已读取商品 `1050158363561` 的产地、品牌、型号3项，无空值及异常。原始HTML 1223字节，长度和哈希与JSON一致，截图逐项核对；四个已有资料分区哈希一致。82项相关检查通过，真实采集未触发验证，详情页保持打开。
 
 详情图步骤已接入 `detail_description.collect_detail_images`，入口 `taobao detail --input "1050158363561" --detail-images`。`platforms/taobao/detail_description.py` 限定当前商品图文详情模块，单次定位/展开，分段滚动至末尾，等待懒加载和列表稳定后固定全部图片顺序。下载复用原图片解码/格式/长度/哈希检查，保留原尺寸及长图，按1起数字存入商品 `详情图/`。同批相同链接只请求一次，各位置各存一份；失败保持序号并记录，HTTP访问阻断及超32MiB保护上限转人工，不压缩或自动重试。
 
-逐张记录 `detail_images-progress.json`；原件、原模块HTML和完整记录在 `history/<批次编号>/`。完整批次经临时目录与备份整批更新商品 `详情图/` 和JSON的 `detail_images`，保留其他分区；更新失败回滚，部分失败只更新最后尝试与历史，不混用新旧图片。列表变化、iframe、背景图等未知结构暂停复核；明确无详情与未加载分开。可与已有详情步骤组合，默认保留页面，跨任务续跑和列表循环待后续接入。
+逐张记录 `detail_images-progress.json`；原件、原模块HTML和完整记录在 `history/<批次编号>/`。完整批次经临时目录与备份整批更新商品 `详情图/` 和JSON的 `detail_images`，保留其他分区；更新失败回滚，部分失败只更新最后尝试与历史，不混用新旧图片。列表变化、iframe、背景图等未知结构暂停复核；明确无详情与未加载分开。可与已有详情步骤组合，默认保留页面，通用跨任务续跑待接入；列表循环通过`taobao collect --with-details`复用。
 
 2026-10-22详情图实测任务 `38ee0de8987246be8267e9599b0cf0d8` 已保存商品 `1050158363561` 的6张图片，命名 `1.jpg`～`5.jpg`、`6.png`，共943004字节，无失败或验证阻断。首张与截图一致，末张为原页面价格说明图，按完整模块保留。最新文件与历史原件长度/哈希一致，五个原有资料分区哈希一致；102项相关检查通过，页面保持打开。
 
@@ -77,7 +77,7 @@ python main.py taobao collect --keyword "粘毛器"
 python main.py taobao collect --keyword "粘毛器" --limit 20 --no-wait
 ```
 
-`collect_keyword` 完成登录和单次搜索，再调用 `collect_from_search`；后者调用 `sorting.sort_by_sales`，点击一次销量并确认页签和列表更新。`loading.prepare_list_images` 对范围内尚未加载的显示主图按视口分段滚动，动作前后检查守卫，并按 `scroll` 间隔等待，每轮至多 8 次滚动和 4 次短等待；之后读取当前页，不重搜。默认 `limit=None`，不限制当前页有效商品条数；只有传入 `--limit 正整数` 才截取对应数量，不设固定 50 件上限。不翻页、不访问详情或跟随推广链接。`taobao search` 仍只搜索和保存摘要。
+`collect_keyword` 完成登录和单次搜索，再调用 `collect_from_search`；后者调用 `sorting.sort_by_sales`，点击一次销量并确认页签和列表更新。`loading.prepare_list_images` 对范围内尚未加载的显示主图按视口分段滚动，动作前后检查守卫，并按 `scroll` 间隔等待，每轮至多 8 次滚动和 4 次短等待；之后读取当前页，不重搜。默认 `limit=None`，不限制当前页有效商品条数；只有传入 `--limit 正整数` 才截取对应数量，不设固定 50 件上限。默认不翻页，可显式--page逐页采集；未指定--with-details时不访问详情，始终不跟随推广跳转。`taobao search` 仍只搜索和保存摘要。
 
 “大家都在搜”推荐词卡只有同时匹配 `suggestItemCard--` 结构、可见标题且没有商品入口时才归为 `search_suggestions` 并跳过，计入 `counts.search_suggestions_count`，不占商品数量；结构混合、未知类型仍暂停。默认不限量时 `requested_limit=null`，采完当前页标记 `all_loaded_cards_collected`；有上限时保留 `limit_reached` / `loaded_cards_below_limit`，明确空结果为 `empty`。
 
@@ -89,13 +89,13 @@ python main.py taobao collect --keyword "粘毛器" --limit 20 --no-wait
 
 快照前后及截图后复核关键词、第一页和已识别的排序；变化需人工恢复原条件，明确继续后重新读取当前页，不重搜。无法解析列表转人工，不能报零成功；页面明确无结果才保存空批次。数量不足、跳过项、重复、缺失字段和未识别排序分别记录。
 
-`export.save_batch` 每批生成新编号，在 `workspace/output/raw/taobao_products` 保存 UTF-8 JSON 和带 BOM 的中文 CSV，保留历史；公式式文本及长ID用文本前缀保护。JSON schema 2 保存格子分类计数、字段状态、范围外未知项和主图加载统计；店铺链接仅保留公开路由必需参数，不保存商品推广跟踪参数。截图在 `workspace/logs/screenshots/taobao-collection-<批次编号>.png`。
+`export.save_batch` 每批生成新编号，在 `workspace/output/raw/taobao_products` 保存 UTF-8 JSON 和带 BOM 的中文 CSV，保留历史；公式式文本及长ID用文本前缀保护。新列表JSON schema 4（旧2/3原件保留）保存格子分类计数、字段状态、范围外未知项和主图加载统计；店铺链接仅保留公开路由必需参数，不保存商品推广跟踪参数。截图在 `workspace/logs/screenshots/taobao-collection-<批次编号>.png`。
 
 新 CSV 的“采集时间”将带时区的原始时间转换为 `Asia/Shanghai` 北京时间，显示为 `YYYY-MM-DD HH:mm:ss`，例如 `2026-10-21 13:14:02`。同一页面快照共用一个采集时间。JSON 保留原始 ISO 时间；缺少时区或无法解析的值不猜测转换，历史文件不重写。
 
 2026-10-21 首轮新版任务 `5a77bed5169a4617bca24e32fa8586ea` 完成正式搜索、销量排序、2 次同页滚动及 20 条导出，20 条显示主图完整；其中广告推荐位 4 条、调查卡 1 张跳过。当时全页 48 格中 46 个商品、1 张调查、1 个范围外未知格子（位置30），已记录，未把有限导出描述成全页解析成功；后续已为该“大家都在搜”结构补充专用跳过规则，历史批次不改写。
 
-最新批次 `494e233693ed4339a50d86351edc3986-9155a0d5` 已通过真实正式流程验收：不传 `--limit`，按销量保存第一页全部 46 件及 46 张主图链接，含广告推荐位 4 条；全页 48 格另有调查卡和推荐词卡各 1 张跳过，未知及破损 0。搜索和销量各提交 1 次，同页滚动 4 次，无验证阻断。CSV 46 行、41 列，采集时间全部为北京时间 `2026-10-21 17:22:11`，JSON 原时间 `2026-10-21T09:22:11+00:00` 保留。早期旧版结果不作新版依据。该次列表实测时详情尚未接入；当前单商品详情已实现，自动翻页、列表商品循环和分析仍待接入。
+最新批次 `494e233693ed4339a50d86351edc3986-9155a0d5` 已通过真实正式流程验收：不传 `--limit`，按销量保存第一页全部 46 件及 46 张主图链接，含广告推荐位 4 条；全页 48 格另有调查卡和推荐词卡各 1 张跳过，未知及破损 0。搜索和销量各提交 1 次，同页滚动 4 次，无验证阻断。CSV 46 行、41 列，采集时间全部为北京时间 `2026-10-21 17:22:11`，JSON 原时间 `2026-10-21T09:22:11+00:00` 保留。早期旧版结果不作新版依据。该次列表实测时详情尚未接入；当前单商品详情和--page逐页采集已实现，列表商品循环已通过--with-details接入并完成本地验证，真实验收待确认；分析待接入。
 
 验证码和未知弹窗交由人工，明确回复“继续”并复核后恢复。后台终端无法输入时，可在另一个终端执行 `python main.py taobao continue`；原生弹窗分别用 `taobao confirm` 或 `taobao cancel` 明确决定。
 反馈与当前提示编号绑定，不会放行下一次验证；`taobao pause` 和 `taobao stop` 同样适用于搜索任务。
@@ -108,3 +108,11 @@ python main.py taobao collect --keyword "粘毛器" --limit 20 --no-wait
 
 
 问大家（--questions）已接入正式详情流程，默认50个问题、每题回答不限；--all取消问题上限，与--reviews组合时同时取消两者上限。独立侧栏逐题展开、先存后滚、预览不重复计数、短回答保留；明确无问答/无回答与加载异常分开。平台DOM适配在detail_questions.py，业务模块同名，SQLite逐批进度及JSON/CSV按商品ID保存至问大家目录，总JSON questions分区保留既有资料。逐题间隔及定期休息可配置，守卫异常等待人工明确继续，发布回滚和历史规则见使用指南。
+
+## 列表到详情的串行协作
+
+`search_details.collect_page_details`只接受当前已入库列表原件，按位置保存稳定来源键，调用平台`list_details`建立唯一预期标签。`detail_service.collect_detail_page`复用已打开详情，显式隔离并恢复`collection_run_key/detail_source`，不创建第二套浏览器或锁；默认八模块与独立入口共用实现。每个详情入口有entry_key，运行按entry_key解析入口内部编号，模块批次继承来源且不改变详情覆盖范围。当前商品入库屏障通过后才返回搜索页，当前页详情完成后才翻页。
+
+`search_records.source_list_observation_id`关联本次首次触发详情的列表观察；`collection_runs.entry_record_id`关联详情入口。快照使用list_source稳定批次键及product_index、平台product_id和entry_key跨库解析，不携带源库内部主键。实时流水按列表→入口→运行→模块批次保存；旧来源不猜测回填。新增取值和汇总schema2见[字段取值说明](../../../../docs/数据库字段取值说明.md)。
+
+0005_remove_history_import移除历史文件导入；实时采集快照、事务入库、原文件和本地流水补写继续保留。当前模型、字典和结构检查使用schema_v5。

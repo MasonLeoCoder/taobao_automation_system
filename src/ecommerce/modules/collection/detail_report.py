@@ -23,7 +23,7 @@ STATUS_LABELS = {
 
 class DetailCollectionReport:
     """按任务记录当前商品的所选模块，保留历史及最新 collection_summary 分区。"""
-    def __init__(self,settings,item_id,task_id,requested):
+    def __init__(self,settings,item_id,task_id,requested,*,entry_key=None,source=None):
         self.product_dir=product_directory(settings,item_id)
         batch_id=task_id+'-summary-'+uuid4().hex[:8]
         self.path=self.product_dir/'history'/batch_id/'collection_summary.json'
@@ -33,6 +33,10 @@ class DetailCollectionReport:
                      'steps':[{'name':name,'label':label,'requested':bool(requested[name]),
                                'status':'pending' if requested[name] else 'not_requested',
                                'continuation_allowed':False,'warnings':[]} for name,label in LABELS.items()]}
+        if entry_key is not None:
+            self.record['entry_key']=entry_key
+        if source:
+            self.record.update(source)
         self.save()
 
     def save(self):

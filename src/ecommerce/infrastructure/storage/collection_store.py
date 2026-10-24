@@ -61,11 +61,10 @@ def database_values(table,values):
 
 
 class CollectionWriter:
-    """同一连接内写入一个固定快照；历史、实时与只读验收共用归属校验。"""
-    def __init__(self,settings,connection,*,import_run_id=None,track=None,check_only=False):
+    """在同一事务内写入实时采集快照并核对归属，支持幂等补写。"""
+    def __init__(self,settings,connection):
         self.settings,self.connection=settings,connection
         self.tables=task_store(settings.mysql).tables
-        self.import_run_id,self.track,self.check_only=import_run_id,track,check_only
         self.issues=[]
         self.root_id=None
         self.batch_id=None
@@ -77,35 +76,23 @@ class CollectionWriter:
     def _select(self,table,key):
         """按明确唯一键取行；参数：表及键；返回：行或空。"""
         statement=sa.select(table).where(*[table.c[k]==v for k,v in key.items()])
-        if not self.check_only:
-            statement=statement.with_for_update()
+        statement=statement.with_for_update()
         return self.connection.execute(statement).mappings().one_or_none()
 
-    def _track(self,table,key,pk,source,*,matched=False):
-        """登记可追溯映射；参数：表、逻辑键、主键和规范源内容；返回：无。"""
-        if self.track:
-            semantic=source.get('key',key) if isinstance(source,dict) else key
-            if isinstance(source,dict) and source.get('kind'):
-                semantic={'root':source['logical_key']}
-            primary=json.dumps(pk,sort_keys=True,separators=(',',':')) if isinstance(pk,dict) else str(pk)
-            self.track(table.name,semantic,primary,fingerprint(source),matched)
 
-    def _upsert(self,table,key,values,source,*,mutable=False):
-        """保留内部主键并核对不可变内容；参数：表、键、列值和来源；返回：内部编号或批次键。"""
+    def _upsert(self,table,key,values,*,mutable=False):
+        """保留内部主键并核对不可变内容；参数：表、键、列值及可变标记；返回：内部编号或批次键。"""
         values=database_values(table,values)
         old=self._select(table,key)
         if old is None:
-            if self.check_only:
-                raise CollectionDataError('验收目标记录不存在：'+table.name)
             pk=self.connection.execute(table.insert().values(**values)).inserted_primary_key[0]
         else:
-            changed=any(old[k]!=v for k,v in values.items() if k not in {'import_run_id'})
-            if changed and (not mutable or self.check_only):
+            changed=any(old[k]!=v for k,v in values.items())
+            if changed and not mutable:
                 raise CollectionDataError('采集记录与已发布内容冲突：'+table.name)
             if changed:
                 self.connection.execute(table.update().where(*[table.c[k]==v for k,v in key.items()]).values(**values))
             pk=old['id'] if 'id' in table.c else old['batch_id']
-        self._track(table,key,pk,source,matched=old is not None)
         return pk
 
     def _product(self,external):
@@ -118,13 +105,10 @@ class CollectionWriter:
         key={'platform':'taobao','platform_product_id':external}
         old=self._select(table,key)
         if old is None:
-            if self.check_only:
-                raise CollectionDataError('验收商品身份不存在')
             statement=mysql_insert(table).values(**key).on_duplicate_key_update(id=sa.func.last_insert_id(table.c.id))
             pk=self.connection.execute(statement).inserted_primary_key[0]
         else:
             pk=old['id']
-        self._track(table,key,pk,key,matched=old is not None)
         return pk
 
     def _file(self,record,source_key):
@@ -149,7 +133,7 @@ class CollectionWriter:
         if record['availability']!='present':
             self.issues.append({'severity':'warning','code':'missing_file','message':'文件不存在：'+relative})
         values['verified_at']=old['verified_at'] if old else now()
-        pk=self._upsert(table,key,{**key,**values},record,mutable=self.mutable)
+        pk=self._upsert(table,key,{**key,**values},mutable=self.mutable)
         # 同一文件可被多处来源引用，额外的引用位置由媒体映射标识。
         return pk
 
@@ -163,6 +147,40 @@ class CollectionWriter:
         if exists is None:
             self.issues.append({'severity':'warning','code':'unknown_task','message':'来源任务不存在，原编号保留于源快照'})
         return exists
+
+    def _list_observation(self,header,product):
+        """解析可移植列表来源键；参数：快照头、商品内部编号；返回：经归属核对的观察编号。"""
+        source=header['list_source']
+        if (not isinstance(source,dict) or set(source)!={'source_batch_key','product_index','product_id'} or
+            type(source['product_index']) is not int or source['product_index']<1 or source['product_id']!=header['product_id']):
+            raise CollectionDataError('详情入口的列表来源格式或商品编号不一致')
+        if header['values']['record_type']!='detail_open':
+            raise CollectionDataError('只有详情入口可以关联列表观察')
+        batch=self._select(self.tables['collection_batches'],{'platform':'taobao','module':'list','source_batch_key':source['source_batch_key']})
+        if (batch is None or batch['task_id']!=self.task_id or batch['visibility']!='published' or
+            (batch['result_payload'].get('record') or {}).get('task_id')!=header.get('task_id')):
+            raise CollectionDataError('详情入口的来源列表批次不存在、未发布或不属于同一任务')
+        observation=self._select(self.tables['list_observations'],{'batch_id':batch['id'],'product_index':source['product_index']})
+        if observation is None or observation['product_id']!=product:
+            raise CollectionDataError('详情入口与来源列表观察的商品归属不一致')
+        record=header['values']['payload']['record']
+        for key,expected in [('keyword',batch['search_keyword']),('search_method',batch['search_method']),
+                             ('page_number',batch['page_number']),('search_options',batch['search_options'])]:
+            if record.get(key)!=expected:
+                raise CollectionDataError('详情入口与列表搜索来源冲突：'+key)
+        return observation['id']
+
+    def _entry_record(self,header,product):
+        """解析详情入口稳定键；参数：快照头、商品内部编号；返回：同任务同商品入口编号。"""
+        table=self.tables['search_records']
+        rows=self.connection.execute(sa.select(table).where(table.c.task_id==self.task_id,table.c.product_id==product,
+            table.c.record_type=='detail_open',table.c.payload['record']['entry_key'].as_string()==header['entry_key'])).mappings().all()
+        if len(rows)!=1:
+            raise CollectionDataError('运行汇总的详情入口不存在或稳定键不唯一')
+        entry=rows[0]
+        if entry['record_type']!='detail_open' or entry['product_id']!=product or entry['task_id']!=self.task_id:
+            raise CollectionDataError('运行汇总的详情入口类型、任务或商品不一致')
+        return entry['id']
 
     def apply(self,reference,context=None):
         """在调用方事务内应用快照；参数：引用和发布依据；返回：根归属、计数及问题。"""
@@ -201,9 +219,7 @@ class CollectionWriter:
             if values['search_method']=='image' and values['search_image_file_id'] is None:
                 raise CollectionDataError('图片搜索缺少实际输入图片文件')
             old_payload=(old['result_payload'] or {}) if old else {}
-            self.mutable=self.import_run_id is None and not self.check_only and old_payload.get('_current_sections') is None
-            if old and self.import_run_id is not None and old_payload.get('_fingerprint')!=self.digest:
-                raise CollectionDataError('历史批次原文指纹冲突，未覆盖')
+            self.mutable=old_payload.get('_current_sections') is None
             payload={**values['result_payload'],'_fingerprint':self.digest}
             for control in ['_current_sections','_export_sections','_last_attempt_selected']:
                 if control in old_payload:
@@ -214,6 +230,14 @@ class CollectionWriter:
                 run=self._select(self.tables['collection_runs'],{'source_run_key':context['report_key']})
                 if not run or run['product_id']!=product or run['task_id']!=self.task_id:
                     raise CollectionDataError('模块批次与运行汇总归属不一致')
+                if run['entry_record_id'] is not None:
+                    entry=self._select(self.tables['search_records'],{'id':run['entry_record_id']})
+                    origin=(entry['payload'] or {}).get('record') or {}
+                    expected={'search_method':entry['search_method'],'search_keyword':entry['keyword'],
+                              'page_number':entry['page_number'],'search_image_file_id':entry['search_image_file_id'],
+                              'search_options':origin.get('search_options')}
+                    if any(values.get(k)!=v for k,v in expected.items()):
+                        raise CollectionDataError('模块批次与详情入口的搜索来源不一致')
                 step=self._select(self.tables['collection_steps'],{'run_id':run['id'],'module':values['module']})
                 if step is None:
                     raise CollectionDataError('模块批次的汇总步骤不存在')
@@ -238,20 +262,23 @@ class CollectionWriter:
                         values['observed_at']=iso_value(parent['observed_at'])
                 else:
                     self.issues.append({'severity':'warning','code':'missing_upstream_batch','message':'来源批次缺失，外部编号已保留'})
-            values['import_run_id']=self.import_run_id
         elif kind=='report':
             table=self.tables['collection_runs']
             key={'source_run_key':values['source_run_key']}
             old=self._select(table,key)
             if old and (old['task_id']!=self.task_id or old['product_id']!=product):
                 raise CollectionDataError('运行汇总编号与任务或商品冲突')
-            self.mutable=self.import_run_id is None and (old is None or old['finished_at'] is None)
-            values['import_run_id']=self.import_run_id
+            self.mutable=old is None or old['finished_at'] is None
+            values['entry_record_id']=self._entry_record(header,product) if header.get('entry_key') else (old['entry_record_id'] if old else None)
+            if old and old['entry_record_id'] is not None and values['entry_record_id']!=old['entry_record_id']:
+                raise CollectionDataError('运行汇总的详情入口关联冲突')
         elif kind=='page':
             table=self.tables['search_records']
             statement=sa.select(table).where(table.c.payload['_logical_key'].as_string()==header['logical_key'])
             old=self.connection.execute(statement).mappings().one_or_none()
             key={'id':old['id']} if old else None
+            values['source_list_observation_id']=(self._list_observation(header,product) if header.get('list_source') else
+                                                   (old['source_list_observation_id'] if old else None))
             try:
                 values=enrich_origin(table.name,values,old)
             except ValueError as error:
@@ -259,20 +286,12 @@ class CollectionWriter:
             if values['search_method']=='image' and values['search_image_file_id'] is None:
                 raise CollectionDataError('图片搜索缺少实际输入图片文件')
             values['payload']={**values['payload'],'_logical_key':header['logical_key'],'_fingerprint':self.digest}
-            values['import_run_id']=self.import_run_id
         else:
             raise CollectionDataError('采集快照根类型不支持')
-        if old and old.get('import_run_id') is not None and old['import_run_id']!=self.import_run_id:
-            status=self.connection.scalar(sa.select(self.tables['import_runs'].c.status).where(self.tables['import_runs'].c.id==old['import_run_id']))
-            if status!='committed':
-                raise CollectionDataError('不能复用尚未发布导入的采集根记录')
         if kind=='page' and old is None:
-            if self.check_only:
-                raise CollectionDataError('验收页面记录不存在')
             self.root_id=self.connection.execute(table.insert().values(**database_values(table,values))).inserted_primary_key[0]
-            self._track(table,{'logical_key':header['logical_key']},self.root_id,header)
         else:
-            self.root_id=self._upsert(table,key,values,header,mutable=self.mutable)
+            self.root_id=self._upsert(table,key,values,mutable=self.mutable)
         self.batch_id=self.root_id if kind=='batch' else None
         counts={}
         try:
@@ -327,7 +346,7 @@ class CollectionWriter:
                     child_values['payload']={**(child_values.get('payload') or {}),'_snapshot_sha':self.digest}
                 if kind=='page':
                     child_values['payload']={**(child_values.get('payload') or {}),'page_logical_key':header['logical_key']}
-                pk=self._upsert(child,child_key,child_values,record,mutable=self.mutable)
+                pk=self._upsert(child,child_key,child_values,mutable=self.mutable)
                 if name in {'sku_observations','review_observations','question_observations','answer_observations'}:
                     self.ids={k:v for k,v in self.ids.items() if k[0]!=name and not (name=='question_observations' and k[0]=='answer_observations')}
                     self.ids[(name,fingerprint(record['key']))]=pk
@@ -335,7 +354,7 @@ class CollectionWriter:
         finally:
             records.close()
         if kind=='batch':
-            if self.mutable and not self.check_only:
+            if self.mutable:
                 for name in PRUNE_ORDER:
                     child=self.tables[name]
                     self.connection.execute(child.delete().where(child.c.batch_id==self.batch_id,
@@ -345,8 +364,7 @@ class CollectionWriter:
                 if actual!=counts[name]:
                     raise CollectionDataError('模块快照包含重复身份或未替换旧明细：'+name)
             if self.issues and any(issue['code']=='missing_file' for issue in self.issues):
-                if not self.check_only:
-                    self.connection.execute(table.update().where(table.c.id==self.batch_id).values(visibility='quarantined'))
+                self.connection.execute(table.update().where(table.c.id==self.batch_id).values(visibility='quarantined'))
                 context={**context,'sections':[]}
             self._publish(header,values,context,product)
             self._title(header,values,product)
@@ -357,7 +375,6 @@ class CollectionWriter:
     def _publish(self,header,values,context,product):
         """核对完整性并更新对应范围指针；参数：头、根值、发布依据及商品；返回：无。"""
         sections=context.get('sections',[])
-        applied=[]
         status=values['status']
         if sections and (product is None or values['visibility']!='published' or status not in
             {'complete','downloaded','no_video','no_images','no_parameters','no_reviews','no_questions'}):
@@ -368,37 +385,13 @@ class CollectionWriter:
             key={'product_id':product,'section':section,'scope_key':values['scope_key']}
             table=self.tables['product_current_sections']
             previous=self._select(table,key)
-            if self.check_only:
-                # 新的实时批次可以推进指针；历史验收不要求当前仍指向旧批次。
-                continue
-            if previous and self.import_run_id:
-                previous_batch=self._select(self.tables['collection_batches'],{'id':previous['batch_id']})
-                incoming_time=database_time(values.get('captured_at'))
-                if previous_batch['import_run_id'] is None or (incoming_time and previous_batch['captured_at'] and previous_batch['captured_at']>incoming_time):
-                    self.issues.append({'severity':'info','code':'newer_current_preserved','message':'历史导入未回退现有有效分区'})
-                    continue
             data={**key,'module':header['module'],'batch_id':self.batch_id,
-                  'published_at':database_time(context.get('published_at')) if self.import_run_id else now(),
-                  'publication_basis':'source_current_section' if self.import_run_id else 'module_completeness_checked'}
+                  'published_at':now(),
+                  'publication_basis':'module_completeness_checked'}
             if previous:
                 self.connection.execute(table.update().where(*[table.c[k]==v for k,v in key.items()]).values(**data))
             else:
                 self.connection.execute(table.insert().values(**data))
-            applied.append(section)
-            self._track(table,{'section':section,'scope_key':values['scope_key']},key,
-                {'table':table.name,'key':{'section':section,'scope_key':values['scope_key']},
-                 'product_id':header['product_id'],'source_batch_key':values['source_batch_key']},matched=previous is not None)
-        if self.check_only:
-            return
-        sections=applied
-        if self.import_run_id:
-            table=self.tables['collection_batches']
-            live_selected=self.connection.execute(sa.select(table.c.id,table.c.result_payload).where(table.c.product_id==product,
-                table.c.module==header['module'],table.c.import_run_id.is_(None),table.c.id!=self.batch_id)).mappings().all()
-            selected_sections={section for item in live_selected for section in (item['result_payload'] or {}).get('_export_sections',[])}
-            sections=[section for section in sections if section not in selected_sections]
-            if any((item['result_payload'] or {}).get('_last_attempt_selected') for item in live_selected):
-                context={**context,'last_attempt':False}
         if sections or context.get('last_attempt'):
             table=self.tables['collection_batches']
             selected=self.connection.execute(sa.select(table.c.id,table.c.result_payload).where(
@@ -422,8 +415,6 @@ class CollectionWriter:
 
     def _title(self,header,values,product):
         """维护带来源的显示标题；参数：根、值和商品；返回：无，不更改历史观察原文。"""
-        if self.check_only:
-            return
         products=self.tables['products']
         candidates=[]
         if header['module']=='list':

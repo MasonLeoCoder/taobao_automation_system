@@ -18,6 +18,11 @@ PAGE_METADATA = r"""() => {
  const legacy=[...document.querySelectorAll('[class*="sort" i]')].filter(e=>shown(e)&&/(selected|active|current)/i.test(e.className||''));
  const labels=(tabs.length?selected:legacy).map(text).filter(t=>/^(综合|销量|价格|信用|人气)$/.test(t));
  const sales=tabs.filter(e=>text(e)==='销量');
+ const groups=[...document.querySelectorAll('.next-pagination')].filter(shown);
+ const normal=groups.filter(e=>e.classList.contains('next-normal')),simple=groups.filter(e=>e.classList.contains('next-simple'));
+ const chosen=normal.length===1?normal:(normal.length===0&&simple.length===1?simple:[]);
+ const next=chosen.flatMap(e=>[...e.querySelectorAll('button.next-next')].filter(shown));
+ const totals=[...new Set(groups.flatMap(e=>[...e.querySelectorAll('.next-pagination-display')].map(n=>(text(n).match(/\/\s*(\d+)/)||[])[1]).filter(Boolean)))];
  return {origin:u.origin,path:u.pathname,query_keywords:u.searchParams.getAll('q'),
   inputs:[...document.querySelectorAll('input[name="q"],input#q')].filter(shown).map(e=>e.value),
   paging:Object.fromEntries(['page','pageNo','pageNum','s'].map(k=>[k,u.searchParams.getAll(k)])),
@@ -26,7 +31,9 @@ PAGE_METADATA = r"""() => {
   sales_control_count:sales.length,sales_control_enabled:sales.length===1&&!sales[0].classList.contains('disabled')&&!sales[0].classList.contains('next-disabled')&&sales[0].getAttribute('aria-disabled')!=='true',
   list_busy:[...document.querySelectorAll('[aria-busy="true"],.next-loading-indicator')].some(shown),
   empty_message_present:[...document.querySelectorAll('p,div,span,h1,h2,h3')].some(e=>shown(e)&&!e.children.length&&/(?:没有找到|未找到|没有搜索到).{0,15}(?:相关|符合).{0,12}(?:宝贝|商品)|抱歉.{0,12}没有找到.{0,12}(?:宝贝|商品)/.test(e.innerText||'')),
-  document_started:performance.timeOrigin};
+  document_started:performance.timeOrigin,
+  pagination:{group_count:chosen.length,variant:normal.length===1?'normal':(normal.length===0&&simple.length===1?'simple':null),
+   next_count:next.length,next_disabled:next.length===1?(next[0].disabled||next[0].getAttribute('aria-disabled')==='true'||next[0].classList.contains('next-disabled')):null,total_pages:totals}};
 }"""
 
 SNAPSHOT = r"""() => {
@@ -139,26 +146,36 @@ def text_or_none(value):
     return value or None
 
 
-def page_signature(snapshot, keyword):
-    """采集和恢复时必须仍在同一关键词第一页，拒绝歧义参数。"""
+def page_signature(snapshot, keyword, *, expected_page=1):
+    """核对同一关键词和目标页；参数：快照、关键词、期望页码；返回：条件签名。"""
+    if type(expected_page) is not int or expected_page < 1:
+        raise ValueError("目标页码须为正整数")
     if snapshot.get("origin") != "https://s.taobao.com" or snapshot.get("path", "").rstrip("/") != "/search":
         raise ValueError("当前页面不是淘宝搜索结果页")
     if snapshot.get("query_keywords") != [keyword] or not snapshot.get("inputs") or any(value != keyword for value in snapshot["inputs"]):
         raise ValueError("当前搜索关键词发生变化")
     paging = snapshot.get("paging", {})
+    explicit = []
     for key in ("page", "pageNo", "pageNum"):
-        if paging.get(key, []) not in ([], ["1"]):
-            raise ValueError("当前结果已不在第一页或页码不明确")
-    if paging.get("s", []) not in ([], ["0"]):
-        raise ValueError("搜索结果偏移量不是第一页")
+        values = paging.get(key, [])
+        if values not in ([], [str(expected_page)]):
+            raise ValueError(f"当前结果不在目标第{expected_page}页或页码不明确")
+        explicit.extend(values)
+    offsets = paging.get("s", [])
+    if offsets and (len(offsets) != 1 or not re.fullmatch(r"\d+", offsets[0])
+                    or (expected_page == 1 and int(offsets[0]) != 0)
+                    or (expected_page > 1 and int(offsets[0]) == 0)):
+        raise ValueError("搜索结果偏移量与目标页码矛盾")
     numbers = snapshot.get("page_numbers", [])
-    if any(value != "1" for value in numbers):
-        raise ValueError("页面显示的页码不是第一页")
+    if any(value != str(expected_page) for value in numbers):
+        raise ValueError(f"页面显示页码不是目标第{expected_page}页")
+    if expected_page > 1 and not (numbers or explicit):
+        raise ValueError("没有明确的目标页码证据，不能仅按偏移量推测页数")
     labels = snapshot.get("sort_labels", [])
     parameters = snapshot.get("sort_parameter", [])
     if len(labels) > 1 or len(parameters) > 1:
         raise ValueError("当前排序条件不明确")
-    return {"keyword": keyword, "page_number": 1, "sort_label": labels[0] if labels else None,
+    return {"keyword": keyword, "page_number": expected_page, "sort_label": labels[0] if labels else None,
             "sort_parameter": parameters[0] if parameters else None}
 
 
@@ -208,10 +225,10 @@ def shop_url(card):
     return "https://store.taobao.com/category.htm?" + urlencode(parameters)
 
 
-def parse_cards(snapshot, keyword, limit=None):
+def parse_cards(snapshot, keyword, limit=None, *, page_number=1):
     """按格子分类；同 ID 的不同位置保留，未知或破损商品不静默丢弃。"""
     validate_limit(limit)
-    signature = page_signature(snapshot, keyword)
+    signature = page_signature(snapshot, keyword, expected_page=page_number)
     if snapshot.get("root_count") != 1 and not (snapshot.get("root_count") == 0 and snapshot.get("empty_message_present") and not snapshot.get("slots")):
         raise ValueError("未能唯一确认 content_items_wrapper 商品列表容器")
     rows, skipped, issues, seen = [], [], [], set()

@@ -7,7 +7,7 @@ import json
 import sqlalchemy as sa
 
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,create_mysql_engine,current_revision,connection_status,safe_error
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v3 import REVISION,build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v5 import REVISION,build_metadata
 from ecommerce.infrastructure.storage.time_values import BEIJING,database_time,database_now,iso_value
 
 
@@ -33,15 +33,11 @@ class MySQLTaskStore:
         except sa.exc.SQLAlchemyError as error:
             raise MySQLStorageError(safe_error(error)) from None
 
-    def visible(self,table):
-        """生成已提交导入过滤条件；参数：根表；返回：SQL 条件。"""
-        runs=self.tables['import_runs']
-        return sa.or_(table.c.import_run_id.is_(None),table.c.import_run_id.in_(sa.select(runs.c.id).where(runs.c.status=='committed')))
 
     def list_tasks(self,limit=50,*,active=False):
         """读取近期或全部活跃任务；参数：数量、是否活跃；返回：兼容旧接口的字典。"""
         table=self.tables['tasks']
-        statement=sa.select(table).where(self.visible(table))
+        statement=sa.select(table)
         if active:
             statement=statement.where(table.c.origin=='live',table.c.finished_at.is_(None),table.c.status.in_(['running','needs_attention']))
         statement=statement.order_by(table.c.started_at.desc(),table.c.id.desc())
@@ -62,7 +58,7 @@ class MySQLTaskStore:
         table=self.tables['tasks']
         try:
             with self.engine.connect() as connection:
-                return dict(connection.execute(sa.select(table.c.status,sa.func.count()).where(self.visible(table)).group_by(table.c.status)).all())
+                return dict(connection.execute(sa.select(table.c.status,sa.func.count()).group_by(table.c.status)).all())
         except sa.exc.SQLAlchemyError as error:
             raise MySQLStorageError(safe_error(error)) from None
 
@@ -142,7 +138,7 @@ class MySQLTaskStore:
             raise ValueError('开始时间不能晚于结束时间')
         table=self.tables['task_events']
         cursor=table.c.task_sequence if task_id else table.c.id
-        statement=sa.select(table).where(self.visible(table),cursor>after)
+        statement=sa.select(table).where(cursor>after)
         if task_id:
             statement=statement.where(table.c.task_id==task_id)
         if level:

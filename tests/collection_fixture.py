@@ -126,3 +126,55 @@ def create_sources(settings,task_id,item_id):
     list_path=settings.workspace/'output/raw/taobao_products'/(list_batch+'.json')
     save(list_path,listing)
     return {'records':records,'paths':paths,'product_ids':[item_id,other_id],'root':root,'listing':listing,'list_path':list_path}
+
+
+def save_fixture(settings, connection, fixture):
+    """通过实时快照写入器保存脱敏样例；参数：配置、事务连接、来源；返回：各模块写入结果。"""
+    from ecommerce.infrastructure.storage.collection_store import CollectionWriter
+    from ecommerce.modules.collection.database_records import build_snapshot
+    from ecommerce.modules.collection.persistence import validate_publication
+    task = fixture['listing']['task_id']
+    def apply(kind, record, path, module=None, context=None):
+        """写入规范采集快照；参数：类型、原文、文件、模块和发布依据；返回：保存结果。"""
+        return CollectionWriter(settings, connection).apply(build_snapshot(settings, kind, record, path, module=module), context)
+    result = {'list': apply('batch', fixture['listing'], fixture['list_path'], 'list')}
+    search = settings.workspace/'output/raw/taobao_search'/(task+'.json')
+    apply('page', json.loads(search.read_text(encoding='utf-8')), search, 'search')
+    for label in ('main', 'missing'):
+        path = settings.workspace/'output/raw/taobao_detail_open'/(task+label+'.json')
+        apply('page', json.loads(path.read_text(encoding='utf-8')), path, 'detail_open')
+    path = next((fixture['root']/'history').glob('*/collection_summary.json'))
+    report = json.loads(path.read_text(encoding='utf-8'))
+    apply('report', report, path)
+    for module, record in fixture['records'].items():
+        sections = [] if module == 'skus' else [module]
+        validate_publication(module, record, sections)
+        result[module] = apply('batch', record, fixture['paths'][module], module,
+            {'sections': sections, 'last_attempt': True, 'report_key': report['batch_id']})
+    return result
+
+
+def save_fixture(settings, connection, fixture):
+    """通过实时快照写入器保存脱敏样例；参数：配置、事务连接、来源；返回：各模块写入结果。"""
+    from ecommerce.infrastructure.storage.collection_store import CollectionWriter
+    from ecommerce.modules.collection.database_records import build_snapshot
+    from ecommerce.modules.collection.persistence import validate_publication
+    task = fixture['listing']['task_id']
+    def apply(kind, record, path, module=None, context=None):
+        """写入规范采集快照；参数：类型、原文、文件、模块和发布依据；返回：保存结果。"""
+        return CollectionWriter(settings, connection).apply(build_snapshot(settings, kind, record, path, module=module), context)
+    result = {'list': apply('batch', fixture['listing'], fixture['list_path'], 'list')}
+    search = settings.workspace/'output/raw/taobao_search'/(task+'.json')
+    apply('page', json.loads(search.read_text(encoding='utf-8')), search, 'search')
+    for label in ('main', 'missing'):
+        path = settings.workspace/'output/raw/taobao_detail_open'/(task+label+'.json')
+        apply('page', json.loads(path.read_text(encoding='utf-8')), path, 'detail_open')
+    path = next((fixture['root']/'history').glob('*/collection_summary.json'))
+    report = json.loads(path.read_text(encoding='utf-8'))
+    apply('report', report, path)
+    for module, record in fixture['records'].items():
+        sections = [] if module == 'skus' else [module]
+        validate_publication(module, record, sections)
+        result[module] = apply('batch', record, fixture['paths'][module], module,
+            {'sections': sections, 'last_attempt': True, 'report_key': report['batch_id']})
+    return result

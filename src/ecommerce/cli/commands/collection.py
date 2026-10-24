@@ -12,15 +12,18 @@ def execute(settings, keyword, *, wait=True):
         browser_settings, keyword, wait=wait, on_attention=None if settings.headless else prompt_taobao_attention))
 
 
-def execute_collect(settings, keyword, *, limit=None, wait=True):
+def execute_collect(settings, keyword, *, limit=None, pages=1, wait=True, with_details=False):
+    """验证输入后提交逐页采集；参数：配置、词、每页上限、页数、保留窗口；返回：任务结果。"""
     from ecommerce.modules.collection.service import collect_keyword
     from ecommerce.platforms.taobao.cards import validate_limit
+    from ecommerce.platforms.taobao.pagination import validate_pages
 
     keyword = validate_keyword(keyword)
     validate_limit(limit)
+    validate_pages(pages)
     browser_settings = settings.for_platform("taobao")
     return run_task(settings, "collection.taobao.collect", lambda: collect_keyword(
-        browser_settings, keyword, limit=limit, wait=wait,
+        browser_settings, keyword, limit=limit, pages=pages, wait=wait, with_details=with_details,
         on_attention=None if settings.headless else prompt_taobao_attention))
 
 

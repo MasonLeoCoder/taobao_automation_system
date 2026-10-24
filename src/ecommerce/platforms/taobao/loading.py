@@ -5,7 +5,8 @@ from ecommerce.platforms.taobao.cards import SNAPSHOT, parse_cards
 from ecommerce.platforms.taobao.verification import active_guard
 
 
-def prepare_list_images(result, limit, timeout_ms):
+def prepare_list_images(result, limit, timeout_ms, *, page_number=1):
+    """加载目标页主图；参数：搜索页、每页上限、超时、页码；返回：加载统计。"""
     guard = active_guard()
     if guard is None:
         raise RuntimeError("主图加载必须在淘宝守卫中运行")
@@ -16,7 +17,7 @@ def prepare_list_images(result, limit, timeout_ms):
 
     def read():
         raw = page.evaluate(SNAPSHOT)
-        return raw, parse_cards(raw, result.keyword, limit)
+        return raw, parse_cards(raw, result.keyword, limit, page_number=page_number)
 
     def ready():
         try:
@@ -39,7 +40,7 @@ def prepare_list_images(result, limit, timeout_ms):
     idle = 0
     while missing and stats["scroll_count"] < 8 and idle < 4:
         if not ready():
-            guard.request_attention(page, "加载主图时页面条件改变，请核对原关键词、第一页及销量排序后继续", step="复核主图加载页面")
+            guard.request_attention(page, f"加载主图时页面条件改变，请核对原关键词、第{page_number}页及销量排序后继续", step="复核主图加载页面")
         target = missing[0]["slot_index"]
         geometry = page.evaluate("""position=>{
           const e=document.querySelector('#content_items_wrapper')?.children[position-1];

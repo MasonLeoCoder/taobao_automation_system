@@ -11,7 +11,6 @@ from uuid import uuid4
 
 from ecommerce.infrastructure.storage import database
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError
-from ecommerce.infrastructure.storage.task_history_import import snapshot_history,preview_history,read_snapshot
 from ecommerce.infrastructure.tasks.events import EventJournal,TaskEvents,sanitize,notify,current_events,event_session
 from ecommerce.infrastructure.tasks.ownership import owner_alive,process_started_at,atomic_json
 from ecommerce.modules.account.taobao_control import request_control
@@ -245,37 +244,7 @@ class TaskEventsTests(unittest.TestCase):
             handler.close()
             logger.removeHandler(handler)
 
-    def test_snapshot_preserves_original_and_unknown_text_time(self):
-        """固定来源、组合异常续行，不推断旧文本的时区或任务归属。"""
-        database.initialize(self.settings.database)
-        key=database.create_task(self.settings.database,'example.history')
-        database.finish_task(self.settings.database,key,'failed','原结果')
-        path=self.settings.log_dir/'run.log'
-        path.parent.mkdir(parents=True)
-        content='2026-10-20 12:01:00,000 [ERROR] ecommerce.example - 失败\nTraceback\n  more\n'
-        path.write_text(content,encoding='utf-8')
-        manifest=snapshot_history(self.settings)
-        report=preview_history(manifest)
-        self.assertEqual(report['records'],{'tasks':1,'task_events':1})
-        self.assertEqual(report['unknown_event_time'],1)
-        self.assertEqual(path.read_text(encoding='utf-8'),content)
-        _,parsed=read_snapshot(manifest)
-        event=next(values for _,records in parsed for table,_,values,_ in records if table=='task_events')
-        self.assertIsNone(event['occurred_at'])
-        self.assertIsNone(event['task_id'])
-        self.assertIn('Traceback\n  more',event['message'])
-        path.write_text(content+'late text',encoding='utf-8')
-        self.assertEqual(preview_history(manifest)['records'],report['records'])
-        (manifest.parent/'run.log').write_text('tampered',encoding='utf-8')
-        with self.assertRaises(MySQLStorageError):
-            preview_history(manifest)
 
-    def test_active_legacy_task_blocks_import(self):
-        """旧来源未结束时不擅自迁移为完成或重跑。"""
-        database.initialize(self.settings.database)
-        database.create_task(self.settings.database,'example.running')
-        with self.assertRaises(MySQLStorageError):
-            preview_history(snapshot_history(self.settings))
 
     def test_data_conflict_stops_instead_of_waiting_for_database_recovery(self):
         """永久内容冲突不当作连接抖动反复等待，下一检查点停止动作。"""
