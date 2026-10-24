@@ -161,10 +161,15 @@ class VerificationGuard:
                 pages = [p for p in self.context.pages if not p.is_closed()]
                 if not pages:
                     raise NeedsAttention("千牛浏览器已关闭，无法继续当前任务")
+                from ecommerce.infrastructure.tasks.events import storage_checkpoint
+                storage_checkpoint(label,lambda:pages[-1].wait_for_timeout(100))
                 blocked = next((p for p in pages if has_human_verification(p)), None)
                 if blocked is None:
                     if not first:
                         logging.getLogger(__name__).info("验证已通过，恢复步骤：%s", label)
+                        from ecommerce.infrastructure.tasks.events import current_events
+                        if current_events():
+                            current_events().progress('running','千牛验证复核通过：'+label)
                     if self.popup_guard is not None:
                         self.popup_guard.checkpoint(self.operation, label)
                     return
@@ -175,6 +180,9 @@ class VerificationGuard:
                 # 扩展处理器一次返回后仍有验证则交还人工，避免空转或无限自动重试。
                 processor = self.handler if first else self.manual_handler
                 self.handled_count += 1
+                from ecommerce.infrastructure.tasks.events import current_events
+                if current_events():
+                    current_events().progress('needs_attention','千牛等待验证处理：'+label)
                 processor(VerificationRequest(blocked, label, first))
                 self.feedback_count += 1
                 first = False

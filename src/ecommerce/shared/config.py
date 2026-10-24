@@ -13,6 +13,47 @@ DEFAULT_TAOBAO_TIMING = {
 
 
 @dataclass(frozen=True)
+class MySQLSettings:
+    """本机 MySQL 基础配置；密码仅通过指定环境变量读取，不进入配置对象。"""
+
+    host: str = "127.0.0.1"
+    port: int = 3306
+    database: str = "taobao_automation_verify"
+    user: str = "taobao_app"
+    password_env: str = "ECOMMERCE_MYSQL_PASSWORD"
+    migration_user: str = "taobao_migrator"
+    migration_password_env: str = "ECOMMERCE_MYSQL_MIGRATION_PASSWORD"
+    connect_timeout: int = 5
+
+
+def load_mysql_settings(values: dict) -> MySQLSettings:
+    """校验本机数据库配置；参数：TOML mysql 分区；返回：不含密码的配置。"""
+    import re
+    if not isinstance(values, dict):
+        raise ValueError("mysql 必须为配置分区")
+    supported = set(MySQLSettings.__dataclass_fields__)
+    if set(values) - supported:
+        raise ValueError("mysql 存在不支持的配置项")
+    result = MySQLSettings(**values)
+    if result.host not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("当前 MySQL 仅支持本机连接")
+    if type(result.port) is not int or not 1 <= result.port <= 65535:
+        raise ValueError("mysql.port 必须为 1–65535 的整数")
+    if type(result.connect_timeout) is not int or not 1 <= result.connect_timeout <= 30:
+        raise ValueError("mysql.connect_timeout 必须为 1–30 的整数秒")
+    for name in ("database", "user", "migration_user"):
+        maximum=48 if name=="database" else 32
+        if not isinstance(getattr(result, name), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,"+str(maximum-1)+r"}", getattr(result, name)):
+            raise ValueError(f"mysql.{name} 仅支持字母开头的英文数字下划线，最长{maximum}字符")
+    if result.user.lower()=="root" or result.user==result.migration_user:
+        raise ValueError("MySQL 程序账号须为非 root 专用账号，并与迁移账号分开")
+    for name in ("password_env", "migration_password_env"):
+        if not isinstance(getattr(result, name), str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", getattr(result, name)):
+            raise ValueError(f"mysql.{name} 必须为大写环境变量名")
+    return result
+
+
+@dataclass(frozen=True)
 class Settings:
     """单店铺配置，所有文件路径均为绝对路径。"""
 
@@ -30,6 +71,17 @@ class Settings:
     taobao_timing: dict = field(default_factory=lambda: dict(DEFAULT_TAOBAO_TIMING))
     taobao_browser_channel: str | None = None
     taobao_browser_mode: str = "playwright"
+    mysql: MySQLSettings = field(default_factory=MySQLSettings)
+    task_backend: str = "sqlite"
+    collection_backend: str = "files"
+
+    @property
+    def task_database(self):
+        """选择任务记录来源；参数：无；返回：旧路径或 MySQL 任务存储，不隐式降级。"""
+        if self.task_backend=="sqlite":
+            return self.database
+        from ecommerce.infrastructure.storage.task_store import task_store
+        return task_store(self.mysql)
 
     def for_platform(self, platform: str) -> "Settings":
         """选择平台的独立登录资料；千牛继续兼容原有路径。"""
@@ -75,6 +127,13 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
     if selected and not config.is_file():
         raise ValueError(f"配置文件不存在：{config}")
     values = tomllib.loads(config.read_text(encoding="utf-8-sig")) if config.exists() else {}
+    storage=values.get('storage',{})
+    if (not isinstance(storage,dict) or set(storage)-{'task_backend','collection_backend'}
+            or storage.get('task_backend','sqlite') not in {'sqlite','mysql'}
+            or storage.get('collection_backend','files') not in {'files','mysql'}):
+        raise ValueError('storage.task_backend 仅支持 sqlite/mysql，collection_backend 仅支持 files/mysql')
+    if storage.get('collection_backend','files')=='mysql' and storage.get('task_backend','sqlite')!='mysql':
+        raise ValueError('采集入库需要同时启用 MySQL 任务记录')
     workspace = resolve(values.get("workspace", "workspace"))
     browser = values.get("browser", {})
     taobao = values.get("taobao", {})
@@ -119,7 +178,8 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
         timing[action] = tuple(bounds)
     settings = Settings(root, workspace, session, profile, values.get("shop_name", "我的店铺"), headless, timeout, host, port,
                         resolve(taobao["session_path"]) if "session_path" in taobao else None,
-                        resolve(taobao["profile_path"]) if "profile_path" in taobao else None, timing, taobao_channel, taobao_mode)
+                        resolve(taobao["profile_path"]) if "profile_path" in taobao else None, timing, taobao_channel, taobao_mode,
+                        load_mysql_settings(values.get("mysql", {})),storage.get('task_backend','sqlite'),storage.get('collection_backend','files'))
     settings.for_platform("taobao")  # 配置冲突在启动前报错，避免混用会话。
     return settings
 

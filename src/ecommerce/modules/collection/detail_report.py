@@ -1,4 +1,5 @@
 """本次详情采集的模块状态、警告与实际文件位置汇总，不替代任务执行器状态。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import json
 from uuid import uuid4
 

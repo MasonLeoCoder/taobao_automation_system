@@ -10,14 +10,23 @@ def request_control(settings, action):
     replies = {"continue": "继续", "confirm": "确认", "cancel": "取消"}
     if action not in {"pause", "stop", *replies}:
         raise ValueError("不支持的淘宝控制指令")
-    initialize(settings.database)
-    tasks = [task for task in list_tasks(settings.database) if task["name"].startswith(("account.taobao.", "collection.taobao."))
-             and task["finished_at"] is None and task["status"] in {"running", "needs_attention"}]
+    if settings.task_backend=='mysql':
+        from ecommerce.infrastructure.tasks.ownership import active_local_tasks
+        tasks=[task for task in active_local_tasks(settings) if task['name'].startswith(('account.taobao.','collection.taobao.'))]
+        if not tasks:
+            # 没有可核实的本地活跃进程时，不向数据库里的遗留记录盲目发送操作。
+            return '当前没有可确认执行中的淘宝任务'
+    else:
+        initialize(settings.task_database)
+        tasks = [task for task in list_tasks(settings.task_database) if task["name"].startswith(("account.taobao.", "collection.taobao."))
+                 and task["finished_at"] is None and task["status"] in {"running", "needs_attention"}]
     if not tasks:
         return "当前没有执行中的淘宝任务"
     if len(tasks) != 1:
         raise ValueError("发现多个未结束的淘宝任务，请先核对任务记录")
     task_id = tasks[0]["id"]
+    if action in replies and tasks[0].get('storage_pending'):
+        raise ValueError('当前等待数据库恢复，不能用继续或确认绕过存储暂停；可发送停止')
     if not re.fullmatch(r"[a-f0-9]{32}", task_id):
         raise ValueError("任务编号格式无效")
     directory = settings.workspace / "storage/task_controls"

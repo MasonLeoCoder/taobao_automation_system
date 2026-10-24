@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}采集资料{% endblock %}{% block breadcrumb %}采集资料{% endblock %}
+{% block content %}
+{% set labels={'list':'列表商品','video':'视频','main_images':'主图','skus':'商品规格','parameters':'参数','detail_images':'详情图','review_summary':'评价概览','reviews':'用户评价','questions':'问大家'} %}
+{% set coverage={'limit_reached':'已达到本次上限','visible_end_confirmed':'已确认页面可见末尾','manual_count_confirmed':'人工确认','confirmed_empty':'已确认无数据','incomplete':'部分采集','unknown':'未确认覆盖范围'} %}
+{% set states={'complete':'完成','partial':'部分完成','downloaded':'下载完成','no_video':'已确认无视频','no_images':'已确认无详情图','no_parameters':'已确认无参数','no_reviews':'已确认无评价','no_questions':'已确认无问答','all_loaded_cards_collected':'已读取当前页已加载商品','limit_reached':'已达到本次上限','empty':'已确认无商品'} %}
+<section class="intro"><div><p class="eyebrow">COLLECTED DATA</p><h1>采集资料</h1><p>查看实际保存的商品和批次。采集完成与平台全量分别保留，详情入口不代表已有详情数据。</p></div></section>
+{% if enabled %}
+<form class="table-wrap log-filters" method="get">
+<label>标题或商品编号 <input name="keyword" value="{{ request.args.get('keyword','') }}"></label>
+<label>筛选商品编号 <input name="product_id" value="{{ request.args.get('product_id','') }}"></label>
+<label>采集项目 <select name="module"><option value="">全部项目</option>{% for code,label in labels.items() %}<option value="{{ code }}"{% if request.args.get('module')==code %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+<button class="button" type="submit">查询</button></form>
+{% if not request.args.get('product_id') and not request.args.get('module') %}
+<div class="section-heading"><h2>商品及来源</h2><p>只有入口记录的商品会明确显示没有详情批次。</p></div>
+<div class="table-wrap"><table><thead><tr><th>商品编号</th><th>已采标题</th><th>详情资料</th></tr></thead><tbody>
+{% for product in products %}<tr><td><a href="{{ url_for('pages.collections',product_id=product.platform_product_id) }}">{{ product.platform_product_id }}</a></td><td>{{ product.display_title or '当前来源未提供标题' }}</td><td>{{ product.detail_batch_count }} 个详情批次<small>{{ product.detail_entry_count }} 次详情入口记录</small></td></tr>{% else %}<tr><td colspan="3">没有符合条件的商品</td></tr>{% endfor %}
+</tbody></table></div>{% if products %}<p><a class="button" href="{{ url_for('pages.collections',keyword=request.args.get('keyword',''),product_after=product_next_cursor) }}">下一页商品</a></p>{% endif %}{% endif %}
+<div class="section-heading"><h2>实际采集批次</h2><p>点击批次查看明细；每种范围单独保留。</p></div>
+<div class="table-wrap"><table><thead><tr><th>编号 / 商品</th><th>采集项目</th><th>实际状态</th><th>范围与覆盖依据</th><th>采集时间</th></tr></thead><tbody>
+{% for batch in batches %}<tr><td><a href="{{ url_for('pages.collection_batch',batch_id=batch.id) }}">批次 {{ batch.id }}</a><small>{{ batch.platform_product_id or '列表中的多个商品' }}</small></td><td>{{ labels.get(batch.module,batch.module) }}</td><td>{{ states.get(batch.status,batch.status) }}</td><td>{{ coverage.get(batch.coverage_status,batch.coverage_status) }}<small>{% if batch.collection_mode=='limited' %}本次上限 {{ batch.requested_limit }}{% elif batch.collection_mode=='all' %}本次未设数量上限{% else %}范围以本批来源记录为准{% endif %}</small></td><td>{{ batch.captured_at | local_time }}</td></tr>{% else %}<tr><td colspan="5">没有符合条件的已发布批次</td></tr>{% endfor %}
+</tbody></table></div>
+{% if batches %}<p><a class="button" href="{{ url_for('pages.collections',product_id=request.args.get('product_id',''),module=request.args.get('module',''),keyword=request.args.get('keyword',''),after=next_cursor) }}">下一页批次</a></p>{% endif %}
+{% else %}<section class="empty"><h2>采集数据库尚未启用</h2><p>完成历史核对和切换后，可在这里查询实际采集资料。</p></section>{% endif %}
+{% endblock %}

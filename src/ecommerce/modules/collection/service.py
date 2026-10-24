@@ -1,4 +1,5 @@
 """关键词搜索和第一页字段采集，复用淘宝独立登录和任务级守卫。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import json
 from uuid import uuid4
 
@@ -35,13 +36,16 @@ def search_keyword(settings, keyword, *, wait=True, on_attention=None):
         if confirmed is None:
             raise NeedsAttention("保存前搜索页面已发生变化，未保存为成功结果")
         result = confirmed
-        summary = {"task_id": guard.task_id, "keyword": keyword, "status": result.status,
+        summary = {"schema_version": 3, "search_method": "keyword", "search_options": None,
+                   "task_id": guard.task_id, "keyword": keyword, "status": result.status,
                    "visible_items": result.visible_items, "source_url": canonical_search_url(keyword),
                    "checked_at": now(), "screenshot": str(screenshot) if screenshot else None,
                    "screenshot_note": screenshot_note}
         temporary = destination.with_suffix(".tmp")
         temporary.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(destination)
+        from ecommerce.modules.collection.persistence import capture_page
+        capture_page(settings,summary,destination,'search')
         save_session(context, settings)
         if wait and not settings.headless:
             keep_search_open(context, result)
@@ -136,7 +140,8 @@ def collect_from_search(settings, context, result, *, limit=None):
         items = parsed["items"]
     positions = {item["position"] for item in items}
     payload = {
-        "schema_version": 2, "extraction_method": "content_items_wrapper_slots_v1", "batch_id": batch_id, "task_id": guard.task_id,
+        "schema_version": 3, "search_method": "keyword", "search_options": None,
+        "extraction_method": "content_items_wrapper_slots_v1", "batch_id": batch_id, "task_id": guard.task_id,
         "keyword": keyword, "page_number": 1, "sort_label": signature["sort_label"],
         "sort_parameter": signature["sort_parameter"], "captured_at": captured_at, "saved_at": now(),
         "source_url": canonical_search_url(keyword), "scope": "first_page_loaded_cards",
@@ -156,6 +161,8 @@ def collect_from_search(settings, context, result, *, limit=None):
     guard.update_progress(collected=len(items))
     paths = guard.perform("保存当前页商品采集批次", lambda: save_batch(
         settings.workspace / "output/raw/taobao_products", payload))
+    from ecommerce.modules.collection.persistence import capture_list
+    capture_list(settings,payload,paths[0])
     guard.checkpoint("商品采集记录已保存")
     save_session(context, settings)
     message = (f"关键词“{keyword}”销量第一页已保存：{len(items)} 条商品展示记录"

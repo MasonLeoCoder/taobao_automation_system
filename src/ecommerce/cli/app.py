@@ -60,6 +60,49 @@ def parser() -> argparse.ArgumentParser:
     product.add_argument("--sku-images-dir", help="SKU图片目录，按销售规格名称匹配扩展名；默认Excel所在目录的sku图文件夹")
     commands.add_parser("status", help="显示当前功能状态")
     commands.add_parser("tasks", help="查看最近 50 条任务记录")
+    logs = commands.add_parser('logs',help='分页查询 MySQL 任务和运行日志')
+    logs.add_argument('--task-id',help='完整的 32 位任务编号；指定后按任务序号分页')
+    logs.add_argument('--level',choices=('DEBUG','INFO','WARNING','ERROR','CRITICAL'))
+    logs.add_argument('--since',help='开始时间，须含时区，例如 2026-10-23T00:00:00+08:00')
+    logs.add_argument('--until',help='结束时间，须含时区')
+    logs.add_argument('--after',type=int,default=0,help='上一页返回的 next_cursor，默认从 0 开始')
+    logs.add_argument('--limit',type=int,default=100,help='每页数量，1–500')
+    collections=commands.add_parser('collections',help='查询已入库商品、采集批次和明细')
+    collection_actions=collections.add_subparsers(dest='action',required=True)
+    for name,description in [('products','商品及来源'),('batches','实际批次、状态和覆盖范围'),('records','单批次明细')]:
+        command=collection_actions.add_parser(name,help=description)
+        command.add_argument('--after',type=int,default=0,help='上一页 next_cursor，默认 0')
+        command.add_argument('--limit',type=int,default=50,help='每页 1–200，默认 50')
+        if name=='products':
+            command.add_argument('--keyword',help='标题文字或完整商品编号')
+        elif name=='batches':
+            command.add_argument('--product-id',help='平台原商品编号')
+            command.add_argument('--module',choices=('list',*DETAIL_STEPS))
+            command.add_argument('--include-quarantined',action='store_true',help='同时查询缺失文件等原因隔离的批次')
+        else:
+            command.add_argument('--batch-id',type=int,required=True,help='批次查询返回的内部编号')
+            command.add_argument('--kind',choices=('items','skus','parameters','reviews','questions','answers','media','checkpoints','review_summary'))
+            command.add_argument('--question-id',type=int,help='仅 kind=answers：按问题内部编号筛选')
+            command.add_argument('--include-quarantined',action='store_true')
+    database = commands.add_parser("database", help="MySQL 基础连接、显式升级、字段字典与独立库验证")
+    database_actions = database.add_subparsers(dest="action", required=True)
+    database_actions.add_parser("check", help="只读核对连接、版本、表字段备注及关联约束")
+    database_actions.add_parser("upgrade", help="使用迁移账号显式升级 MySQL 表结构")
+    database_actions.add_parser('replay-events',help='补写属于当前库的本地事件流水；不执行浏览器动作')
+    history=database_actions.add_parser('import-task-history',help='预览或导入旧任务与日志，不导入采集明细')
+    history.add_argument('--snapshot',help='固定备份 manifest.json；未指定时从旧来源新建快照')
+    history.add_argument('--apply',action='store_true',help='实际导入并核对后整批发布；默认只预览')
+    history.add_argument('--report',help='新建 JSON 报告路径，不覆盖已有报告')
+    collection_history=database_actions.add_parser('import-collection-history',help='备份预览、导入或只读复核采集历史')
+    collection_history.add_argument('--snapshot',help='固定采集备份 manifest.json')
+    collection_mode=collection_history.add_mutually_exclusive_group()
+    collection_mode.add_argument('--apply',action='store_true',help='实际导入，整批核对后发布')
+    collection_mode.add_argument('--audit',action='store_true',help='只读逐记录核对已导入内容，必须指定原快照')
+    collection_history.add_argument('--report',help='新建 JSON 报告路径，不覆盖已有文件')
+    dictionary = database_actions.add_parser("dictionary", help="按同版结构生成完整中文字段字典")
+    dictionary.add_argument("--output", default="docs/数据库字段字典.md", help="字典输出路径，相对项目根目录；重新生成会更新该文档")
+    verify = database_actions.add_parser("verify", help="仅在 _verify 验证库用合成数据验证，结束回滚")
+    verify.add_argument("--report", help="新建验证报告路径；默认在 workspace/output/reports 生成唯一文件，不覆盖已有报告")
     web = commands.add_parser("web", help="启动本地网页")
     web.add_argument("--port", type=int, help="本地服务端口")
     commands.add_parser("upload", help="兼容入口：product open --start")
@@ -85,6 +128,22 @@ def main(argv: list[str] | None = None) -> int:
         settings = load_settings(args.config)
         prepare_workspace(settings)
         setup_logging(settings)
+        if args.command == "database":
+            from ecommerce.cli.commands.database import execute as execute_database
+            return execute_database(settings,args)
+        if args.command=='logs':
+            if settings.task_backend!='mysql':
+                raise ValueError('当前任务源尚未启用 MySQL 日志查询')
+            print(json.dumps(settings.task_database.list_events(task_id=args.task_id,level=args.level,since=args.since,
+                until=args.until,after=args.after,limit=args.limit),ensure_ascii=False,indent=2))
+            return 0
+        if args.command=='collections':
+            from ecommerce.modules.collection.queries import query
+            values=vars(args).copy()
+            for key in ['config','command','action']:
+                values.pop(key,None)
+            print(json.dumps(query(settings,args.action,**values),ensure_ascii=False,indent=2))
+            return 0
         if args.command == "taobao":
             if args.action in {"search", "collect", "detail"}:
                 from ecommerce.cli.commands.collection import execute, execute_collect, execute_detail
@@ -113,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "tasks":
             from ecommerce.infrastructure.storage.database import initialize
             from ecommerce.modules.monitoring.service import recent_tasks
-            initialize(settings.database)
+            initialize(settings.task_database)
             print(json.dumps(recent_tasks(settings), ensure_ascii=False, indent=2))
             return 0
         if args.command == "web":

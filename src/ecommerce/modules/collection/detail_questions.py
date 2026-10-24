@@ -1,4 +1,5 @@
 """问大家：默认50题，逐题收齐页面可提供的回答，逐批保存并整批发布。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import csv
 import hashlib
 import json
@@ -347,7 +348,10 @@ def collect_questions(settings, result, *, all_questions=False, stable_ms=500, m
                 'message': '无问答' if status == 'no_questions' else f'已采集{store.count}个问题、{store.answer_count}条回答；结束原因：{reason}'}
 
     def progress():
-        atomic_json(directory / 'questions-progress.json', record('running', 'collecting'))
+        value=record('running','collecting')
+        atomic_json(directory / 'questions-progress.json', value)
+        from ecommerce.modules.collection.persistence import capture_progress
+        capture_progress(settings,'questions',value,directory/'questions-progress.json')
         guard.update_progress(collected=store.count, target=limit)
 
     def pause(reason):

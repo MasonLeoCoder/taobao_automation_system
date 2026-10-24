@@ -1,4 +1,5 @@
 """主图按图集顺序原样下载，保存到商品目录的 1-1主图，并合并详情 JSON。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import base64
 import hashlib
 import json

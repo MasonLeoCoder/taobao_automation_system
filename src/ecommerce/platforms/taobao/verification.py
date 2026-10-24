@@ -1,4 +1,5 @@
 """淘宝专用暂停守卫：只检测和交给人工，不自动处理安全验证。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import json
 import math
 import queue
@@ -161,8 +162,12 @@ class TaobaoGuard:
             record.update(kind=blockage.kind, location=safe_location(blockage.page.url), source=blockage.source)
             if blockage.frame_location is not None:
                 record["frame_location"] = blockage.frame_location
+        from ecommerce.infrastructure.tasks.events import sanitize
+        record=sanitize(record)
         with self.event_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        from ecommerce.infrastructure.tasks.events import emit_event
+        emit_event(event,state=self.state,step=self.step,details=record)
 
     def _transition(self, state, blockage=None):
         self.state = state
@@ -436,6 +441,8 @@ class TaobaoGuard:
             pages = [page for page in self.context.pages if not page.is_closed()]
             if not pages:
                 raise TaskStopped("人工等待期间淘宝浏览器已关闭，任务已停止")
+            from ecommerce.infrastructure.tasks.events import storage_checkpoint
+            storage_checkpoint(self.step,lambda:pages[-1].wait_for_timeout(100))
             self._check_control(pages[-1])
             if self._prompt_id in self._file_replies:
                 return self._file_replies.pop(self._prompt_id)
@@ -497,6 +504,13 @@ class TaobaoGuard:
         started = None
         paused_before = self.paused_seconds
         try:
+            from ecommerce.infrastructure.tasks.events import storage_checkpoint
+            def pump_storage():
+                pages=[page for page in self.context.pages if not page.is_closed()]
+                if not pages:
+                    raise TaskStopped('等待数据库恢复期间浏览器已关闭，任务停止')
+                pages[-1].wait_for_timeout(100)
+            storage_checkpoint(self.step,pump_storage)
             blockage = self._scan()
             if blockage is not None and blockage.kind == "native_done":
                 first = False  # 原生弹窗已经提示过，本次只等待继续，不重复响铃。
@@ -609,10 +623,15 @@ class TaobaoGuard:
         self.checkpoint(step)
         return result
 
-    def hold_without_input(self):
-        """输入丢失时保留可见现场，只派发浏览器事件，不执行任何业务。"""
-        print("人工输入不可用，任务保持暂停。请关闭淘宝浏览器结束任务，之后重新启动。", flush=True)
-        self._record("input_unavailable")
+    def hold_without_input(self, *, reason=None):
+        """中断后保留现场及真实原因，只派发浏览器事件，不恢复已退出的业务。"""
+        self._transition("needs_attention")
+        if reason:
+            print("任务已中断，原因："+reason+"；当前保留浏览器现场，请关闭窗口结束任务。", flush=True)
+            self._record("session_halted", reason=reason)
+        else:
+            print("人工输入不可用，任务保持暂停。请关闭淘宝浏览器结束任务，之后重新启动。", flush=True)
+            self._record("input_unavailable")
         while True:
             pages = [page for page in self.context.pages if not page.is_closed()]
             if not pages:

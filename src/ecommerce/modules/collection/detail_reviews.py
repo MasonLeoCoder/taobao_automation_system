@@ -1,4 +1,5 @@
 """逐批落盘评价，默认100条有效记录；完成后发布 JSON/CSV，异常保留历史。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import csv
 import hashlib
 import json
@@ -283,7 +284,10 @@ def collect_reviews(settings, result, *, all_reviews=False, stable_ms=500, max_s
                     if reason == 'folded_visible_end' else f'已采集{store.collected}条有效评价，跳过模板评价{store.skipped}条；结束原因：{reason}'}
 
     def progress(status='running', reason='collecting'):
-        atomic_json(directory / 'reviews-progress.json', record(status, reason))
+        value=record(status,reason)
+        atomic_json(directory / 'reviews-progress.json', value)
+        from ecommerce.modules.collection.persistence import capture_progress
+        capture_progress(settings,'reviews',value,directory/'reviews-progress.json')
         guard.update_progress(collected=store.collected, target=limit)
 
     def pause(reason):

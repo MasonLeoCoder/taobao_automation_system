@@ -92,11 +92,13 @@ class NativeChromeTests(unittest.TestCase):
         from ecommerce.platforms.taobao import session
         (self.settings.profile_path / "Default").mkdir(parents=True)
         with patch.object(native_chrome, "browser_session") as factory, \
-                patch.object(session, "base_browser_session") as legacy, patch.object(session, "TaobaoGuard"):
+                patch.object(session, "base_browser_session") as legacy, patch.object(session, "TaobaoGuard"), \
+                patch.object(session, "restore_missing_session_cookies") as restore_missing:
             factory.return_value.__enter__.return_value = (MagicMock(), MagicMock())
             with session.browser_session(self.settings):
                 pass
             factory.assert_called_once_with(self.settings, restore_state=False)
+            restore_missing.assert_called_once_with(factory.return_value.__enter__.return_value[0], self.settings)
             legacy.assert_not_called()
 
 

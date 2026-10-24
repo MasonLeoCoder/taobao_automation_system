@@ -1,4 +1,5 @@
 """保存商品基础信息、SKU 价格和按规格名称命名的原图片。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import hashlib
 import json
 import re

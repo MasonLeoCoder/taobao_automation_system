@@ -107,6 +107,34 @@ class TaobaoGuardTests(unittest.TestCase):
             self.assertIsNone(retry_after_seconds(value))
         self.assertEqual(safe_location("https://user:password@www.taobao.com/a?token=secret#fragment"), "https://www.taobao.com/a")
 
+    def test_halted_session_records_real_reason_and_needs_attention(self):
+        """非输入异常保留真实原因和暂停状态，不误报输入不可用或恢复业务。"""
+        reason='本地事件确认文件无法核对'
+        with self.guard() as guard, patch('builtins.print') as terminal:
+            self.page.is_closed.return_value=True
+            guard.hold_without_input(reason=reason)
+            self.assertEqual(guard.state,'needs_attention')
+            records=[json.loads(r) for r in guard.event_path.read_text(encoding='utf-8').splitlines()]
+        halted=next(r for r in records if r['event']=='session_halted')
+        self.assertEqual(halted['reason'],reason)
+        self.assertEqual(halted['state'],'needs_attention')
+        self.assertFalse(any(r['event']=='input_unavailable' for r in records))
+        self.assertIn(reason,terminal.call_args.args[0])
+
+    def test_halted_session_records_real_reason_and_needs_attention(self):
+        """非输入异常保留真实原因和暂停状态，不误报输入不可用或恢复业务。"""
+        reason='本地事件确认文件无法核对'
+        with self.guard() as guard, patch('builtins.print') as terminal:
+            self.page.is_closed.return_value=True
+            guard.hold_without_input(reason=reason)
+            self.assertEqual(guard.state,'needs_attention')
+            records=[json.loads(r) for r in guard.event_path.read_text(encoding='utf-8').splitlines()]
+        halted=next(r for r in records if r['event']=='session_halted')
+        self.assertEqual(halted['reason'],reason)
+        self.assertEqual(halted['state'],'needs_attention')
+        self.assertFalse(any(r['event']=='input_unavailable' for r in records))
+        self.assertIn(reason,terminal.call_args.args[0])
+
     def test_only_relevant_failures_trigger_network_pause(self):
         with self.guard() as guard:
             response = MagicMock(status=429, url="https://www.taobao.com/list?token=secret")

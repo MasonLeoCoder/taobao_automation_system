@@ -20,6 +20,10 @@ def read_detail_document(directory, item_id):
         document = json.loads(destination.read_text(encoding="utf-8"))
         if not isinstance(document, dict) or document.get("product_id") != item_id:
             raise ValueError("现有详情 JSON 的商品 ID 不匹配，未覆盖")
+    from ecommerce.modules.collection.persistence import read_database_document
+    database_document=read_database_document(directory,item_id)
+    if database_document is not None:
+        document={**{k:v for k,v in document.items() if k in {'schema_version','product_id','created_at','updated_at'}},**database_document}
     return document
 
 
@@ -42,4 +46,6 @@ def save_detail_sections(directory, item_id, sections):
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
+    from ecommerce.modules.collection.persistence import capture_sections
+    capture_sections(directory,item_id,sections)
     return destination

@@ -1,4 +1,5 @@
 """点击淘宝列表的销量页签并只读确认更新；阻断或超时交给人工。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import re
 import time
 

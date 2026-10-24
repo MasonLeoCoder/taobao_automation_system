@@ -1,4 +1,5 @@
 """独立详情页入口；字段确认后在同一详情页流程中接入采集。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import json
 from importlib import import_module
 
@@ -54,6 +55,8 @@ def open_detail_input(settings, value, *, wait=True, on_attention=None, video=Fa
             temporary = destination.with_suffix(".tmp")
             temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary.replace(destination)
+            from ecommerce.modules.collection.persistence import capture_page
+            capture_page(settings,record,destination,'detail_open')
 
         guard.perform("保存详情页入口记录", save_record)
         save_session(context, settings)

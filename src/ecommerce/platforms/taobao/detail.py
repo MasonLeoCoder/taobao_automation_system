@@ -1,4 +1,5 @@
 """商品详情页入口：数字 ID 拼接地址，详情链接按输入直接打开。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import re
 import time
 from dataclasses import dataclass

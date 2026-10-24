@@ -30,3 +30,20 @@ question_rest = [30, 60] # 每10题或连续操作5分钟休息；等待可暂�
 [web]
 host = "127.0.0.1"
 port = 8000
+
+[storage]
+# 新环境先保持旧任务源；正式导入核对通过后才设为 mysql，避免指向空库。
+task_backend = "sqlite"
+# 采集历史导入并核对后才改为 mysql；启用时 task_backend 也必须为 mysql。
+collection_backend = "files"
+
+[mysql]
+# 新环境的独立验证配置；本项目本机实际配置已使用正式库 taobao_automation。
+host = "127.0.0.1"
+port = 3306
+database = "taobao_automation_verify"
+user = "taobao_app"
+password_env = "ECOMMERCE_MYSQL_PASSWORD"
+migration_user = "taobao_migrator"
+migration_password_env = "ECOMMERCE_MYSQL_MIGRATION_PASSWORD"
+connect_timeout = 5

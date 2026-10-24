@@ -1,4 +1,5 @@
 """账号业务流程，复用当前任务的浏览器上下文。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.platforms.qianniu.login import check_login, login_with_qrcode

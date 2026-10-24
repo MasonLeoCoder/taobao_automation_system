@@ -7,7 +7,7 @@ name = "taobao-automation-system"
 version = "0.2.0"
 description = "单店铺电商自动化与本地数据工作台"
 requires-python = ">=3.11"
-dependencies = ["playwright>=1.44,<2", "Flask>=3.1,<4", "tzdata>=2024.1", "openpyxl>=3.1,<4"]
+dependencies = ["playwright>=1.44,<2", "Flask>=3.1,<4", "tzdata>=2024.1", "openpyxl>=3.1,<4", "SQLAlchemy>=2.0,<3", "PyMySQL[rsa]>=1.1,<2", "alembic>=1.13,<2"]
 
 [project.optional-dependencies]
 data = ["pandas>=2,<4", "openpyxl>=3.1,<4"]
@@ -21,4 +21,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "ecommerce.web" = ["templates/*.html", "static/*.css"]
-"ecommerce.infrastructure.storage" = ["migrations/*.sql"]
+"ecommerce.infrastructure.storage" = ["migrations/*.sql", "mysql_migrations/*.py", "mysql_migrations/versions/*.py"]

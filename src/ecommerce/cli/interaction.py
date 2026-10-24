@@ -1,5 +1,18 @@
 """CLI 公共人工验证交互。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
+
+
+def _manual_state(state,message,decision=None):
+    """保存人工等待及明确反馈；参数：状态、说明、受控决定；返回：无，不录制输入原文。"""
+    from ecommerce.infrastructure.tasks.events import current_events,storage_checkpoint
+    session=current_events()
+    if session:
+        if state=='running':
+            storage_checkpoint('人工反馈后复核')
+        session.progress(state,message)
+        session.emit('manual_feedback' if decision else 'manual_wait',message,state=state,
+                     details={'decision':decision} if decision else {})
 
 
 def _play_attention_sound() -> None:
@@ -18,6 +31,7 @@ def prompt_manual_verification(message: str) -> str:
     if message.startswith(("【需要人工验证】", "【需要人工处理弹窗】", "【需要人工决定原生弹窗】")):
         _play_attention_sound()
     print(message, flush=True)
+    _manual_state('needs_attention',message)
     while True:
         try:
             prompt = "输入“确认”或“取消”并回车：" if native else "手动处理完成后输入“继续”并回车：" if popup else "手动验证完成后输入“继续”并回车："
@@ -25,8 +39,10 @@ def prompt_manual_verification(message: str) -> str:
         except EOFError as error:
             raise NeedsAttention("输入通道已关闭，未收到人工处理反馈") from error
         if native and feedback in {"确认", "取消"}:
+            _manual_state('running','已收到原生弹窗决定，等待页面复核',feedback)
             return feedback
         if not native and feedback in {"继续", "已完成", "完成", "continue"}:
+            _manual_state('running','已收到人工反馈，等待页面复核','继续')
             return "继续"
         print("尚未收到明确反馈，保持暂停。", flush=True)
 
@@ -35,12 +51,14 @@ def prompt_submission_review(message: str) -> None:
     """提醒并等待提交检查；参数：错误和截图说明；返回：明确反馈后返回，无超时。"""
     _play_attention_sound()
     print(message, flush=True)
+    _manual_state('needs_attention',message)
     while True:
         try:
             feedback = input("人工检查完成后输入“继续”并回车：").strip()
         except EOFError as error:
             raise NeedsAttention("输入通道已关闭，未收到商品提交检查反馈") from error
         if feedback in {"继续", "已完成", "完成", "continue"}:
+            _manual_state('running','已收到提交检查反馈；核对现有结果，不重放提交','继续')
             return
         print("尚未收到检查完成反馈，保持浏览器打开并等待。", flush=True)
 

@@ -1,4 +1,5 @@
 """淘宝买家端登录，独立于千牛的入口及登录判断。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import time
 from urllib.parse import urlencode, urlsplit
 

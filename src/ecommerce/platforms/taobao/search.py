@@ -1,4 +1,5 @@
 """通过淘宝首页表单搜索，仅确认首屏结果，不翻页或采集商品明细。"""
+from ecommerce.infrastructure.tasks.events import notify as print
 import time
 import json
 from dataclasses import dataclass

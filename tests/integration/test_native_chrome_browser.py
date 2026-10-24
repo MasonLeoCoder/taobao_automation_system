@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ecommerce.infrastructure.browser.native_chrome import browser_session, find_chrome
+from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.platforms.taobao.session import browser_session as guarded_browser_session
 from ecommerce.platforms.taobao.verification import active_guard
 from ecommerce.shared.config import load_settings
@@ -13,6 +14,31 @@ from ecommerce.shared.config import load_settings
 
 @unittest.skipUnless(os.environ.get("TAOBAO_SYSTEM_CHROME_TESTS") == "1", "显式启用系统 Chrome 本地测试")
 class NativeChromeBrowserTests(unittest.TestCase):
+    def test_guarded_session_restores_session_cookie_without_rolling_back_profile(self):
+        """关闭重开后补回会话 Cookie，同时保留资料中较新的持久 Cookie。"""
+        try:
+            find_chrome()
+        except ValueError:
+            self.skipTest("本机没有系统 Chrome")
+        with tempfile.TemporaryDirectory() as folder:
+            settings = replace(load_settings(root=Path(folder)).for_platform("taobao"),
+                               taobao_browser_channel="chrome", taobao_browser_mode="native_cdp")
+            with guarded_browser_session(settings) as (context, page):
+                context.add_cookies([
+                    {"name": "session-login", "value": "confirmed", "domain": ".local.test", "path": "/"},
+                    {"name": "persistent", "value": "old-export", "domain": ".local.test", "path": "/", "expires": 2000000000},
+                ])
+                save_session(context, settings)
+                context.add_cookies([
+                    {"name": "persistent", "value": "fresh-profile", "domain": ".local.test", "path": "/", "expires": 2000000000},
+                ])
+            with guarded_browser_session(settings) as (context, page):
+                cookies = {item["name"]: item for item in context.cookies()}
+                self.assertIn("session-login", cookies)
+                self.assertEqual(cookies["session-login"]["value"], "confirmed")
+                self.assertEqual(cookies["session-login"]["expires"], -1)
+                self.assertEqual(cookies["persistent"]["value"], "fresh-profile")
+
     def test_normal_connection_can_read_fill_click_once_and_preserve_profile(self):
         try:
             find_chrome()
