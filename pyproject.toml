@@ -20,5 +20,5 @@ ecommerce = "ecommerce.cli.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"ecommerce.web" = ["templates/*.html", "static/*.css"]
+"ecommerce.web" = ["templates/*.html", "static/*.css", "static/*.js"]
 "ecommerce.infrastructure.storage" = ["migrations/*.sql", "mysql_migrations/*.py", "mysql_migrations/versions/*.py"]

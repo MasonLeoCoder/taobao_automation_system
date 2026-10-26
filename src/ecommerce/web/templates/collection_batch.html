@@ -1,29 +1,12 @@
 {% extends "base.html" %}
-{% block title %}采集批次 {{ batch.id }}{% endblock %}{% block breadcrumb %}采集资料 / 批次 {{ batch.id }}{% endblock %}
+{% from "sorting.html" import sort_header, media_sort with context %}
+{% from "pagination.html" import pager with context %}
+{% from "collection_parts.html" import labels, scope, media_grid, record_table with context %}
+{% block title %}采集批次 {{ batch.id }}{% endblock %}{% block breadcrumb %}<a href="{{ url_for('pages.collection_searches') if kind=='items' else url_for('pages.collection_details') }}">{{ '搜索列表' if kind=='items' else '商品库' }}</a> / 批次 {{ batch.id }}{% endblock %}
 {% block content %}
-{% set coverage={'limit_reached':'已达到本次上限','visible_end_confirmed':'已确认页面可见末尾','manual_count_confirmed':'人工确认','confirmed_empty':'已确认无数据','incomplete':'部分采集','unknown':'未确认覆盖范围'} %}
-<section class="intro"><div><h1>批次 {{ batch.id }}</h1><p>{{ coverage.get(batch.coverage_status,batch.coverage_status) }}{% if batch.collection_mode=='limited' %} · 本次上限 {{ batch.requested_limit }}{% elif batch.collection_mode=='all' %} · 本次未设数量上限{% endif %}。记录的是本次范围，不表示平台全部数据。</p></div><a class="button" href="/collections">返回采集资料</a></section>
-<div class="table-wrap"><table><thead><tr><th>顺序</th><th>已采内容</th><th>原文与确认情况</th></tr></thead><tbody>
-{% for item in records %}
-{% if kind!='media' or item.role in ['main_image','detail_image','main_video','sku_image'] %}
-<tr><td>{{ item.position or item.slot_index or loop.index }}</td><td class="log-message">
-{% if kind=='items' %}{{ item.title }}
-{% elif kind=='skus' %}{{ item.sku_name }}
-{% elif kind=='parameters' %}{{ item.name }}：{{ item.value }}
-{% elif kind=='reviews' %}{{ item.content }}
-{% elif kind=='questions' %}{{ item.question }}<small><a href="{{ url_for('pages.collection_batch',batch_id=batch.id,kind='answers',question_id=item.id) }}">查看本题回答</a></small>
-{% elif kind=='answers' %}{{ item.content }}
-{% elif kind=='review_summary' %}评价数量原文：{{ item.count_raw or '未提供' }}<small>好评率原文：{{ item.positive_rate_raw or '未提供' }}</small>
-{% elif kind=='media' %}{{ item.file.relative_path if item.file else '仅保存来源链接' }}
-{% else %}{{ item.checkpoint_type or '' }}{% endif %}
-</td><td>
-{% if kind in ['items','skus'] %}{{ item.price_text or '价格未确认' }}<small>{% if item.price_value is not none %}数值 {{ item.price_value }} · {{ item.price_label or '来源未提供价格口径' }}{% else %}缺失价格保留为空{% endif %}</small>
-{% elif kind in ['reviews','answers'] %}{{ item.author or '来源未提供用户' }}<small>{{ item.date_raw or '来源未提供日期' }}{% if not item.identity_exact %} · 匿名记录身份不保证精确{% endif %}</small>
-{% elif kind=='questions' %}{{ '回答已完成' if item.answers_complete else '回答尚未完成' }}
-{% elif kind=='media' %}{{ '文件已核对' if item.file and item.file.availability=='present' else '没有已核对的本地文件' }}
-{% else %}保留来源原文{% endif %}
-</td></tr>{% endif %}
-{% else %}<tr><td colspan="3">本次范围没有可显示的明细</td></tr>{% endfor %}
-</tbody></table></div>
-{% if records %}<p><a class="button" href="{{ url_for('pages.collection_batch',batch_id=batch.id,kind=kind,question_id=request.args.get('question_id',''),after=next_cursor) }}">下一页明细</a></p>{% endif %}
+<p class="back-link"><a class="button action-button action-neutral" href="{{ safe_return(request.args.get('return_to'),url_for('pages.collection_searches')) }}">← 返回上一列表</a></p>
+<section class="intro"><div><h1>{{ labels.get(batch.module,batch.module) }} · 批次 {{ batch.id }}</h1><p>采集于 {{ batch.captured_at | full_local_time }} · 本次范围不代表平台全量</p></div>{% if batch.task_id %}<a class="button action-button action-history" href="{{ url_for('pages.logs',task_id=batch.task_id,return_to=current_location()) }}">查看任务日志</a>{% endif %}</section>
+<section class="panel batch-summary"><p>{{ scope(batch) }}</p>{% if batch.task_id %}<a class="button action-button action-history" href="{{ url_for('pages.task_detail',task_id=batch.task_id,return_to=current_location()) }}">查看关联任务 →</a>{% else %}<p>未记录任务归属</p>{% endif %}{% if kind=='answers' %}<p><a class="button action-button action-neutral" href="{{ safe_return(request.args.get('return_to'),url_for('pages.collection_batch',batch_id=batch.id)) }}">返回问题列表</a></p>{% endif %}</section>
+{% if kind=='media' %}{{ media_sort(pagination) }}{{ media_grid(records) }}{% else %}{{ record_table({'kind':kind,'batch':batch,'records':records,'sort_spec':sort_spec}) }}{% endif %}
+{{ pager(pagination,{'batch':batch.id,'media_page':none,'media_sort':none,'media_order':none} if kind=='skus' else {'batch':batch.id}) }}
 {% endblock %}

@@ -1,0 +1,11 @@
+{% macro pager(info, parameters={}, page_key='page') %}
+<div class="numbered-pagination" role="navigation" aria-label="分页">
+<span>第 {{ info.page }} / {{ info.pages }} 页 · 共 {{ info.total }} 条 · 每页 20 条</span>
+<div class="page-actions">
+{% if info.page>1 %}<a class="button" href="{{ pagination_url(1,parameters,page_key) }}">首页</a><a class="button" rel="prev" href="{{ pagination_url(info.page-1,parameters,page_key) }}">上一页</a>{% else %}<span class="button disabled" aria-disabled="true">首页</span><span class="button disabled" aria-disabled="true">上一页</span>{% endif %}
+{% for number in range([1,info.page-2]|max,[info.pages,info.page+2]|min+1) %}{% if number==info.page %}<span class="page-current" aria-current="page">{{ number }}</span>{% else %}<a class="page-number" href="{{ pagination_url(number,parameters,page_key) }}">{{ number }}</a>{% endif %}{% endfor %}
+{% if info.page<info.pages %}<a class="button" rel="next" href="{{ pagination_url(info.page+1,parameters,page_key) }}">下一页</a><a class="button" href="{{ pagination_url(info.pages,parameters,page_key) }}">末页</a>{% else %}<span class="button disabled" aria-disabled="true">下一页</span><span class="button disabled" aria-disabled="true">末页</span>{% endif %}
+</div>
+{% if info.pages>1 %}<form method="get" action="{{ request.path }}">{% for key,value in pagination_parameters(parameters,page_key).items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<label>跳至 <input type="number" name="{{ page_key }}" min="1" max="{{ info.pages }}" value="{{ info.page }}" required aria-label="跳转页码"> 页</label><button class="button" type="submit">跳转</button></form>{% endif %}
+</div>
+{% endmacro %}

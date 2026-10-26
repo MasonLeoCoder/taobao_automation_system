@@ -99,12 +99,18 @@ def update_task_progress(path: Path, task_id: str, status: str, message: str) ->
         connection.execute("UPDATE tasks SET status=?,message=? WHERE id=? AND finished_at IS NULL", (status, message, task_id))
 
 
-def list_tasks(path: Path, limit: int = 50) -> list[dict]:
-    """读取近期记录；参数：数据库路径、数量；返回：任务字典列表。"""
+def list_tasks(path: Path, limit: int = 50, *, offset: int = 0,sort_by=None,order=None) -> list[dict]:
+    """分页读取记录；参数：数据库路径、数量、偏移；返回：任务字典列表。"""
+    if type(limit) is not int or limit<1 or type(offset) is not int or offset<0:
+        raise ValueError('任务数量须为正整数，偏移须为非负整数')
     if not isinstance(path,Path):
-        return path.list_tasks(limit)
+        return path.list_tasks(limit,offset=offset,sort_by=sort_by,order=order)
+    from ecommerce.shared.sorting import sorting
+    spec=sorting(sort_by,order,{'name','status','started_at','finished_at','message'},'started_at','desc')
+    column,direction=spec['sort'],spec['order']
     with connect(path) as connection:
-        return [dict(row) for row in connection.execute("SELECT * FROM tasks ORDER BY started_at DESC,rowid DESC LIMIT ?", (limit,))]
+        return [dict(row) for row in connection.execute(
+            f"SELECT * FROM tasks ORDER BY ({column} IS NULL) ASC,{column} {direction},rowid {direction} LIMIT ? OFFSET ?", (limit,offset))]
 
 
 def task_counts(path: Path) -> dict[str, int]:

@@ -14,11 +14,11 @@ from ecommerce.infrastructure.storage.task_store import task_store,fingerprint,d
 from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.storage.mysql_migrations.search_origin_v3 import enrich_origin
 
-CHILDREN={'list_observations','sku_observations','parameter_observations','review_summaries',
+CHILDREN={'product_info_observations','list_observations','sku_observations','parameter_observations','review_summaries',
     'review_observations','question_observations','answer_observations','media_references','collection_checkpoints'}
 PRUNE_ORDER=['media_references','collection_checkpoints','answer_observations','question_observations',
-             'review_observations','sku_observations','parameter_observations','list_observations','review_summaries']
-SECTIONS={'product_info':'skus','sku_details':'skus',**{name:name for name in
+             'review_observations','sku_observations','parameter_observations','list_observations','review_summaries','product_info_observations']
+SECTIONS={'product_info':'basic_info','sku_details':'skus',**{name:name for name in
     ['video','main_images','parameters','detail_images','review_summary','reviews','questions']}}
 
 
@@ -84,11 +84,24 @@ class CollectionWriter:
         """保留内部主键并核对不可变内容；参数：表、键、列值及可变标记；返回：内部编号或批次键。"""
         values=database_values(table,values)
         old=self._select(table,key)
+        sales_bootstrap=False
+        if table.name=='list_observations':
+            from ecommerce.shared.sales import FIELDS,parse_sales
+            supplied=set(FIELDS)&set(values)
+            if supplied and supplied!=set(FIELDS):
+                raise CollectionDataError('列表销量快照字段不完整')
+            if not supplied:
+                sales_bootstrap=bool(old and old['sales_parse_status']=='pending' and old['sales_text']==values.get('sales_text'))
+                # 旧不可变快照不含结构化销量：原文相同时保留已回填结果，不清空、不修改旧快照指纹。
+                sales=({name:old[name] for name in FIELDS} if old and old['sales_text']==values.get('sales_text')
+                       and old['sales_parse_status']!='pending' else parse_sales(values.get('sales_text')))
+                values.update(database_values(table,sales))
         if old is None:
             pk=self.connection.execute(table.insert().values(**values)).inserted_primary_key[0]
         else:
             changed=any(old[k]!=v for k,v in values.items())
-            if changed and not mutable:
+            bootstrap_only=sales_bootstrap and all(old[k]==v for k,v in values.items() if k not in FIELDS)
+            if changed and not mutable and not bootstrap_only:
                 raise CollectionDataError('采集记录与已发布内容冲突：'+table.name)
             if changed:
                 self.connection.execute(table.update().where(*[table.c[k]==v for k,v in key.items()]).values(**values))
@@ -333,6 +346,8 @@ class CollectionWriter:
                     child_key['batch_id']=self.batch_id
                     if 'module' in child.c:
                         child_values['module']=header['module']
+                    if name=='product_info_observations':
+                        child_values['product_id']=product
                     if name=='list_observations':
                         child_values['product_id']=self._product(record.get('product_id'))
                     if name=='answer_observations':
@@ -368,6 +383,9 @@ class CollectionWriter:
                 context={**context,'sections':[]}
             self._publish(header,values,context,product)
             self._title(header,values,product)
+            if header['module']=='skus' and (values.get('schema_version') or 0)<=2:
+                from ecommerce.infrastructure.storage.mysql_migrations.basic_info_v7 import split_legacy_info
+                split_legacy_info(self.connection,self.tables,batch_id=self.batch_id)
         return {'table':table.name,'id':self.root_id,'task_id':self.task_id,'batch_id':self.batch_id,'counts':counts,
                 'issues':self.issues,'logical_key':header['logical_key'],
                 'run_id':self.root_id if kind=='report' else values.get('run_id') if kind=='batch' else None}
@@ -375,10 +393,18 @@ class CollectionWriter:
     def _publish(self,header,values,context,product):
         """核对完整性并更新对应范围指针；参数：头、根值、发布依据及商品；返回：无。"""
         sections=context.get('sections',[])
+        if header['module']=='skus' and (values.get('schema_version') or 0)<=2:
+            sections=[section for section in sections if section!='product_info']
         status=values['status']
         if sections and (product is None or values['visibility']!='published' or status not in
             {'complete','downloaded','no_video','no_images','no_parameters','no_reviews','no_questions'}):
             raise CollectionDataError('未通过完整性核对的批次不能进入当前有效分区')
+        if sections and header['module']=='basic_info':
+            from ecommerce.shared.basic_info import assessment
+            info=self.connection.execute(sa.select(self.tables['product_info_observations']).where(
+                self.tables['product_info_observations'].c.batch_id==self.batch_id)).mappings().one_or_none()
+            if info is None or assessment(info,info['source_url'],info['captured_at'])['status']!='complete':
+                raise CollectionDataError('基本信息观察尚未通过独立完整性检查')
         for section in sections:
             if SECTIONS.get(section)!=header['module']:
                 raise CollectionDataError('发布分区与采集模块不匹配')
@@ -420,7 +446,7 @@ class CollectionWriter:
         if header['module']=='list':
             listing=self.tables['list_observations']
             candidates=self.connection.execute(sa.select(listing.c.product_id,listing.c.title).where(listing.c.batch_id==self.batch_id,listing.c.product_id.is_not(None)).order_by(listing.c.slot_index)).all()
-        elif header['module']=='skus' and product:
+        elif header['module']=='basic_info' and product:
             title=(values['result_payload']['record'].get('product_info') or {}).get('title')
             if title:
                 candidates=[(product,title)]

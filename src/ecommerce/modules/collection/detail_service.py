@@ -17,21 +17,21 @@ from ecommerce.platforms.taobao.verification import active_guard
 from ecommerce.shared.exceptions import NeedsAttention
 
 
-def open_detail_input(settings, value, *, wait=True, on_attention=None, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False):
+def open_detail_input(settings, value, *, wait=True, on_attention=None, on_login_required=None, basic_info=False, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False, on_module_event=None):
     """独立入口建立会话；参数：目标与模块开关；返回：实际采集说明。"""
     if all_reviews and not (reviews or questions):
         raise ValueError('--all 必须与 --reviews 或 --questions 一起使用')
     target = resolve_detail_input(value)
     with browser_session(settings, on_attention=on_attention) as (context, page):
-        page = authenticate(context, page, settings)
+        page = authenticate(context, page, settings,on_login_required=on_login_required) if on_login_required else authenticate(context,page,settings)
         result = open_detail(page, target.url if target.input_type == "url" else target.item_id, settings.timeout_ms)
-        return collect_detail_page(settings,context,result,wait=wait,video=video,main_images=main_images,skus=skus,
+        return collect_detail_page(settings,context,result,wait=wait,basic_info=basic_info,video=video,main_images=main_images,skus=skus,
             parameters=parameters,detail_images=detail_images,review_summary=review_summary,reviews=reviews,
-            all_reviews=all_reviews,questions=questions)['message']
+            all_reviews=all_reviews,questions=questions,**({'on_module_event':on_module_event} if on_module_event else {}))['message']
 
 
-def collect_detail_page(settings,context,result,*,wait=False,source=None,video=True,main_images=True,skus=True,
-                        parameters=True,detail_images=True,review_summary=True,reviews=True,all_reviews=False,questions=True):
+def collect_detail_page(settings,context,result,*,wait=False,source=None,basic_info=True,video=True,main_images=True,skus=True,
+                        parameters=True,detail_images=True,review_summary=True,reviews=True,all_reviews=False,questions=True,on_module_event=None):
     """在调用方详情页执行模块；参数：会话、详情页、来源与选项；返回：独立商品运行汇总。"""
     if all_reviews and not (reviews or questions):
         raise ValueError('--all 必须与 --reviews 或 --questions 一起使用')
@@ -92,9 +92,10 @@ def collect_detail_page(settings,context,result,*,wait=False,source=None,video=T
         save_session(context, settings)
         message = f"商品 {target.item_id} 详情页入口已打开，等待 DOM 字段核对；入口记录：{destination}"
         print(message, flush=True)
-        requested=dict(video=video,main_images=main_images,skus=skus,parameters=parameters,detail_images=detail_images,
+        requested=dict(basic_info=basic_info,video=video,main_images=main_images,skus=skus,parameters=parameters,detail_images=detail_images,
                        review_summary=review_summary,reviews=reviews,questions=questions)
-        steps=[('video','detail_video','collect_main_video',{'downloaded','no_video'}),
+        steps=[('basic_info','detail_basic_info','collect_basic_info',{'complete'}),
+               ('video','detail_video','collect_main_video',{'downloaded','no_video'}),
                ('main_images','detail_images','collect_main_images',{'complete'}),
                ('skus','detail_skus','collect_skus',{'complete'}),
                ('parameters','detail_parameters','collect_parameters',{'complete','no_parameters'}),
@@ -108,12 +109,17 @@ def collect_detail_page(settings,context,result,*,wait=False,source=None,video=T
                 if not requested[name] or step_error is not None:
                     continue
                 report.start(name)
+                if on_module_event:
+                    on_module_event(name,'running')
                 module=import_module('ecommerce.modules.collection.'+module_name)
                 kwargs={'all_reviews':all_reviews} if name=='reviews' else {'all_questions':all_reviews} if name=='questions' else {}
                 value=getattr(module,function_name)(settings,result,**kwargs)
                 status=value.get('video_status') if name=='video' else value.get('status')
                 allowed=module.sku_continuation_allowed(value) if name=='skus' else status in accepted
                 report.finish(name,value,allowed)
+                if on_module_event:
+                    guard.checkpoint('本模块资料及汇总已确认入库')
+                    on_module_event(name,'finished')
                 print(value['message'],flush=True)
                 print(('视频采集记录：' if name=='video' else '商品详情记录：')+value['record_path'],flush=True)
                 message+='；'+value['message']

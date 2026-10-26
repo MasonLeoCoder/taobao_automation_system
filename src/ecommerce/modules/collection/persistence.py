@@ -30,6 +30,11 @@ def validate_publication(module,record,sections):
             raise ValueError('主图发布数量尚未确认')
     if module=='detail_images' and status=='complete' and (not record.get('list_confirmed') or any(i.get('status')!='downloaded' for i in record.get('images',[]))):
         raise ValueError('详情图列表或下载状态尚未确认')
+    if module=='basic_info':
+        from ecommerce.shared.basic_info import assessment
+        check=assessment(record.get('product_info') or {},record.get('source_url'),record.get('captured_at'))
+        if check['status']!='complete':
+            raise ValueError('基本信息完整性未确认，不能更新有效分区')
     if module=='skus':
         from ecommerce.modules.collection.detail_skus import sku_continuation_allowed
         if status!='complete' or not sku_continuation_allowed(record) or record.get('warnings') or record.get('blocking_issues'):
@@ -95,7 +100,7 @@ def capture_sections(directory,item_id,sections):
             continue
         normal=section.removesuffix('_last_attempt')
         module=SECTIONS.get(normal)
-        if module is None or normal=='product_info':
+        if module is None:
             continue
         batch=value.get('batch_id')
         if not batch:
@@ -105,8 +110,6 @@ def capture_sections(directory,item_id,sections):
             entry['last_attempt']=True
         else:
             entry['sections'].append(section)
-        if module=='skus' and 'product_info' in sections and entry['sections'] and 'product_info' not in entry['sections']:
-            entry['sections'].append('product_info')
     for (module,batch),entry in grouped.items():
         path=directory/'history'/batch/MODULE_FILES[module]
         if not path.exists():

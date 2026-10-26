@@ -14,7 +14,8 @@
     <a class="{{ 'active' if active == 'home' }}" href="/">工作台概览</a>
     <a class="{{ 'active' if active == 'tasks' }}" href="/tasks">任务记录</a>
     <a class="{{ 'active' if active == 'logs' }}" href="/logs">运行日志</a>
-    <a class="{{ 'active' if active == 'collections' }}" href="/collections">采集资料</a>
+    <a class="{{ 'active' if active == 'collections' and ('/searches' in request.path or '/batches' in request.path or request.args.get('view')=='searches') }}" href="{{ url_for('pages.collection_searches') }}">搜索列表</a>
+    <a class="{{ 'active' if active == 'collections' and '/searches' not in request.path and '/batches' not in request.path and request.args.get('view')!='searches' }}" href="{{ url_for('pages.collection_details') }}">商品库</a>
     <p>业务模块</p>
     {% for item in features %}<a class="{{ 'active' if active == item.key }}" href="/modules/{{ item.key }}">{{ item.name }}{% if item.status == 'planned' %}<small>规划中</small>{% endif %}</a>{% endfor %}
   </nav>
@@ -25,4 +26,29 @@
   {% block content %}{% endblock %}
   <footer>数据来自本地运行记录 · 时间按 Asia/Shanghai 展示</footer>
 </main>
+<section id="collection-task-bar" class="collection-task-bar" hidden aria-live="polite"></section>
+<dialog id="collection-attention" class="collection-dialog" aria-labelledby="collection-attention-title">
+  <h2 id="collection-attention-title">采集需要人工处理</h2>
+  <p id="collection-attention-product"></p><p id="collection-attention-step"></p>
+  <p id="collection-attention-message" class="attention-message"></p>
+  <p>请在淘宝浏览器完成处理，再选择继续。继续后系统会重新检查页面。</p>
+  <div id="collection-attention-actions" class="module-actions"></div>
+  <p id="collection-attention-feedback" role="status"></p>
+</dialog>
+<div id="collection-client" data-token="{{ config.COLLECTION_TOKEN }}"></div>
+<div id="parameter-copy-feedback" class="parameter-copy-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+<dialog id="image-preview" class="image-preview" aria-labelledby="image-preview-title" aria-describedby="image-preview-hint">
+  <div class="image-preview-toolbar">
+    <h2 id="image-preview-title">图片预览</h2>
+    <div><a id="image-preview-original" class="image-preview-control" target="_blank" rel="noopener noreferrer">打开原图 ↗</a><button id="image-preview-close" class="image-preview-control" type="button" aria-label="关闭图片预览">关闭 ×</button></div>
+  </div>
+  <div class="image-preview-stage">
+    <p id="image-preview-status" role="status" aria-live="polite">正在加载图片…</p>
+    <img id="image-preview-photo" class="image-preview-photo" alt="" draggable="false" hidden>
+  </div>
+  <p id="image-preview-hint" class="image-preview-hint">再次点击图片或空白处恢复 · Esc 关闭</p>
+</dialog>
+<script src="{{ url_for('static',filename='image_preview.js') }}" defer></script>
+<script src="{{ url_for('static',filename='parameters.js') }}" defer></script>
+<script src="{{ url_for('static',filename='collection.js') }}" defer></script>
 </body></html>

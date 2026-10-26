@@ -1,4 +1,4 @@
-"""本地浏览器验证搜索页保留、多商品八模块调度、跨页复用及中断；不访问真实淘宝。"""
+"""本地浏览器验证搜索页保留、多商品九模块调度、跨页复用及中断；不访问真实淘宝。"""
 from contextlib import contextmanager
 from dataclasses import replace
 import json
@@ -61,7 +61,7 @@ class SearchDetailsBrowserTests(unittest.TestCase):
         self.fail=False
         self.change_list=False
         def collect(name):
-            """模块替身只隔离采集内容，真实执行页面导航、入口落盘和八步汇总。"""
+            """模块替身只隔离采集内容，真实执行页面导航、入口落盘和九步汇总。"""
             def execute(settings,result,**kwargs):
                 self.calls.append((result.target.item_id,name,kwargs))
                 if self.fail:
@@ -73,12 +73,12 @@ class SearchDetailsBrowserTests(unittest.TestCase):
                         'record_path':str(settings.workspace/'fixture.json')}
             return execute
         self.module=SimpleNamespace(sku_continuation_allowed=lambda value:True,
-            **{function:collect(name) for name,function in [('video','collect_main_video'),('main_images','collect_main_images'),
+            **{function:collect(name) for name,function in [('basic_info','collect_basic_info'),('video','collect_main_video'),('main_images','collect_main_images'),
                 ('skus','collect_skus'),('parameters','collect_parameters'),('detail_images','collect_detail_images'),
                 ('review_summary','collect_review_summary'),('reviews','collect_reviews'),('questions','collect_questions')]})
 
     def run_collection(self,attention=None):
-        """运行实际搜索与详情协作，仅替换八模块内容；参数：反馈；返回：业务说明。"""
+        """运行实际搜索与详情协作，仅替换九模块内容；参数：反馈；返回：业务说明。"""
         @contextmanager
         def browser(settings,**kwargs):
             yield self.context,self.home
@@ -90,13 +90,13 @@ class SearchDetailsBrowserTests(unittest.TestCase):
         return json.loads(next((self.settings.workspace/'output/reports/taobao_list').glob('*.json')).read_text(encoding='utf-8'))
 
     def test_three_distinct_products_from_two_pages_dispatch_all_modules_and_keep_search(self):
-        """两页四处展示产生三个独立入口与运行，八模块各执行三次，跨页重复只复用。"""
+        """两页四处展示产生三个独立入口与运行，九模块各执行三次，跨页重复只复用。"""
         self.run_collection()
         summary=self.summary()
         self.assertEqual((summary['schema_version'],summary['completed_page_count'],summary['detail_success_count'],summary['detail_reused_count']),(2,2,3,1))
-        self.assertEqual(len(self.calls),24)
-        self.assertEqual([name for identifier,name,kwargs in self.calls[:8]],
-                         ['video','main_images','skus','parameters','detail_images','review_summary','reviews','questions'])
+        self.assertEqual(len(self.calls),27)
+        self.assertEqual([name for identifier,name,kwargs in self.calls[:9]],
+                         ['basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions'])
         self.assertTrue(all(not kwargs.get('all_reviews',False) and not kwargs.get('all_questions',False) for _,_,kwargs in self.calls))
         detail_requests=[url for url in self.requests if urlsplit(url).hostname in {'item.taobao.com','detail.tmall.com'}]
         self.assertEqual(len(detail_requests),3)
@@ -132,4 +132,4 @@ class SearchDetailsBrowserTests(unittest.TestCase):
         summary=self.summary()
         self.assertEqual((summary['status'],summary['detail_success_count']),('interrupted',1))
         self.assertEqual(summary['detail_attempts'][0]['detail_status'],'complete')
-        self.assertEqual(len(self.calls),8)
+        self.assertEqual(len(self.calls),9)

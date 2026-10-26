@@ -2,14 +2,14 @@
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 from ecommerce.infrastructure.storage.mysql import version_table
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v5 import REVISION,build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import REVISION,build_metadata
 
 
 def render_dictionary():
     """生成全字段及约束说明；参数：无；返回：Markdown 字符串。"""
     metadata=build_metadata()
     tables=list(metadata.tables.values())+[version_table()]
-    lines=['# 数据库完整字段字典','',f'结构版本：`{REVISION}`。业务表 22 张，技术版本表 1 张。',
+    lines=['# 数据库完整字段字典','',f'结构版本：`{REVISION}`。业务表 {len(metadata.tables)} 张，技术版本表 1 张。',
            '', '本字典由同版迁移定义生成；数据库实际结构由 `database check` 核对。关系总览见 [数据库表关系说明](数据库表关系说明.md)。',
            '', '字段备注写入数据库原生 COMMENT。所有 DATETIME 字段直接存北京时间（UTC+08:00），查询返回带 +08:00 的 ISO 时间，界面不重复加八小时；来源原文 time_raw 和 JSON/文件保留原始时区。空值与 0、空字符串、确认无数据分别解释。',
            '', '采集 JSON 扩展按来源 schema_version 保留业务字段，原始文件另行保存；任务事件、导入 JSON 键与版本口径见 [任务与日志结构口径](数据库表关系说明.md#8-已接入的任务与日志结构口径)，当前业务取值查 [字段取值说明](数据库字段取值说明.md)，早期设计见 [历史接入设计](历史记录/MySQL接入与历史迁移设计.md)。','']

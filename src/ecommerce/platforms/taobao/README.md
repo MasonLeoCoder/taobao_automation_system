@@ -48,4 +48,9 @@ python main.py account check --platform taobao
 
 ## 列表到详情
 
-`list_details.py`集中管理保留搜索现场、在守卫expect_new_page内登记并打开唯一目标详情，以及采集完成后的回到搜索页复核。只使用规范化商品链接，编号须与列表一致；来源条件变化请求人工，不重搜、不重排、不重复打开。业务调度在modules.collection.search_details，八模块共用detail_service.collect_detail_page。
+`list_details.py`集中管理保留搜索现场、在守卫expect_new_page内登记并打开唯一目标详情，以及采集完成后的回到搜索页复核。只使用规范化商品链接，编号须与列表一致；来源条件变化请求人工，不重搜、不重排、不重复打开。业务调度在modules.collection.search_details，九模块共用detail_service.collect_detail_page。
+
+
+2026-10-25基本信息独立：--basic-info调用detail_basic_info.collect_basic_info，只读可见标题/店铺/销量/展示价格，不遍历SKU；原件basic_info.json，模块basic_info，表product_info_observations，分区product_info。--skus新原件格式3只含规格、价格与图片，不改基本信息。默认入口九模块先采基本信息。旧格式2仍兼容，0007按证据独立提取，原SKU原件和步骤不改写。
+
+2026-10-26主图裁切适配：detail_images仅归一已确认的`~crop,x,y,width,height~_!!数字卖家编号.扩展名`，保留域名、目录、原资源、数量和顺序核对。优先选择页面明确提供的未裁切原图，不从裁切URL反推下载地址。主图恢复检查返回含具体原因的business阻断，check_details保存地址对比；其他布尔恢复回调继续兼容。运行中的采集进程不热更新，旧暂停任务须停止后重新发起。

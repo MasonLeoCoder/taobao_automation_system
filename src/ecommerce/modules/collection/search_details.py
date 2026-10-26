@@ -31,7 +31,7 @@ def collect_page_details(settings, context, result, collected, seen, attempts):
             attempt.update(status='reused_in_task', detail_status=previous['detail_status'], entry_key=previous['entry_key'], source_run_key=previous['source_run_key'])
             emit_event('list_detail_reused', '同任务商品详情已成功采集，保留本次列表观察并复用详情运行', details=attempt)
             continue
-        emit_event('list_detail_started', '准备采集当前列表商品的默认八个详情模块', details=attempt)
+        emit_event('list_detail_started', '准备采集当前列表商品的默认九个详情模块', details=attempt)
         try:
             confirm_search_page(result, payload['page_number'])
             detail = open_list_detail(context, item['product_url'], item['product_id'], settings.timeout_ms)

@@ -27,10 +27,12 @@ class TaskResult:
     exit_code: int
 
 
-def run_task(settings: Settings, name: str, action: Callable[[], str]) -> TaskResult:
+def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_id=None) -> TaskResult:
     """记录并执行任务；参数：配置、任务名、业务回调；返回：TaskResult。"""
     if settings.task_backend=='mysql':
-        return _run_mysql_task(settings,name,action)
+        return _run_mysql_task(settings,name,action,task_id=task_id) if task_id else _run_mysql_task(settings,name,action)
+    if task_id is not None:
+        raise ValueError('预分配任务编号仅支持 MySQL 任务')
     database.initialize(settings.task_database)
     task_id = None
     try:
@@ -58,7 +60,7 @@ def run_task(settings: Settings, name: str, action: Callable[[], str]) -> TaskRe
         return TaskResult(None, "needs_attention", str(error), 3)
 
 
-def _run_mysql_task(settings,name,action):
+def _run_mysql_task(settings,name,action,*,task_id=None):
     """执行已确认入库的任务，保留未提交结论；参数：配置、名称、业务；返回：真实任务结果。"""
     from ecommerce.infrastructure.tasks.events import TaskEvents,event_session,replay_events
     from ecommerce.infrastructure.tasks.ownership import execution_key,owner_alive
@@ -70,7 +72,7 @@ def _run_mysql_task(settings,name,action):
         with shop_lock(settings.profile_path):
             replay_events(settings,store)
             store.recover_interrupted(execution_key(settings),owner_alive)
-            session=TaskEvents(settings,store,name)
+            session=TaskEvents(settings,store,name,task_id=task_id) if task_id else TaskEvents(settings,store,name)
             token=_CURRENT_TASK.set((store,session.task_id))
             try:
                 with event_session(session):

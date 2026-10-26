@@ -124,17 +124,17 @@ class RemoveHistoryImportMigrationTests(unittest.TestCase):
             with self.engine.connect() as connection:
                 self.assertEqual(mysql.current_revision(connection),schema_v4.REVISION)
             self.assertEqual(self.business_rows(),before)
-        self.assertEqual(mysql.upgrade_schema(self.config),schema_v5.REVISION)
-        self.assertEqual(mysql.upgrade_schema(self.config),schema_v5.REVISION)
+        self.assertEqual(mysql.upgrade_schema(self.config),mysql.REVISION)
+        self.assertEqual(mysql.upgrade_schema(self.config),mysql.REVISION)
         self.assertEqual(self.business_rows(),before)
         report=mysql.inspect_schema(self.config)
         self.assertEqual(report['schema_errors'],[])
-        self.assertEqual((report['table_count'],report['column_count'],report['foreign_key_count']),(19,245,42))
+        self.assertEqual((report['table_count'],report['column_count'],report['foreign_key_count']),(19,250,42))
         self.assertTrue(report['all_comments_present'])
 
     def test_new_database_runs_entire_frozen_migration_chain(self):
         """空库从首版依次升级至精简版，旧版本模型继续可用。"""
         with self.engine.connect() as connection:
             reset_empty_validation(connection,None,None)
-        self.assertEqual(mysql.upgrade_schema(self.config),schema_v5.REVISION)
+        self.assertEqual(mysql.upgrade_schema(self.config),mysql.REVISION)
         self.assertEqual(mysql.inspect_schema(self.config)['schema_errors'],[])

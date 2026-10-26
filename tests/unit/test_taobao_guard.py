@@ -83,6 +83,28 @@ class TaobaoGuardTests(unittest.TestCase):
             self.assertEqual(prompt_taobao_attention('【检查尚未通过】'), '继续')
             sound.assert_called_once()
 
+    def test_resume_business_failure_keeps_specific_reason_and_diagnostics(self):
+        """主图恢复失败仍属于业务检查，不能改成登录提示，逐项差异保留在事件中。"""
+        original=Blockage('business',self.page,'主图第1张来源或顺序不一致')
+        current=Blockage('business',self.page,'主图第2张来源或顺序不一致',check_details={'position':2})
+        messages=[]
+        with self.guard(lambda message:messages.append(message) or '继续') as guard, \
+                patch.object(guard,'_scan',side_effect=[original,None,None]):
+            guard.resume_check=MagicMock(side_effect=[current,True])
+            guard.checkpoint('复核主图列表')
+            records=[json.loads(row) for row in guard.event_path.read_text(encoding='utf-8').splitlines()]
+        self.assertEqual(len(messages),2);self.assertIn('第2张',messages[1])
+        self.assertTrue(messages[1].startswith('【检查尚未通过】'));self.assertNotIn('登录状态',messages[1])
+        self.assertTrue(any(row.get('check_details')=={'position':2} for row in records))
+
+    def test_boolean_business_resume_failure_retains_original_reason(self):
+        """兼容旧布尔恢复检查，业务失败仍保留原原因。"""
+        messages=[];event=Blockage('business',self.page,'评价结构未确认')
+        with self.guard(lambda message:messages.append(message) or '继续') as guard, \
+                patch.object(guard,'_scan',side_effect=[event,None,None]):
+            guard.resume_check=MagicMock(side_effect=[False,True]);guard.checkpoint('检查评价')
+        self.assertIn('评价结构未确认',messages[1]);self.assertNotIn('登录状态',messages[1])
+
     def test_native_decision_does_not_accept_generic_continue(self):
         replies = iter(["继续", "取消"])
         dialog = MagicMock(type="confirm", message="是否执行？")

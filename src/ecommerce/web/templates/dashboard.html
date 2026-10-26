@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="intro"><div><p class="eyebrow">WORKSPACE OVERVIEW</p><h1>把店铺工作，安排得更清楚。</h1><p>在这里查看功能进度与任务结果，逐步连接商品、数据和运营。</p></div><a class="button" href="/tasks">查看任务记录 ↗</a></section>
+<section class="intro"><div><p class="eyebrow">WORKSPACE OVERVIEW</p><h1>把店铺工作，安排得更清楚。</h1><p>在这里查看功能进度与任务结果，逐步连接商品、数据和运营。</p></div><a class="button action-button action-history" href="/tasks">查看任务记录 ↗</a></section>
 <section class="metrics" aria-label="运行统计">
   <article><span>累计任务</span><strong>{{ total }}</strong><small>已记录的自动化执行</small></article>
   <article><span>成功完成</span><strong>{{ counts.get('succeeded',0) }}</strong><small>完成既定任务步骤</small></article>
@@ -11,5 +11,5 @@
 <section class="cards">
 {% for item in features %}<a class="card" href="/modules/{{ item.key }}"><div><span class="index">0{{ loop.index }}</span><span class="badge {{ item.status }}">{{ item.label }}</span></div><h3>{{ item.name }}</h3><p>{{ item.description }}</p><span class="card-link">查看模块 <b>↗</b></span></a>{% endfor %}
 </section>
-<section class="bottom-grid"><article class="panel"><p class="eyebrow">NEXT STEP</p><h2>从 Excel 到商品草稿</h2><p>下一阶段优先打通资料检查、商品填写和草稿保存，逐个记录执行结果。</p><div class="steps"><span>01 资料检查</span><span>02 商品填写</span><span>03 保存草稿</span></div></article><article class="panel"><h2>账号准备情况</h2><p>{{ '检测到本地登录状态文件。' if has_session_file else '尚未检测到本地登录状态文件。' }}会话是否有效，需要在线检查。</p><a class="text-link" href="/modules/account">查看登录方式 →</a></article></section>
+<section class="bottom-grid"><article class="panel"><p class="eyebrow">NEXT STEP</p><h2>从 Excel 到商品草稿</h2><p>下一阶段优先打通资料检查、商品填写和草稿保存，逐个记录执行结果。</p><div class="steps"><span>01 资料检查</span><span>02 商品填写</span><span>03 保存草稿</span></div></article><article class="panel"><h2>账号准备情况</h2><p>{{ '检测到本地登录状态文件。' if has_session_file else '尚未检测到本地登录状态文件。' }}会话是否有效，需要在线检查。</p><a class="button action-button action-primary" href="/modules/account">查看登录方式 →</a></article></section>
 {% endblock %}

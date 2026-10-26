@@ -98,6 +98,7 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.settings = replace(load_settings(root=Path(self.temp.name)).for_platform('taobao'), headless=True, timeout_ms=1800,
                                 taobao_timing={k: (0, 0) for k in DEFAULT_TAOBAO_TIMING})
+        save_detail_section(product_directory(self.settings,ITEM_ID),ITEM_ID,'product_info',{'title':'独立已有基本信息','sales_text':'已售 99件'})
         self.context = self.browser.new_context()
         self.addCleanup(self.context.close)
         self.config = {'groups': [{'name': '商品规格', 'options': [{'name': '1卷-替换纸'}, {'name': '3卷替换纸'}, {'name': '5卷替换纸'}]}],
@@ -140,9 +141,8 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.assertEqual(len(self.page.evaluate('clicks')), 7)
         self.assertTrue(all(Path(s['image']['image_path']).name == s['name']+'.png' for s in record['skus']))
         document = json.loads(Path(record['record_path']).read_text(encoding='utf-8'))
-        self.assertEqual(document['product_info']['sales_lower_bound'], 100000)
-        self.assertIsNone(document['product_info']['sales_value'])
-        self.assertEqual(document['product_info']['evaluation_hint'], '312人评价"有价值"')
+        self.assertEqual(document['product_info'], {'title':'独立已有基本信息','sales_text':'已售 99件'})
+        self.assertNotIn('product_info',record)
 
     def test_delayed_price_does_not_reuse_previous_value(self):
         self.config['delay'] = 600
@@ -169,21 +169,26 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.assertEqual(record['summary']['out_of_stock_count'], 1)
         self.assertEqual(record['status'], 'complete')
 
-    def test_disabled_without_stock_evidence_is_not_called_out_of_stock(self):
+    def test_explicit_disabled_option_is_out_of_stock_and_complete(self):
         self.config['groups'][0]['options'][1]['disabled'] = True
         self.reload()
         record = self.collect()
-        self.assertEqual(record['status'], 'partial')
-        self.assertEqual(record['skus'][1]['stock_status'], 'unavailable_unconfirmed')
+        self.assertEqual(record['status'], 'complete')
+        self.assertEqual(record['skus'][1]['stock_status'], 'out_of_stock')
+        self.assertEqual(record['skus'][1]['price_status'], 'out_of_stock')
         self.assertIsNone(record['skus'][1]['price'])
+        self.assertIsNone(record['skus'][1]['price_value'])
         self.assertNotIn([0, 1], self.page.evaluate('clicks'))
         self.assertTrue(record['continuation_allowed'])
-        self.assertEqual(record['warnings'][0]['sku_name'],'3卷替换纸')
+        self.assertEqual(record['warnings'],[])
+        self.assertEqual(record['blocking_issues'],[])
         self.assertEqual(record['skus'][1]['unavailability_evidence'],['data-disabled=true'])
-        self.assertIn('无法识别价格',record['skus'][1]['price_reason'])
+        self.assertIn('页面规格禁用',record['skus'][1]['stock_evidence'])
+        self.assertEqual(record['summary']['out_of_stock_count'],1)
+        self.assertEqual(record['summary']['unavailable_unconfirmed_count'],0)
         self.assertEqual(record['summary']['option_count'],3)
         self.assertEqual(record['summary']['explicit_sku_id_count'],0)
-        self.assertEqual(record['result_section'],'sku_details_last_attempt')
+        self.assertEqual(record['result_section'],'sku_details')
         self.assertTrue(Path(record['image_directory']).is_dir())
 
     def test_multiple_groups_reset_old_selection_before_linked_options(self):
@@ -318,7 +323,8 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
             self.page.locator('.text--fixture').evaluate("e=>e.textContent='7.90'")
             return '继续'
         with self.guard(attention):
-            data = collect_sku_data(self.result, 500, settle_ms=100)
+            # 保留缺失价格触发人工检查，给正常DOM稳定核对足够的本地执行时间。
+            data = collect_sku_data(self.result, 1500, settle_ms=100)
         self.assertEqual(len(prompts), 1)
         self.assertEqual(data['skus'][1]['price_value'], '7.90')
         self.assertEqual(self.page.evaluate('clicks'), [[0,1], [0,2]])

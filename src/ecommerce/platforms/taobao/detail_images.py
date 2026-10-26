@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Error as PlaywrightError
 
 from ecommerce.platforms.taobao.detail import matches_detail_url
-from ecommerce.platforms.taobao.verification import active_guard
+from ecommerce.platforms.taobao.verification import Blockage,active_guard
 
 IMAGE_SELECTOR = "#picGalleryEle"
 ITEM_IMAGES_SOURCE = "window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images"
@@ -69,6 +69,45 @@ def _asset_identity(url):
     return parsed.hostname, parsed.path.rsplit("/", 1)[0], image_asset_key(url)
 
 
+def _origin_identity(url):
+    """仅归一已确认的淘宝裁切标记；参数：图片地址；返回：保留域名、目录和资源身份的键。"""
+    host,directory,name=_asset_identity(url)
+    name=re.sub(r'~crop,\d+,\d+,[1-9]\d*,[1-9]\d*~(?=_!!\d+\.(?:jpe?g|png|webp|gif|avif|bmp)$)','',name or '',flags=re.I)
+    return host,directory,name
+
+
+def gallery_diagnostics(value,item_id):
+    """整理两组地址及逐项差异；参数：画廊快照和目标商品；返回：去除查询参数的诊断字典。"""
+    def address(url):
+        """隐藏地址中的查询凭证；参数：来源地址；返回：无查询参数和片段的地址。"""
+        if not isinstance(url,str): return None
+        parsed=urlsplit(url)
+        return parsed._replace(netloc=parsed.hostname or '',query='',fragment='').geturl()
+    photos=value.get('photos') or []
+    sources={path:images for path,images in [(ITEM_IMAGES_SOURCE,value.get('item_images')),
+        (HEAD_IMAGES_SOURCE,value.get('head_images'))] if isinstance(images,list)}
+    comparisons=[]
+    for path,images in sources.items():
+        for index in range(max(len(photos),len(images))):
+            photo=photos[index] if index<len(photos) else {}
+            thumbnail=photo.get('thumbnail_url')
+            source=images[index] if index<len(images) else None
+            same=bool(isinstance(thumbnail,str) and isinstance(source,str) and thumbnail and source and _origin_identity(thumbnail)==_origin_identity(source))
+            comparisons.append({'source_path':path,'position':index+1,'slot_index':photo.get('slot_index'),
+                'thumbnail_url':address(thumbnail),'image_url':address(source),'same_origin_asset':same,
+                'exact_asset_match':bool(isinstance(thumbnail,str) and isinstance(source,str) and thumbnail and source and _asset_identity(thumbnail)==_asset_identity(source))})
+    return {'target_item_id':item_id,'data_item_id':value.get('data_item_id'),'ssr_item_id':value.get('ssr_item_id'),
+        'thumbnail_count':len(photos),'source_counts':{path:len(images) for path,images in sources.items()},'comparisons':comparisons}
+
+
+class MainImageCheckError(ValueError):
+    """主图复核失败时保留结构化差异，供暂停及恢复检查共用。"""
+    def __init__(self,reason,details):
+        """保存具体原因与诊断；参数：原因、差异；返回：异常对象。"""
+        super().__init__(reason)
+        self.check_details=details
+
+
 def main_image_manifest(value, item_id):
     """将同次快照内的商品数据与图集核对，返回有序下载清单；不一致抛出 ValueError。"""
     if not value.get("ready"):
@@ -82,16 +121,20 @@ def main_image_manifest(value, item_id):
     if not available:
         raise ValueError("页面尚未提供已适配的主图列表，不会点击缩略图或拼接地址")
     photos = value["photos"]
-    expected = [_asset_identity(p["thumbnail_url"]) for p in photos]
+    expected = [_origin_identity(p["thumbnail_url"]) for p in photos]
     for path, images in available:
         label = "商品主图" if path == ITEM_IMAGES_SOURCE else "图集主图"
         if not isinstance(images, list) or not images or not all(isinstance(u, str) and u for u in images):
             raise ValueError(f"页面{label}列表为空、格式未确认或包含无效地址")
         if len(images) != len(photos):
             raise ValueError(f"页面{label}数量与缩略图数量不一致（{len(images)}/{len(photos)}）")
-        if [_asset_identity(u) for u in images] != expected:
-            raise ValueError(f"页面{label}来源或顺序与缩略图不一致")
-    source, urls = available[0]
+        for index,(url,origin) in enumerate(zip(images,expected),1):
+            if _origin_identity(url)!=origin:
+                raise ValueError(f"页面{label}第{index}张来源或顺序与缩略图不一致（缩略图位置{photos[index-1]['slot_index']}）")
+    # 只选择页面实际提供的地址；未裁切原图优先，不反推或拼接地址。
+    exact=[(path,images) for path,images in available if [_asset_identity(url) for url in images]==[_asset_identity(p['thumbnail_url']) for p in photos]]
+    originals=[(path,images) for path,images in available if all(_asset_identity(url)==_origin_identity(url) for url in images)]
+    source, urls = (originals or exact or available)[0]
     return {"images": [{"index": index, "slot_index": photo["slot_index"],
                         "thumbnail_url": photo["thumbnail_url"], "image_url": url}
                        for index, (photo, url) in enumerate(zip(photos, urls), 1)],
@@ -102,15 +145,27 @@ def main_image_manifest(value, item_id):
 
 
 def _read_manifest(result):
-    return main_image_manifest(read_gallery(result.page, result.target.item_id), result.target.item_id)
-
-
-def _matches_manifest(result, expected=None):
+    value=read_gallery(result.page,result.target.item_id)
     try:
-        current = _read_manifest(result)
-        return expected is None or current == expected
-    except (ValueError, PlaywrightError):
-        return False
+        return main_image_manifest(value,result.target.item_id)
+    except ValueError as error:
+        raise MainImageCheckError(str(error),gallery_diagnostics(value,result.target.item_id)) from error
+
+
+def _resume_manifest(result,expected=None):
+    """恢复时返回具体业务阻断；参数：当前商品和可选原清单；返回：True或保留差异的阻断。"""
+    try:
+        current=_read_manifest(result)
+        if expected is not None and current!=expected:
+            return Blockage('business',result.page,'主图数据、数量或顺序与本批开始时不一致',
+                check_details={'target_item_id':result.target.item_id,
+                    'expected_images':[{'slot_index':p['slot_index'],'asset':_asset_identity(p['image_url'])} for p in expected['images']],
+                    'current_images':[{'slot_index':p['slot_index'],'asset':_asset_identity(p['image_url'])} for p in current['images']]})
+        return True
+    except MainImageCheckError as error:
+        return Blockage('business',result.page,str(error),check_details=error.check_details)
+    except (ValueError,PlaywrightError):
+        return Blockage('business',result.page,'当前商品页面或主图数据无法复核')
 
 
 def collect_main_image_links(result, timeout_ms):
@@ -118,7 +173,7 @@ def collect_main_image_links(result, timeout_ms):
     guard = active_guard()
     if guard is None:
         raise RuntimeError("主图采集必须在淘宝专用守卫中运行")
-    guard.resume_check = lambda: _matches_manifest(result)
+    guard.resume_check = lambda: _resume_manifest(result)
     guard.pause_between("page")
     deadline = time.monotonic() + timeout_ms / 1000
     while True:
@@ -127,14 +182,15 @@ def collect_main_image_links(result, timeout_ms):
         deadline += guard.paused_seconds - paused
         try:
             manifest = _read_manifest(result)
-            guard.resume_check = lambda: _matches_manifest(result, manifest)
+            guard.resume_check = lambda: _resume_manifest(result, manifest)
             return manifest
-        except ValueError as error:
-            reason = str(error)
-        except PlaywrightError:
-            reason = "当前页面暂时无法读取主图数据"
+        except (ValueError,PlaywrightError):
+            pass
         if time.monotonic() >= deadline:
-            guard.request_attention(result.page, reason + "；请处理后回复继续，不会重开商品或点击缩略图", step="复核主图列表")
+            blockage=_resume_manifest(result)
+            if blockage is not True:
+                guard.request_attention(result.page, blockage.source + "；请处理后回复继续，不会重开商品或点击缩略图",
+                    step="复核主图列表",check_details=blockage.check_details)
             deadline = time.monotonic() + timeout_ms / 1000
         paused = guard.paused_seconds
         guard.wait(250)
@@ -146,7 +202,11 @@ def confirm_main_image_links(result, manifest):
     guard = active_guard()
     if guard is None:
         raise RuntimeError("主图复核必须在淘宝专用守卫中运行")
-    guard.resume_check = lambda: _matches_manifest(result, manifest)
+    guard.resume_check = lambda: _resume_manifest(result, manifest)
     guard.checkpoint("复核主图来源及顺序")
-    while not _matches_manifest(result, manifest):
-        guard.request_attention(result.page, "主图数据、数量或顺序与本批开始时不一致，请恢复当前商品图集后回复继续", step="复核主图列表")
+    while True:
+        blockage=_resume_manifest(result,manifest)
+        if blockage is True:
+            return
+        guard.request_attention(result.page,blockage.source+'；请恢复当前商品图集后回复继续',
+            step='复核主图列表',check_details=blockage.check_details)

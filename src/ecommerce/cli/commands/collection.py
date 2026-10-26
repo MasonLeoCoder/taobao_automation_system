@@ -27,7 +27,7 @@ def execute_collect(settings, keyword, *, limit=None, pages=1, wait=True, with_d
         on_attention=None if settings.headless else prompt_taobao_attention))
 
 
-def execute_detail(settings, value, *, wait=True, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False):
+def execute_detail(settings, value, *, wait=True, basic_info=False, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False):
     from ecommerce.modules.collection.detail_service import open_detail_input
     from ecommerce.platforms.taobao.detail import resolve_detail_input
 
@@ -36,5 +36,5 @@ def execute_detail(settings, value, *, wait=True, video=False, main_images=False
     resolve_detail_input(value)
     browser_settings = settings.for_platform("taobao")
     return run_task(settings, "collection.taobao.detail.open", lambda: open_detail_input(
-        browser_settings, value, wait=wait, video=video, main_images=main_images, skus=skus, parameters=parameters, detail_images=detail_images, review_summary=review_summary, reviews=reviews, all_reviews=all_reviews, questions=questions,
+        browser_settings, value, wait=wait, basic_info=basic_info, video=video, main_images=main_images, skus=skus, parameters=parameters, detail_images=detail_images, review_summary=review_summary, reviews=reviews, all_reviews=all_reviews, questions=questions,
         on_attention=None if settings.headless else prompt_taobao_attention))

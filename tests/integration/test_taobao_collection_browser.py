@@ -75,6 +75,15 @@ class TaobaoCollectionBrowserTests(unittest.TestCase):
         cls.playwright.stop()
 
     def setUp(self):
+        # 主图下载也只能使用本地夹具，不能绕过浏览器路由访问真实 CDN。
+        from tests.unit.test_list_images import Response
+        from tests.integration.test_taobao_detail_images_browser import png
+        from unittest.mock import Mock
+        opener = Mock()
+        opener.open.side_effect = lambda *args, **kwargs: Response(png(1))
+        download_patch = patch('ecommerce.modules.collection.list_images.build_opener', return_value=opener)
+        download_patch.start()
+        self.addCleanup(download_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.settings = replace(load_settings(root=Path(self.temp.name)).for_platform("taobao"), headless=True,
@@ -378,7 +387,7 @@ class TaobaoCollectionBrowserTests(unittest.TestCase):
             }""", [ad, video, survey, video])
             service.collect_from_search(self.settings, self.context, result)
         payload = self.read_payload()
-        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload["schema_version"], 6)
         self.assertEqual(payload['requested_page_count'], 1)
         self.assertFalse(payload['pagination_performed'])
         first, second, repeated = payload["items"]

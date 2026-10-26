@@ -12,9 +12,12 @@ COLUMNS = (
     ("page_number", "页码"), ("sort_label", "页面排序"), ("slot_index", "原始格子位置"), ("product_index", "商品序号"),
     ("product_id", "商品ID"), ("title", "商品标题"), ("price_text", "展示价格"),
     ("price_value", "价格数值"), ("price_label", "价格说明"), ("sales_text", "销量提示原文"),
+    ("sales_count", "销量展示数量"), ("sales_precision", "销量数量精度"), ("sales_metric", "销量口径"),
+    ("sales_period", "销量周期"), ("sales_parse_status", "销量解析状态"), ("sales_parser_version", "销量解析规则版本"),
     ("shop_name", "店铺名称"), ("location_text", "页面地区"), ("product_url", "商品链接"),
     ("link_status", "链接来源"),
-    ("main_image_url", "主图链接"), ("currency_symbol", "货币符号"),
+    ("main_image_url", "主图链接"), ("list_image_status", "主图下载状态"),
+    ("list_image_path", "主图本地路径"), ("currency_symbol", "货币符号"),
     ("price_integer_text", "价格整数原文"), ("price_fraction_text", "价格小数原文"),
     ("shop_url", "店铺链接"), ("rank_title", "榜单名称"), ("rank_position_text", "榜单名次原文"),
     ("rank_position", "榜单名次"), ("attribute_tags", "属性标签"), ("service_tags", "优惠及服务标签"),
@@ -80,6 +83,8 @@ def save_batch(folder, payload):
         writer.writerow([title for key, title in COLUMNS])
         for item in payload["items"]:
             record = {**source, **item}
+            record['list_image_status']=(item.get('list_image') or {}).get('status')
+            record['list_image_path']=(item.get('list_image') or {}).get('image_path')
             record["captured_at"] = format_capture_time(record.get("captured_at"))
             for key, labels in DISPLAY.items():
                 record[key] = labels.get(record.get(key), record.get(key))

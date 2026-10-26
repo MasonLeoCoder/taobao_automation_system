@@ -33,7 +33,7 @@ def save_detail_section(directory, item_id, section, value):
 
 
 def save_detail_sections(directory, item_id, sections):
-    """同一批商品信息和 SKU 明细一次发布，避免只更新一半。"""
+    """原子合并本次模块的有效分区或最后尝试，保留其他模块。"""
     destination = Path(directory) / f"{item_id}.json"
     document = read_detail_document(directory, item_id)
     document.setdefault("created_at", now())

@@ -1,6 +1,6 @@
 # 关键词与竞品采集
 
-当前能力：关键词搜索、按--page逐页采集销量列表和单商品详情八模块；运行、步骤、批次、明细及检查点已接入MySQL，CLI/Web支持历史查询。列表商品循环进入详情和Web实时推送待接入。--page默认1，--limit为每页上限；每页一个批次，确认入库后翻下一页，跨页重复展示保留。下文带旧任务编号的段落为历史实测，不替代本轮人工验收；当前规则见[采集规范](../../../../docs/采集规范/淘宝采集约定.md)，进度见[验收清单](../../../../docs/功能逐项验收清单.md)。
+当前能力：关键词搜索、按--page逐页采集销量列表和单商品详情九模块；运行、步骤、批次、明细及检查点已接入MySQL，CLI/Web支持历史查询。列表商品循环进入详情和Web实时推送待接入。--page默认1，--limit为每页上限；每页一个批次，确认入库后翻下一页，跨页重复展示保留。下文带旧任务编号的段落为历史实测，不替代本轮人工验收；当前规则见[采集规范](../../../../docs/采集规范/淘宝采集约定.md)，进度见[验收清单](../../../../docs/功能逐项验收清单.md)。
 
 主图步骤 `detail_images.collect_main_images` 使用页面已有的有序图片数据，与当前商品ID及DOM图集核对后直接下载，不逐张点击缩略图；来源适配在 `platforms/taobao/detail_images.py`。按实际数量串行保存到商品 `1-1主图/`，每张完成更新历史 `main_images.json` 和商品 `main_images_last_attempt`。重新运行原命令时，仅复用上次未完成、来源完全一致且文件校验通过的图片到新批次，补采失败/未完成项；旧批次不变，全部完成才整批发布 `main_images`。记录逐张状态、来源路径、复用数量及恢复批次；原文件下载与校验继续供SKU和详情图步骤共用。用法及异常处理见 [使用指南](../../../../docs/使用指南.md)。
 
@@ -34,7 +34,7 @@ CLI不传功能参数时，默认启用视频、主图、SKU、参数、详情�
 
 真实主图任务 `cf962a9486854456994d69c39dbfb94b` 已取得商品 `1050158363561` 的五张800×800 WebP主图，按截图顺序保存为 `1.webp`～`5.webp`，排除视频封面及参数入口。文件校验及五张视觉核对通过，统一JSON已合并，原视频分区及视频文件哈希保持一致。26项相关回归检查及9项主图检查通过。
 
-第三步SKU已接入：`taobao detail --input "1050158363561" --skus` 调用本模块 `detail_skus.collect_skus`，DOM在 `platforms/taobao/detail_skus.py`。动态读取 `#skuOptionsArea` 内规格组和选项，逐项选择并等待选中、数量1、价格加载和相关请求结束后稳定读取；多组规格清除旧组合后核对联动。真实销量原文、评价/回头客/加购提示写入 `product_info`，规格、十进制金额字符串、价格标签、状态、原图片链接和完整性统计写入 `sku_details`。只有明确缺货才写“当前缺货，无法识别价格”，金额为空；仅禁用未说明原因的另行标注为部分完成。
+第三步SKU已接入：`taobao detail --input "1050158363561" --skus` 调用本模块 `detail_skus.collect_skus`，DOM在 `platforms/taobao/detail_skus.py`。动态读取 `#skuOptionsArea` 内规格组和选项，逐项选择并等待选中、数量1、价格加载和相关请求结束后稳定读取；多组规格清除旧组合后核对联动。旧格式曾附带 `product_info`；当前格式3不再采集基本信息，规格、十进制金额字符串、价格标签、状态、原图片链接和完整性统计写入 `sku_details`。只有明确缺货才写“当前缺货，无法识别价格”，金额为空；仅禁用未说明原因的另行标注为部分完成。
 
 SKU图片复用 `detail_images.download_image/reuse_image_file` 的原文件下载、长度/解码/格式/哈希检查，使用页面实际提供的对应图片源，不拼接大图链接。按完整SKU名称存入商品目录 `sku图/`，必要时清理Windows非法字符及处理重名，JSON保留原名称；共用图片的SKU各存一份，有图的无货SKU仍下载。每批原图及 `sku_details.json` 在 `history/<批次编号>/` 保留。每项价格及每张图片前后原子保存 `sku_progress.json` 与 `sku_details_last_attempt`，中断标明状态并保留；下次同商品、同规格及组合和图片源且文件校验通过时可复用未完成批次图片，价格全部本轮重新确认。完整结果一次合并发布商品信息、SKU及图片，部分批次仅记最后尝试和历史，日志给出实际目录；保存失败恢复旧完整分区和图片。`option_count/candidate_count/explicit_sku_id_count` 分别记录选项、候选组合及页面显式编号口径，不按名称或负数规格值标识过滤候选。该函数接受已打开的 `DetailPage`，后续循环可在同一浏览器复用，本轮不自动采集其他商品。可与其他详情步骤组合使用。
 
@@ -111,8 +111,17 @@ python main.py taobao collect --keyword "粘毛器" --limit 20 --no-wait
 
 ## 列表到详情的串行协作
 
-`search_details.collect_page_details`只接受当前已入库列表原件，按位置保存稳定来源键，调用平台`list_details`建立唯一预期标签。`detail_service.collect_detail_page`复用已打开详情，显式隔离并恢复`collection_run_key/detail_source`，不创建第二套浏览器或锁；默认八模块与独立入口共用实现。每个详情入口有entry_key，运行按entry_key解析入口内部编号，模块批次继承来源且不改变详情覆盖范围。当前商品入库屏障通过后才返回搜索页，当前页详情完成后才翻页。
+`search_details.collect_page_details`只接受当前已入库列表原件，按位置保存稳定来源键，调用平台`list_details`建立唯一预期标签。`detail_service.collect_detail_page`复用已打开详情，显式隔离并恢复`collection_run_key/detail_source`，不创建第二套浏览器或锁；默认九模块与独立入口共用实现。每个详情入口有entry_key，运行按entry_key解析入口内部编号，模块批次继承来源且不改变详情覆盖范围。当前商品入库屏障通过后才返回搜索页，当前页详情完成后才翻页。
 
 `search_records.source_list_observation_id`关联本次首次触发详情的列表观察；`collection_runs.entry_record_id`关联详情入口。快照使用list_source稳定批次键及product_index、平台product_id和entry_key跨库解析，不携带源库内部主键。实时流水按列表→入口→运行→模块批次保存；旧来源不猜测回填。新增取值和汇总schema2见[字段取值说明](../../../../docs/数据库字段取值说明.md)。
 
 0005_remove_history_import移除历史文件导入；实时采集快照、事务入库、原文件和本地流水补写继续保留。当前模型、字典和结构检查使用schema_v5。
+
+
+2026-10-25基本信息独立：--basic-info调用detail_basic_info.collect_basic_info，只读可见标题/店铺/销量/展示价格，不遍历SKU；原件basic_info.json，模块basic_info，表product_info_observations，分区product_info。--skus新原件格式3只含规格、价格与图片，不改基本信息。默认入口九模块先采基本信息。旧格式2仍兼容，0007按证据独立提取，原SKU原件和步骤不改写。
+
+网页采集所有：web_collection.start_remaining按商品全局有效分区计算剩余模块，统一任务取得浏览器锁后再核对一次，一个浏览器调用现有detail_service执行所选项。on_module_event在模块开始及资料确认入库后发布进度，不重放浏览器动作；旧单模块与CLI默认九模块不变。协议及使用见网页剩余模块补采说明和字段取值说明。
+
+商品评价展示：review_view.review_page协调评价概览和明细的只读查询，分别校验商品、模块、显式批次与关联运行；概览标签全部展示，评论每页20条。评论媒体只读取同批、同评论引用，追评按原append_index对应，不合并采集模块、不更新有效分区；完整用法见使用指南。
+
+问大家展示：records在with_context时批量读取当前问题页同批、同question_id的全部回答，不按回答数量分页或截断；回答媒体再匹配同批、同answer_observation_id。评论和回答共用media_view.media_preview安全地址整理。默认第一条，原生展开控件显示全部已存回答；问题仍20条分页，源记录与采集逻辑不变。

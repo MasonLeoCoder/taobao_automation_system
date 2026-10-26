@@ -9,7 +9,7 @@ from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 
 
 LABELS = {
-    'video':'视频','main_images':'主图','skus':'SKU','parameters':'参数',
+    'basic_info':'基本信息','video':'视频','main_images':'主图','skus':'SKU','parameters':'参数',
     'detail_images':'详情图','review_summary':'评价概览','reviews':'用户评价','questions':'问大家',
 }
 STATUS_LABELS = {
@@ -30,8 +30,8 @@ class DetailCollectionReport:
         self.record={'schema_version':1,'product_id':item_id,'task_id':task_id,'batch_id':batch_id,
                      'started_at':now(),'finished_at':None,'status':'running','warnings':[],
                      'history_record_file':self.path.relative_to(self.product_dir).as_posix(),
-                     'steps':[{'name':name,'label':label,'requested':bool(requested[name]),
-                               'status':'pending' if requested[name] else 'not_requested',
+                     'steps':[{'name':name,'label':label,'requested':bool(requested.get(name,False)),
+                               'status':'pending' if requested.get(name,False) else 'not_requested',
                                'continuation_allowed':False,'warnings':[]} for name,label in LABELS.items()]}
         if entry_key is not None:
             self.record['entry_key']=entry_key

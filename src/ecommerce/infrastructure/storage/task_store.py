@@ -7,7 +7,7 @@ import json
 import sqlalchemy as sa
 
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,create_mysql_engine,current_revision,connection_status,safe_error
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v5 import REVISION,build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import REVISION,build_metadata
 from ecommerce.infrastructure.storage.time_values import BEIJING,database_time,database_now,iso_value
 
 
@@ -34,15 +34,19 @@ class MySQLTaskStore:
             raise MySQLStorageError(safe_error(error)) from None
 
 
-    def list_tasks(self,limit=50,*,active=False):
-        """读取近期或全部活跃任务；参数：数量、是否活跃；返回：兼容旧接口的字典。"""
+    def list_tasks(self,limit=50,*,active=False,offset=0,sort_by=None,order=None):
+        """读取分页或全部活跃任务；参数：数量、活跃开关、偏移；返回：任务列表。"""
+        if type(limit) is not int or limit<1 or type(offset) is not int or offset<0:
+            raise ValueError('任务数量须为正整数，偏移须为非负整数')
         table=self.tables['tasks']
         statement=sa.select(table)
         if active:
             statement=statement.where(table.c.origin=='live',table.c.finished_at.is_(None),table.c.status.in_(['running','needs_attention']))
-        statement=statement.order_by(table.c.started_at.desc(),table.c.id.desc())
+        from ecommerce.infrastructure.storage.sorting import sorted_statement
+        statement,_=sorted_statement(statement,{key:table.c[key] for key in ('name','status','started_at','finished_at','message')},
+            table.c.id,sort_by,order,'started_at','desc')
         if not active:
-            statement=statement.limit(limit)
+            statement=statement.limit(limit).offset(offset)
         try:
             with self.engine.connect() as connection:
                 rows=[dict(r) for r in connection.execute(statement).mappings()]
@@ -125,10 +129,12 @@ class MySQLTaskStore:
             recovered+=1
         return recovered
 
-    def list_events(self,*,task_id=None,after=0,limit=100,level=None,since=None,until=None):
-        """分页读取已提交事件；参数：任务、游标、数量、级别和带时区范围；返回：事件及下一游标。"""
+    def list_events(self,*,task_id=None,after=0,before=None,limit=100,level=None,since=None,until=None,page=None,include_task_name=False,sort_by=None,order=None):
+        """双向分页读取事件；参数：任务、前后游标、数量、级别及时间；返回：事件和翻页边界。"""
         if type(after) is not int or after<0 or type(limit) is not int or not 1<=limit<=500:
             raise ValueError('事件游标须非负，数量须为 1–500')
+        if before is not None and (type(before) is not int or before<=0 or after!=0):
+            raise ValueError('向前游标须为正整数，且不能同时指定向后游标')
         if level and level not in {'DEBUG','INFO','WARNING','ERROR','CRITICAL'}:
             raise ValueError('日志级别不受支持')
         import re
@@ -138,7 +144,10 @@ class MySQLTaskStore:
             raise ValueError('开始时间不能晚于结束时间')
         table=self.tables['task_events']
         cursor=table.c.task_sequence if task_id else table.c.id
-        statement=sa.select(table).where(cursor>after)
+        statement=sa.select(table)
+        if include_task_name or sort_by=='task_name':
+            tasks=self.tables['tasks']
+            statement=sa.select(table,tasks.c.name.label('task_name')).outerjoin(tasks,tasks.c.id==table.c.task_id)
         if task_id:
             statement=statement.where(table.c.task_id==task_id)
         if level:
@@ -147,10 +156,39 @@ class MySQLTaskStore:
             statement=statement.where(table.c.occurred_at>=database_time(since))
         if until:
             statement=statement.where(table.c.occurred_at<=database_time(until))
-        statement=statement.order_by(cursor).limit(limit)
+        filtered=statement
+        statement=(filtered.where(cursor<before).order_by(cursor.desc()) if before is not None
+            else filtered.where(cursor>after).order_by(cursor)).limit(limit+1)
         try:
             with self.engine.connect() as connection:
-                rows=[dict(r) for r in connection.execute(statement).mappings()]
+                if page is not None:
+                    from ecommerce.infrastructure.storage.pagination import numbered_rows
+                    from ecommerce.infrastructure.storage.sorting import sorted_statement
+                    columns={key:table.c[key] for key in ('occurred_at','step','message') if key in table.c}
+                    columns['level']=sa.case({'DEBUG':0,'INFO':1,'WARNING':2,'ERROR':3,'CRITICAL':4},value=table.c.level,else_=5)
+                    if include_task_name or sort_by=='task_name':
+                        columns['task_name']=tasks.c.name
+                    ordered,spec=sorted_statement(filtered,columns,table.c.id,sort_by,order,'occurred_at','desc')
+                    rows,page_info=numbered_rows(connection,ordered,page)
+                    page_info['sort_spec']=spec
+                else:
+                    rows=[dict(r) for r in connection.execute(statement).mappings()]
+                extra=len(rows)>limit
+                rows=rows if page is not None else rows[:limit]
+                if before is not None and page is None:
+                    rows.reverse()
+                if rows:
+                    first=rows[0]['task_sequence' if task_id else 'id']
+                    last=rows[-1]['task_sequence' if task_id else 'id']
+                    has_previous=extra if before is not None else connection.execute(
+                        filtered.where(cursor<first).limit(1)).first() is not None
+                    has_more=extra if before is None else connection.execute(
+                        filtered.where(cursor>last).limit(1)).first() is not None
+                else:
+                    first=after+1
+                    has_previous=before is None and after>0 and connection.execute(
+                        filtered.where(cursor<=after).limit(1)).first() is not None
+                    has_more=False
         except sa.exc.SQLAlchemyError as error:
             raise MySQLStorageError(safe_error(error)) from None
         for row in rows:
@@ -159,7 +197,9 @@ class MySQLTaskStore:
             # 页面/公共查询只提供摘要，不推送签名 URL、原始异常上下文及内部流水指纹。
             row.pop('details',None)
         return {'events':rows,'next_cursor':rows[-1]['task_sequence' if task_id else 'id'] if rows else after,
-                'cursor_type':'task_sequence' if task_id else 'historical_id','task_id':task_id}
+                'previous_cursor':first,'has_more':has_more,'has_previous':has_previous,
+                'cursor_type':'task_sequence' if task_id else 'historical_id','task_id':task_id,
+                **(page_info if page is not None else {})}
 
 
 @lru_cache(maxsize=4)

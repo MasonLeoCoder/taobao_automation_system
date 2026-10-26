@@ -1,4 +1,4 @@
-"""保存商品基础信息、SKU 价格和按规格名称命名的原图片。"""
+"""保存独立SKU 价格和按规格名称命名的原图片。"""
 from ecommerce.infrastructure.tasks.events import notify as print
 import hashlib
 import json
@@ -96,7 +96,7 @@ def sku_continuation_allowed(record):
             if stock!='selectable' or sku.get('price_value') is None:
                 return False
         elif price=='out_of_stock':
-            if stock!='out_of_stock' or not sku.get('stock_evidence'):
+            if stock!='out_of_stock' or not sku.get('stock_evidence') or sku.get('price_value') is not None:
                 return False
         elif price=='unavailable_unconfirmed':
             if stock!='unavailable_unconfirmed' or not sku.get('unavailability_evidence') or sku.get('price') is not None or sku.get('price_value') is not None:
@@ -109,10 +109,13 @@ def sku_continuation_allowed(record):
 def _notices(record):
     """返回逐项警告及阻断原因，保留名称和具体缺失原因。"""
     warnings,issues=[],[]
+    if not record.get('skus') or len(record['skus'])!=record.get('candidate_count'):
+        issues.append({'code':'candidate_count_unconfirmed','message':'候选规格尚未全部处理'})
     for sku in record['skus']:
         base={'index':sku['index'],'sku_name':sku['name']}
         if sku['stock_status']=='unavailable_unconfirmed':
             warnings.append({**base,'code':'sku_unavailable_unconfirmed','message':sku['price_reason']})
+            issues.append({**base,'code':'stock_unconfirmed','message':'规格缺货或禁用依据尚未确认'})
         if not sku.get('combination_confirmed'):
             issues.append({**base,'code':'combination_unconfirmed','message':'规格组合尚未完整确认'})
         if sku['price_status'] not in {'collected','out_of_stock','unavailable_unconfirmed'}:
@@ -121,6 +124,8 @@ def _notices(record):
             issues.append({**base,'code':'price_missing','message':'可选规格的价格数值尚未确认'})
         elif sku['price_status']=='out_of_stock' and not sku.get('stock_evidence'):
             issues.append({**base,'code':'stock_evidence_missing','message':'缺货依据尚未确认'})
+        elif sku['price_status']=='out_of_stock' and sku.get('price_value') is not None:
+            issues.append({**base,'code':'stock_price_conflict','message':'缺货规格不应记录未核对的价格数值'})
         elif sku['price_status']=='unavailable_unconfirmed' and not sku.get('unavailability_evidence'):
             issues.append({**base,'code':'disabled_evidence_missing','message':'选项不可选的页面依据尚未记录'})
         if sku['image_status'] not in {'downloaded','no_image'}:
@@ -222,7 +227,7 @@ def save_sku_result(directory, record):
         staging.replace(target)
         installed = True
         sku_section = {k: v for k, v in latest.items() if k != 'product_info'}
-        record_path = save_detail_sections(product_dir, item_id, {'product_info': latest['product_info'], 'sku_details': sku_section,
+        record_path = save_detail_sections(product_dir, item_id, {'sku_details': sku_section,
                                                                 'sku_details_last_attempt':record})
     except (Exception,KeyboardInterrupt):
         if installed:
@@ -250,9 +255,9 @@ def collect_skus(settings, result, *, settle_ms=1200):
     directory = product_dir / 'history' / batch_id
     (directory / SKU_IMAGE_FOLDER).mkdir(parents=True, exist_ok=True)
     progress_path = directory / 'sku_progress.json'
-    record={'schema_version':2,'product_id':result.target.item_id,'batch_id':batch_id,'task_id':guard.task_id,
-            'source_url':resolve_detail_input(result.page.url).canonical_url,'scope':'product_info_and_skus',
-            'captured_at':now(),'status':'in_progress','phase':'prices','product_info':{},'groups':[],'skus':[],
+    record={'schema_version':3,'stock_rule':'disabled_as_out_of_stock_v1','product_id':result.target.item_id,'batch_id':batch_id,'task_id':guard.task_id,
+            'source_url':resolve_detail_input(result.page.url).canonical_url,'scope':'product_skus',
+            'captured_at':now(),'status':'in_progress','phase':'prices','groups':[],'skus':[],
             'candidate_count':0,'processed_count':0,'warnings':[],'blocking_issues':[],'continuation_allowed':False,
             'price_refresh_policy':'always_current_run','inventory_fingerprint':None,
             'history_record_file':f'history/{batch_id}/sku_details.json',
@@ -277,7 +282,7 @@ def collect_skus(settings, result, *, settle_ms=1200):
     def save_progress(data):
         if not matches_detail_url(result.page, result.target.item_id):
             raise NeedsAttention('保存 SKU 进度前商品发生变化')
-        record.update(data)
+        record.update({key:value for key,value in data.items() if key!='product_info'})
         record['inventory_fingerprint']=_inventory_fingerprint(result.target.item_id,record['groups'])
         batches=matching_batches()
         record['resumed_from_batch_id']=batches[0]['batch_id'] if batches else None
@@ -330,7 +335,7 @@ def collect_skus(settings, result, *, settle_ms=1200):
             if not matches_detail_url(result.page,result.target.item_id):
                 raise NeedsAttention('SKU 保存前目标商品发生变化')
             return save_sku_result(directory,record)
-        saved=guard.perform('保存商品信息、SKU 价格及图片',save)
+        saved=guard.perform('保存SKU 价格及图片',save)
     except (Exception,KeyboardInterrupt) as error:
         record.update(status='interrupted',continuation_allowed=False,error=f'SKU任务中断（{type(error).__name__}），已保存进度；下次重新确认价格')
         for sku in record['skus']:

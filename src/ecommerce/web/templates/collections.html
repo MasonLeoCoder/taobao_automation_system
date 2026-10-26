@@ -1,25 +1,38 @@
 {% extends "base.html" %}
-{% block title %}采集资料{% endblock %}{% block breadcrumb %}采集资料{% endblock %}
+{% from "sorting.html" import sort_header, media_sort with context %}
+{% from "pagination.html" import pager with context %}
+{% from "collection_parts.html" import labels, batch_status with context %}
+{% block title %}{{ '搜索列表' if view=='searches' else '商品详情' }}{% endblock %}{% block breadcrumb %}{{ '搜索列表' if view=='searches' else '商品详情' }}{% endblock %}
 {% block content %}
-{% set labels={'list':'列表商品','video':'视频','main_images':'主图','skus':'商品规格','parameters':'参数','detail_images':'详情图','review_summary':'评价概览','reviews':'用户评价','questions':'问大家'} %}
-{% set coverage={'limit_reached':'已达到本次上限','visible_end_confirmed':'已确认页面可见末尾','manual_count_confirmed':'人工确认','confirmed_empty':'已确认无数据','incomplete':'部分采集','unknown':'未确认覆盖范围'} %}
-{% set states={'complete':'完成','partial':'部分完成','downloaded':'下载完成','no_video':'已确认无视频','no_images':'已确认无详情图','no_parameters':'已确认无参数','no_reviews':'已确认无评价','no_questions':'已确认无问答','all_loaded_cards_collected':'已读取当前页已加载商品','limit_reached':'已达到本次上限','empty':'已确认无商品'} %}
-<section class="intro"><div><p class="eyebrow">COLLECTED DATA</p><h1>采集资料</h1><p>查看实际保存的商品和批次。采集完成与平台全量分别保留，详情入口不代表已有详情数据。</p></div></section>
+<section class="intro"><div><p class="eyebrow">COLLECTED DATA</p><h1>{{ '搜索列表' if view=='searches' else '商品详情' }}</h1><p>{{ '先按搜索词分类，再查看历次任务、搜索页及当时商品观察。' if view=='searches' else '独立展示详情资料和采集尝试，不依赖搜索列表是否存在。' }}</p></div></section>
+
 {% if enabled %}
-<form class="table-wrap log-filters" method="get">
-<label>标题或商品编号 <input name="keyword" value="{{ request.args.get('keyword','') }}"></label>
-<label>筛选商品编号 <input name="product_id" value="{{ request.args.get('product_id','') }}"></label>
-<label>采集项目 <select name="module"><option value="">全部项目</option>{% for code,label in labels.items() %}<option value="{{ code }}"{% if request.args.get('module')==code %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-<button class="button" type="submit">查询</button></form>
-{% if not request.args.get('product_id') and not request.args.get('module') %}
-<div class="section-heading"><h2>商品及来源</h2><p>只有入口记录的商品会明确显示没有详情批次。</p></div>
-<div class="table-wrap"><table><thead><tr><th>商品编号</th><th>已采标题</th><th>详情资料</th></tr></thead><tbody>
-{% for product in products %}<tr><td><a href="{{ url_for('pages.collections',product_id=product.platform_product_id) }}">{{ product.platform_product_id }}</a></td><td>{{ product.display_title or '当前来源未提供标题' }}</td><td>{{ product.detail_batch_count }} 个详情批次<small>{{ product.detail_entry_count }} 次详情入口记录</small></td></tr>{% else %}<tr><td colspan="3">没有符合条件的商品</td></tr>{% endfor %}
-</tbody></table></div>{% if products %}<p><a class="button" href="{{ url_for('pages.collections',keyword=request.args.get('keyword',''),product_after=product_next_cursor) }}">下一页商品</a></p>{% endif %}{% endif %}
-<div class="section-heading"><h2>实际采集批次</h2><p>点击批次查看明细；每种范围单独保留。</p></div>
-<div class="table-wrap"><table><thead><tr><th>编号 / 商品</th><th>采集项目</th><th>实际状态</th><th>范围与覆盖依据</th><th>采集时间</th></tr></thead><tbody>
-{% for batch in batches %}<tr><td><a href="{{ url_for('pages.collection_batch',batch_id=batch.id) }}">批次 {{ batch.id }}</a><small>{{ batch.platform_product_id or '列表中的多个商品' }}</small></td><td>{{ labels.get(batch.module,batch.module) }}</td><td>{{ states.get(batch.status,batch.status) }}</td><td>{{ coverage.get(batch.coverage_status,batch.coverage_status) }}<small>{% if batch.collection_mode=='limited' %}本次上限 {{ batch.requested_limit }}{% elif batch.collection_mode=='all' %}本次未设数量上限{% else %}范围以本批来源记录为准{% endif %}</small></td><td>{{ batch.captured_at | local_time }}</td></tr>{% else %}<tr><td colspan="5">没有符合条件的已发布批次</td></tr>{% endfor %}
+{% if view=='searches' and not grouped_searches %}<p><a class="button action-button action-neutral" href="{{ safe_return(request.args.get('return_to'),url_for('pages.collection_searches')) }}">← 返回来源列表</a></p>{% endif %}
+<form class="panel filters" method="get">
+{% if view=='searches' and not grouped_searches %}{% if request.args.get('category_missing')=='1' %}<input type="hidden" name="category_missing" value="1">{% else %}<input type="hidden" name="category" value="{{ request.args.get('category','') }}">{% endif %}<input type="hidden" name="return_to" value="{{ safe_return(request.args.get('return_to'),url_for('pages.collection_searches')) }}">{% endif %}<input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="sort" value="{{ sort_spec.sort }}"><input type="hidden" name="order" value="{{ sort_spec.order }}">
+{% if view!='searches' %}<label>商品标题 / 商品 ID<input name="keyword" maxlength="200" value="{{ request.args.get('keyword','') }}" placeholder="输入标题或完整商品 ID"></label>{% endif %}
+{% if view!='searches' or grouped_searches %}<label>{{ '搜索词' if view=='searches' else '曾出现的搜索词' }}<input name="source" maxlength="200" value="{{ request.args.get('source','') }}" placeholder="精确匹配曾使用的搜索词"></label>{% endif %}
+<label>开始日期<input type="date" name="since" value="{{ request.args.get('since','') }}"></label><label>结束日期<input type="date" name="until" value="{{ request.args.get('until','') }}"></label>
+{% if view!='searches' %}<label>资料情况<select name="state">{% for code,label in [('','全部'),('effective','有有效详情资料'),('attempt','已有内容但无有效分区'),('list','尚无保存内容（仅入口或运行）')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
+<button class="button action-button action-primary" type="submit">搜索</button><a class="button action-button action-neutral" href="{{ url_for('pages.collection_searches',category=request.args.get('category'),category_missing=request.args.get('category_missing'),return_to=request.args.get('return_to')) if view=='searches' and not grouped_searches else url_for('pages.collections',view=view) }}">重置</a></form>
+{% if view!='searches' %}
+<div class="section-heading"><h2>详情商品</h2><p>同一商品合并展示，历史采集分别保留。</p></div>
+<div class="table-wrap"><table><thead><tr>{{ sort_header('title','商品',sort_spec) }}<th>资料情况</th><th>最后一次详情尝试</th>{{ sort_header('captured_at','最近详情尝试',sort_spec) }}<th>操作</th></tr></thead><tbody>
+{% for product in products %}<tr><td><div class="product-cell">{% if product.thumbnail %}<a href="{{ url_for('pages.collection_file',file_id=product.thumbnail) }}" target="_blank" rel="noopener" aria-label="放大查看商品主图"><img class="thumbnail" loading="lazy" src="{{ url_for('pages.collection_file',file_id=product.thumbnail) }}" alt="商品主图"></a>{% else %}<span class="thumbnail placeholder">暂无主图</span>{% endif %}<a href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,return_to=current_location()) }}">{{ product.display_title or '来源未提供标题' }}<small>商品 ID {{ product.platform_product_id }}</small></a></div></td><td>{{ product.detail_summary.label }}<small>{{ product.detail_summary.valid_modules|length }}/9 模块有有效资料，非平台全量</small></td><td>{{ product.detail_summary.last_attempt_label }}<small>{{ product.detail_summary.latest_run.task_id or '未记录运行归属' }}</small></td><td>{{ product.captured_at | full_local_time }}</td><td><a class="button action-button action-primary" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,return_to=current_location()) }}">查看资料 →</a></td></tr>{% else %}<tr><td colspan="5" class="empty-row">没有符合条件的商品，可调整筛选条件。</td></tr>{% endfor %}
 </tbody></table></div>
-{% if batches %}<p><a class="button" href="{{ url_for('pages.collections',product_id=request.args.get('product_id',''),module=request.args.get('module',''),keyword=request.args.get('keyword',''),after=next_cursor) }}">下一页批次</a></p>{% endif %}
-{% else %}<section class="empty"><h2>采集数据库尚未启用</h2><p>完成历史核对和切换后，可在这里查询实际采集资料。</p></section>{% endif %}
+{% else %}
+{% if grouped_searches %}
+<div class="section-heading"><h2>搜索词分类</h2><p>同一搜索词汇总展示；统计限于当前日期筛选内的已发布批次。</p></div>
+<div class="table-wrap"><table><thead><tr>{{ sort_header('keyword','搜索词',sort_spec) }}{{ sort_header('tasks','采集任务 / 独立批次',sort_spec) }}{{ sort_header('pages','已保存页批次',sort_spec) }}{{ sort_header('count','列表记录 / 去重商品',sort_spec) }}{{ sort_header('captured_at','最近采集',sort_spec) }}<th>操作</th></tr></thead><tbody>
+{% for item in keyword_groups %}{% set target=url_for('pages.collection_keyword_products',category=item.keyword,category_missing='1' if item.keyword is none else None,since=request.args.get('since',''),until=request.args.get('until',''),return_to=current_location()) %}<tr><td><a class="text-link" href="{{ target }}">{{ item.keyword if item.keyword is not none else '搜索词未记录' }}</a></td><td>{{ item.tasks }}<small>无任务归属的批次单独计数</small></td><td>{{ item.pages }}</td><td>{{ item.count }} 条 / {{ item.unique_count }} 个</td><td>{{ item.captured_at | full_local_time }}</td><td><a class="button action-button action-primary" href="{{ target }}">查看商品 →</a></td></tr>{% else %}<tr><td colspan="6" class="empty-row">没有符合条件的搜索词分类。</td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}
+<div class="section-heading"><h2>{{ '搜索词未记录' if request.args.get('category_missing')=='1' else request.args.get('category') }} · 历次采集</h2><p>按任务组织，列表记录数保留跨页重复展示。</p></div>
+<div class="table-wrap"><table><thead><tr>{{ sort_header('keyword','来源关键词',sort_spec) }}{{ sort_header('captured_at','开始采集',sort_spec) }}{{ sort_header('pages','已保存批次',sort_spec) }}{{ sort_header('count','列表记录 / 去重商品',sort_spec) }}{{ sort_header('status','任务状态',sort_spec) }}<th>操作</th></tr></thead><tbody>
+{% for item in searches %}<tr><td>{{ item.keywords | map('default','未记录',true) | join('、') }}<small>{{ item.task_id or '未记录任务归属' }}</small></td><td>{{ item.captured_at | full_local_time }}</td><td>{{ item.pages }} 个</td><td>{{ item.count }} 条 / {{ item.unique_count }} 个</td><td>{{ batch_status(item.task.status or 'unknown') }}</td><td><a class="button action-button action-primary" href="{{ (url_for('pages.collection_search',task_id=item.task_id,category=request.args.get('category'),category_missing=request.args.get('category_missing'),since=request.args.get('since',''),until=request.args.get('until',''),return_to=current_location()) if item.task_id else url_for('pages.collection_batch',batch_id=item.id,return_to=current_location())) }}">查看结果 →</a></td></tr>{% else %}<tr><td colspan="6" class="empty-row">没有符合条件的已保存搜索结果。</td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+{% endif %}
+{{ pager(pagination) }}
+{% else %}<section class="empty"><h2>采集数据库尚未启用</h2><p>启用 MySQL 采集存储后可查看资料。</p></section>{% endif %}
 {% endblock %}

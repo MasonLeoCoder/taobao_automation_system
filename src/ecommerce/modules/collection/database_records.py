@@ -11,10 +11,10 @@ import sqlite3
 from ecommerce.infrastructure.storage.collection_snapshot import file_record,json_array,save_snapshot,sqlite_records
 from ecommerce.infrastructure.storage.task_store import fingerprint
 
-MODULE_FILES={'video':'video.json','main_images':'main_images.json','skus':'sku_details.json',
+MODULE_FILES={'basic_info':'basic_info.json','video':'video.json','main_images':'main_images.json','skus':'sku_details.json',
     'parameters':'parameters.json','detail_images':'detail_images.json','review_summary':'review_summary.json',
     'reviews':'reviews.json','questions':'questions.json'}
-SECTIONS={'product_info':'skus','sku_details':'skus',**{name:name for name in MODULE_FILES if name!='skus'}}
+SECTIONS={'product_info':'basic_info','sku_details':'skus',**{name:name for name in MODULE_FILES if name!='skus'}}
 RUNNING={'running','in_progress','collecting','pending','detected'}
 
 
@@ -188,16 +188,34 @@ def batch_rows(settings,module,record,directory):
         if len(items)!=record.get('collected_count',len(items)):
             raise ValueError('列表数量与批次记录不一致')
         for item in items:
+            from ecommerce.shared.sales import parse_sales,FIELDS,PARSER_VERSION
+            sales=parse_sales(item.get('sales_text'))
+            supplied=set(FIELDS)&set(item)
+            if supplied and (supplied!=set(FIELDS) or any(item[name]!=sales[name] for name in FIELDS)):
+                raise ValueError('列表销量结构化结果与原文不一致')
+            if 'sales_parser_version' in item and item['sales_parser_version']!=PARSER_VERSION:
+                raise ValueError('列表销量解析规则版本不支持')
             key={'slot_index':item.get('slot_index',item.get('position'))}
             yield row('list_observations',key,{'slot_index':key['slot_index'],'product_index':item['product_index'],
                 'title':item['title'],'price_text':item.get('price_text'),'price_value':decimal_value(item.get('price_value')),
                 'price_label':item.get('price_label'),'sales_text':item.get('sales_text'),'shop_name':item.get('shop_name'),
                 'location_text':item.get('location_text'),'ad_status':item.get('ad_status','unconfirmed'),
                 'identity_status':item.get('identity_status','unconfirmed'),'field_states':item.get('field_states'),
-                'payload':item},product_id=product_id(item.get('product_id')))
-            for field,role in [('main_image_url','list_image'),('video_url','list_video')]:
-                if item.get(field):
-                    yield media(role,key['slot_index'],url=item[field],payload={'slot_index':key['slot_index']})
+                'payload':item,**sales},product_id=product_id(item.get('product_id')))
+            image=item.get('list_image')
+            if image is not None:
+                file=asset(settings,image['image_path'],image) if image.get('status')=='downloaded' else None
+                yield media('list_image',key['slot_index'],url=item.get('main_image_url'),file=file,
+                            status=image['status'],payload={'slot_index':key['slot_index'],'download':image})
+            elif item.get('main_image_url'):
+                yield media('list_image',key['slot_index'],url=item['main_image_url'],payload={'slot_index':key['slot_index']})
+            if item.get('video_url'):
+                yield media('list_video',key['slot_index'],url=item['video_url'],payload={'slot_index':key['slot_index']})
+    elif module=='basic_info':
+        info=record.get('product_info') or {}
+        yield row('product_info_observations',{}, {**{k:info.get(k) for k in ('title','shop_name','sales_text','price_text')},
+            'source_url':record.get('source_url'),'captured_at':info.get('captured_at') or record.get('captured_at'),
+            'field_states':info.get('field_states') or {},'payload':info})
     elif module=='skus':
         skus=record.get('skus',[])
         if len(skus)!=record.get('processed_count',len(skus)):
@@ -319,8 +337,8 @@ def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None
             'completion_evidence':record.get('completion_evidence'),'captured_at':record.get('captured_at'),
             'observed_at':None if record.get('source_batch_id') else record.get('captured_at'),
             'confirmed_at':(record.get('completion_evidence') or {}).get('confirmed_at'),
-            'upstream_batch_key':record.get('source_batch_id') or record.get('resumed_from_batch_id'),
-            'derivation_kind':'manual_confirmation' if record.get('source_batch_id') else 'resume_reuse' if record.get('resumed_from_batch_id') else None,
+            'upstream_batch_key':record.get('stock_rule_source_batch_key') or record.get('source_batch_id') or record.get('resumed_from_batch_id'),
+            'derivation_kind':'sku_stock_rule' if record.get('stock_rule_source_batch_key') else 'manual_confirmation' if record.get('source_batch_id') else 'resume_reuse' if record.get('resumed_from_batch_id') else None,
             'visibility':'staging' if status in RUNNING else 'published','source_url':record.get('source_url'),
             'schema_version':record.get('schema_version'),'summary':record.get('summary') or {k:record[k] for k in record if k.endswith('_count')},
             'result_payload':{'record':metadata,'scope_contract':contract}}

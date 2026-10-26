@@ -140,6 +140,41 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual([p['slot_index'] for p in record['images']],[1,2,3,4,5])
         self.assertEqual(record['images'][0]['image_url'],photo_url(1))
 
+    def test_cropped_item_images_use_verified_original_gallery_addresses(self):
+        """复现实际淘宝裁切列表，仍按页面原图地址下载，保留全部位置。"""
+        originals=[f'https://img.alicdn.com/imgextra/i2/123/main{i}_!!123.png' for i in range(1,6)]
+        cropped=[url.replace('_!!','~crop,48,0,600,800~_!!') for url in originals]
+        self.page.evaluate('''({originals,cropped})=>{
+          const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
+          res.item.images=cropped;res.componentsVO.headImageVO.images=originals;
+          [...document.querySelectorAll('.thumbnailPic--fixture')].slice(1).forEach((img,i)=>img.src=originals[i]+'_q50.jpg_.webp');
+        }''',{'originals':originals,'cropped':cropped})
+        self.opener.open.side_effect=lambda request,timeout:Response(request.full_url,png(originals.index(request.full_url)+1))
+        record=self.collect()
+        self.assertEqual(record['status'],'complete');self.assertEqual(record['source_path'],HEAD_IMAGES_SOURCE)
+        self.assertEqual([row['image_url'] for row in record['images']],originals)
+        self.assertEqual(self.page.evaluate('imageClicks'),[]);self.assertEqual(self.opener.open.call_count,5)
+
+    def test_mismatch_resume_keeps_exact_reason_and_records_comparison(self):
+        """继续后仍有差异时显示具体业务原因，恢复正确数据后才放行。"""
+        self.page.evaluate("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[2]='https://img.alicdn.com/other.png'")
+        messages=[]
+        def attention(message):
+            messages.append(message)
+            if len(messages)==2:
+                self.assertTrue(message.startswith('【检查尚未通过】'));self.assertIn('第3张',message)
+                self.assertNotIn('登录状态',message)
+                self.page.evaluate('url=>window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[2]=url',photo_url(3))
+            return '继续'
+        with self.guard(attention) as guard:
+            manifest=collect_main_image_links(self.result,100)
+            events=[json.loads(row) for row in guard.event_path.read_text(encoding='utf-8').splitlines()]
+        self.assertEqual(len(manifest['images']),5);self.assertEqual(len(messages),2)
+        failures=[row for row in events if row.get('event')=='blocked' and row.get('check_details')]
+        self.assertTrue(failures)
+        self.assertTrue(any(not comparison['same_origin_asset'] and comparison['position']==3 for row in failures for comparison in row['check_details']['comparisons']))
+        self.assertEqual(self.page.evaluate('imageClicks'),[])
+
     def test_repeated_source_urls_keep_all_five_positions(self):
         self.replace_gallery(duplicate=True)
         record=self.collect()

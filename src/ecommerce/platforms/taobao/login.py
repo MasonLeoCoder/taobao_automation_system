@@ -80,7 +80,7 @@ def check_login(page: Page, timeout_ms: int = CHECK_TIMEOUT_MS) -> bool:
     return False
 
 
-def login_manually(page: Page, timeout_ms: int) -> Page:
+def login_manually(page: Page, timeout_ms: int, *, on_login_required=None) -> Page:
     """打开淘宝登录页，由用户完成扫码、短信或密码及验证，不自动刷新。"""
     try:
         guard = active_guard()
@@ -101,6 +101,9 @@ def login_manually(page: Page, timeout_ms: int) -> Page:
         for candidate in candidates:
             if is_authenticated(candidate):
                 return candidate
+        if on_login_required is not None:
+            on_login_required('【需要人工验证】\n当前步骤：等待人工登录淘宝\n尚未确认淘宝登录，请在已打开的淘宝浏览器扫码或完成登录，然后选择继续；也可以停止本次采集。')
+            continue
         try:
             wait(candidates[-1], 300)
         except PlaywrightError:

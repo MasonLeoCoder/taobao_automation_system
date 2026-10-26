@@ -77,7 +77,7 @@ class TaobaoDetailTests(unittest.TestCase):
                         patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
                     self.assertEqual(main(["taobao", "detail", "--input", value, *flags]), 0)
                     opened.assert_called_once_with(settings.return_value, value, wait="--no-wait" not in flags,
-                        video=True, main_images=True, skus=True, parameters=True, detail_images=True,
+                        basic_info=True, video=True, main_images=True, skus=True, parameters=True, detail_images=True,
                         review_summary=True, reviews=True, all_reviews="--all" in flags, questions=True)
 
     def test_cli_video_step_is_explicitly_enabled(self):
@@ -85,21 +85,21 @@ class TaobaoDetailTests(unittest.TestCase):
                 patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                 patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
             self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", "--video"]), 0)
-            opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, video=True, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
+            opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False, video=True, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
 
     def test_cli_main_images_can_run_without_video(self):
         with patch("ecommerce.cli.app.load_settings") as settings, \
                 patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                 patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
             self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", "--main-images"]), 0)
-            opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, video=False, main_images=True, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
+            opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False, video=False, main_images=True, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
 
     def test_cli_skus_can_run_independently(self):
         with patch("ecommerce.cli.app.load_settings") as settings, \
                 patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                 patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
             self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", "--skus"]), 0)
-            opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, video=False, main_images=False, skus=True, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
+            opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False, video=False, main_images=False, skus=True, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
 
     def test_cli_parameters_run_alone_or_with_other_detail_steps(self):
         for flags in (["--parameters"], ["--video", "--main-images", "--skus", "--parameters"]):
@@ -107,7 +107,7 @@ class TaobaoDetailTests(unittest.TestCase):
                     patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                     patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
                 self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", *flags]), 0)
-                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True,
+                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False,
                                               video="--video" in flags, main_images="--main-images" in flags,
                                               skus="--skus" in flags, parameters=True, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False)
 
@@ -117,7 +117,7 @@ class TaobaoDetailTests(unittest.TestCase):
                     patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                     patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
                 self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", *flags]), 0)
-                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True,
+                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False,
                     video="--video" in flags, main_images="--main-images" in flags, skus="--skus" in flags,
                     parameters="--parameters" in flags, detail_images=True, review_summary=False, reviews=False, all_reviews=False, questions=False)
 
@@ -128,7 +128,7 @@ class TaobaoDetailTests(unittest.TestCase):
                     patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                     patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
                 self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", *flags]), 0)
-                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True,
+                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False,
                     video="--video" in flags, main_images="--main-images" in flags, skus="--skus" in flags,
                     parameters="--parameters" in flags, detail_images="--detail-images" in flags, review_summary=True, reviews=False, all_reviews=False, questions=False)
 
@@ -139,7 +139,7 @@ class TaobaoDetailTests(unittest.TestCase):
                     patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                     patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
                 self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", *flags]), 0)
-                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, video=False,
+                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False, video=False,
                     main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=True, all_reviews=all_mode, questions=False)
 
     def test_cli_questions_and_shared_all_mode(self):
@@ -148,7 +148,7 @@ class TaobaoDetailTests(unittest.TestCase):
                     patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                     patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
                 self.assertEqual(main(["taobao", "detail", "--input", "1050158363561", *flags]), 0)
-                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True,
+                opened.assert_called_once_with(settings.return_value, "1050158363561", wait=True, basic_info=False,
                     video=False, main_images=False, skus=False, parameters=False, detail_images=False,
                     review_summary=False, reviews="--reviews" in flags, all_reviews="--all" in flags, questions=True)
 
@@ -157,7 +157,7 @@ class TaobaoDetailTests(unittest.TestCase):
                 patch("ecommerce.cli.app.prepare_workspace"), patch("ecommerce.cli.app.setup_logging"), \
                 patch.object(collection, "execute_detail", return_value=TaskResult("test", "succeeded", "done", 0)) as opened:
             self.assertEqual(main(["taobao", "detail", "--input", "621242715247", "--video", "--parameters", "--no-wait"]), 0)
-            opened.assert_called_once_with(settings.return_value, "621242715247", wait=False,
+            opened.assert_called_once_with(settings.return_value, "621242715247", wait=False, basic_info=False,
                 video=True, main_images=False, skus=False, parameters=True, detail_images=False,
                 review_summary=False, reviews=False, all_reviews=False, questions=False)
 

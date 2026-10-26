@@ -8,14 +8,14 @@ from ecommerce.platforms.taobao.verification import active_guard, checkpoint
 from ecommerce.shared.exceptions import NeedsAttention
 
 
-def authenticate(context, page, settings, allow_login=True):
+def authenticate(context, page, settings, allow_login=True, *, on_login_required=None):
     """确认淘宝在线会话，只有复核通过后才保存状态。"""
     try:
         authenticated = check_login(page, settings.timeout_ms)
         if not authenticated:
             if not allow_login or settings.headless:
                 raise NeedsAttention("淘宝会话失效或未能确认，请执行 account login --platform taobao 手动登录")
-            page = login_manually(page, settings.timeout_ms)
+            page = login_manually(page, settings.timeout_ms,on_login_required=on_login_required) if on_login_required else login_manually(page,settings.timeout_ms)
             if not check_login(page, settings.timeout_ms):
                 raise NeedsAttention("登录后未能确认淘宝首页账号状态，未保存登录状态")
     except PlaywrightTimeoutError as error:

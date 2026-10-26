@@ -6,7 +6,7 @@ from uuid import uuid4
 from ecommerce.infrastructure.storage.database import initialize, list_tasks
 
 
-def request_control(settings, action):
+def request_control(settings, action, *, task_id=None, prompt_id=None):
     replies = {"continue": "继续", "confirm": "确认", "cancel": "取消"}
     if action not in {"pause", "stop", *replies}:
         raise ValueError("不支持的淘宝控制指令")
@@ -20,6 +20,10 @@ def request_control(settings, action):
         initialize(settings.task_database)
         tasks = [task for task in list_tasks(settings.task_database) if task["name"].startswith(("account.taobao.", "collection.taobao."))
                  and task["finished_at"] is None and task["status"] in {"running", "needs_attention"}]
+    if task_id is not None:
+        tasks=[task for task in tasks if task['id']==task_id]
+        if not tasks:
+            raise ValueError('指定任务已结束或无法核实所属进程')
     if not tasks:
         return "当前没有执行中的淘宝任务"
     if len(tasks) != 1:
@@ -41,6 +45,8 @@ def request_control(settings, action):
             raise ValueError("当前任务没有可接收反馈的提示，请等待任务提示后再操作") from error
         if not state.get("prompt_id") or replies[action] not in state.get("allowed", []):
             raise ValueError("当前提示不接受这个指令，请按任务提示输入继续、确认或取消")
+        if prompt_id is not None and prompt_id != state['prompt_id']:
+            raise ValueError('提示已更新，请按当前弹窗重新选择')
         request["prompt_id"] = state["prompt_id"]
     temporary = directory / f"{task_id}-{uuid4().hex}.tmp"
     temporary.write_text(json.dumps(request), encoding="utf-8")

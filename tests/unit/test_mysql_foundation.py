@@ -13,7 +13,7 @@ from ecommerce.shared.config import load_settings,load_mysql_settings
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,create_mysql_engine,safe_error,_normalize_type,version_table
 from ecommerce.infrastructure.storage.mysql_dictionary import render_dictionary
 from ecommerce.infrastructure.storage.mysql_checks import check_expression_tree
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v5 import build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import build_metadata
 from ecommerce.infrastructure.storage.mysql_verification import verify_foundation
 
 
@@ -61,7 +61,7 @@ class MySQLFoundationTests(unittest.TestCase):
     def test_all_tables_and_columns_have_comments_and_dictionary_entries(self):
         """备注及完整字段字典覆盖所有业务表与技术版本表；参数：无；返回：无。"""
         metadata=build_metadata()
-        self.assertEqual(len(metadata.tables),18)
+        self.assertEqual(len(metadata.tables),19)
         dictionary=render_dictionary()
         self.assertEqual(dictionary,render_dictionary(),"同版字段字典应稳定生成，不能因外键集合顺序变化而产生差异")
         for table in list(metadata.tables.values())+[version_table()]:

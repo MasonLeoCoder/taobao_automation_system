@@ -140,8 +140,19 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
         captured_at, raw, parsed = read_valid(signature)
         items = parsed["items"]
     positions = {item["position"] for item in items}
+    from ecommerce.shared.sales import parse_sales, PARSER_VERSION
+    for item in items:
+        item.update(parse_sales(item.get('sales_text')), sales_parser_version=PARSER_VERSION)
+    from ecommerce.modules.collection.list_images import collect_list_images
+    image_downloads = collect_list_images(settings, context, result.page, items, batch_id, guard.checkpoint)
+    while not guard.perform('图片下载后复核列表来源', lambda: ready(signature, raw['slots'])):
+        guard.request_attention(result.page, '图片已下载，请恢复原关键词、页码、排序及列表内容后继续保存', step='复核列表图片来源')
+    from ecommerce.infrastructure.tasks.events import emit_event
+    emit_event('list_images_processed', '列表主图处理完成',
+               level='WARNING' if image_downloads['failed'] or image_downloads['not_applicable'] else 'INFO',
+               details=image_downloads)
     payload = {
-        "schema_version": 4, "search_method": "keyword", "search_options": None,
+        "schema_version": 6, "search_method": "keyword", "search_options": None,
         "extraction_method": "content_items_wrapper_slots_v1", "batch_id": batch_id, "task_id": guard.task_id,
         "keyword": keyword, "page_number": page_number, "sort_label": signature["sort_label"],
         "sort_parameter": signature["sort_parameter"], "captured_at": captured_at, "saved_at": now(),
@@ -158,7 +169,7 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
         "requested_sort": "sales", "sort_status": "confirmed" if signature["sort_label"] == "销量" else "not_applicable_empty_results",
         "items": items, "raw_items": [card for card in raw["cards"] if card["position"] in positions],
         "pagination_performed": page_number > 1, "scroll_performed": image_loading["scroll_count"] > 0, "image_loading": image_loading,
-        "detail_pages_opened": 0,
+        "detail_pages_opened": 0, "image_downloads": image_downloads,
         "screenshot": str(screenshot) if screenshot else None, "screenshot_note": screenshot_note,
     }
     guard.update_progress(collected=len(items))
@@ -171,11 +182,13 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
     message = (f"关键词“{keyword}”销量第{page_number}页已保存：{len(items)} 条商品展示记录"
                f"（其中广告推荐位 {parsed['counts']['exported_ad_count']} 条，列表跳过调查卡 {parsed['counts']['survey_count']} 个、"
                f"推荐词卡 {parsed['counts']['search_suggestions_count']} 个）；"
+               f"主图下载 {image_downloads['downloaded']}/{image_downloads['total']}，"
+               f"失败 {image_downloads['failed']}，无地址 {image_downloads['not_applicable']}；"
                f"JSON：{paths[0]}；CSV：{paths[1]}")
     return {"message": message, "json_path": str(paths[0]), "csv_path": str(paths[1]),
             "collected_count": len(items), "field_gap_count": parsed["field_gap_count"],
             "page_number": page_number, "source_batch_key": batch_id,
-            "product_ids": [item.get('product_id') for item in items], "empty": not items}
+            "product_ids": [item.get('product_id') for item in items], "image_downloads": image_downloads, "empty": not items}
 
 
 def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_attention=None, with_details=False):
@@ -199,6 +212,9 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
                  'per_page_limit': limit, 'total_observation_count': sum(item['collected_count'] for item in completed),
                  'unique_product_count': len({pid for item in completed for pid in item['product_ids'] if pid}),
                  'stop_reason': reason, 'status': status, 'saved_at': now(), 'pages': completed}
+        value['image_downloads'] = {key: sum(page.get('image_downloads', {}).get(key, 0) for page in completed)
+                                    for key in ('total', 'downloaded', 'failed', 'not_applicable')}
+        value['image_status'] = 'complete_with_warnings' if value['image_downloads']['failed'] or value['image_downloads']['not_applicable'] else 'complete'
         destination = settings.workspace / 'output/reports/taobao_list' / (guard.task_id + '.json')
         if with_details:
             value.update(schema_version=2,with_details=True,detail_attempts=detail_attempts,
@@ -247,6 +263,9 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
         destination = summary(reason, 'complete')
         guard.checkpoint('逐页采集汇总已保存')
         message = f'请求{pages}页，已保存{len(completed)}页，共{sum(item["collected_count"] for item in completed)} 条商品展示记录；结束原因：{reason}；汇总：{destination}'
+        image_totals = {key: sum(item.get('image_downloads', {}).get(key, 0) for item in completed)
+                        for key in ('total', 'downloaded', 'failed', 'not_applicable')}
+        message += f'；主图下载 {image_totals["downloaded"]}/{image_totals["total"]}，失败 {image_totals["failed"]}，无地址 {image_totals["not_applicable"]}'
         if with_details:
             message+=f'；详情成功采集{len(detail_seen)}个商品，同任务复用{sum(item["status"]=="reused_in_task" for item in detail_attempts)}处展示'
         print(message, flush=True)

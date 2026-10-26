@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% from "collection_parts.html" import batch_status %}
+{% block title %}任务详情{% endblock %}{% block breadcrumb %}<a href="/tasks">任务记录</a> / 任务详情{% endblock %}
+{% block content %}{% if request.args.get('return_to') %}<p class="back-link"><a class="button action-button action-neutral" href="{{ safe_return(request.args.get('return_to')) }}">← 返回来源页面</a></p>{% endif %}<section class="intro"><div><p class="eyebrow">TASK DETAILS</p><h1>{{ task.name }}</h1><p>{{ task.id }}</p></div><a class="button action-button action-history" href="{{ url_for('pages.logs',task_id=task.id,return_to=current_location()) }}">查看本任务日志</a></section><section class="panel"><h2>任务状态</h2><p>{{ batch_status(task.status) }}</p><p>开始：{{ task.started_at | local_time }} · 结束：{{ task.finished_at | local_time }}</p><div class="log-message">{{ task.message or '尚未记录结果说明' }}</div></section>{% endblock %}

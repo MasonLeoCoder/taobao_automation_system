@@ -6,7 +6,7 @@ from ecommerce.shared.config import load_settings, prepare_workspace
 from ecommerce.shared.logging import setup_logging
 
 
-DETAIL_STEPS = ("video", "main_images", "skus", "parameters", "detail_images", "review_summary", "reviews", "questions")
+DETAIL_STEPS = ("basic_info", "video", "main_images", "skus", "parameters", "detail_images", "review_summary", "reviews", "questions")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -31,14 +31,15 @@ def parser() -> argparse.ArgumentParser:
     collect.add_argument("--keyword", required=True, help="搜索关键词，1～100 个字符")
     collect.add_argument("--limit", type=int, default=None, help="每页最多保存的有效商品数，须为正整数；默认不限制当前页条数")
     collect.add_argument("--page", type=int, default=1, help="从第一页起最多采集几页，须为正整数，默认1；--limit为每页上限")
-    collect.add_argument("--with-details", action="store_true", help="本页列表入库后逐个采集默认八个详情模块，同任务成功商品详情复用，再翻下一页")
+    collect.add_argument("--with-details", action="store_true", help="本页列表入库后逐个采集默认九个详情模块，同任务成功商品详情复用，再翻下一页")
     collect.add_argument("--no-wait", action="store_true", help="保存商品记录后关闭浏览器，默认保留窗口")
     detail = taobao_actions.add_parser("detail", help="采集商品详情；不指定功能参数时采集全部已实现项目",
         description="输入商品 ID 或完整详情链接。默认采集全部已实现的详情项目；指定一个或多个功能参数时，只执行所选项目。")
     detail.add_argument("--input", required=True, help="纯数字商品 ID，或完整淘宝/天猫详情链接")
+    detail.add_argument("--basic-info", action="store_true", help="独立采集标题、店铺、详情销量及页面展示价格，不遍历SKU")
     detail.add_argument("--video", action="store_true", help="采集并下载主图区域的视频；无视频则返回无视频并跳过")
     detail.add_argument("--main-images", action="store_true", help="直接读取页面主图列表，按实际数量和顺序保存至 1-1主图；同来源未完成批次可补采")
-    detail.add_argument("--skus", action="store_true", help="采集标题、售出件数、逐项SKU价格及图片，图片按规格名称保存至 sku图")
+    detail.add_argument("--skus", action="store_true", help="只采集规格组合、逐项SKU价格及图片，图片按规格名称保存至 sku图")
     detail.add_argument("--parameters", action="store_true", help="动态读取参数信息，保留完整原文、同名项和原始HTML")
     detail.add_argument("--detail-images", action="store_true", help="按图文详情顺序下载全部图片，数字编号保存至商品目录的详情图")
     detail.add_argument("--review-summary", action="store_true", help="只采集评价数量、好评率和总结标签，不进入全部评价")
@@ -83,7 +84,7 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument('--include-quarantined',action='store_true',help='同时查询缺失文件等原因隔离的批次')
         else:
             command.add_argument('--batch-id',type=int,required=True,help='批次查询返回的内部编号')
-            command.add_argument('--kind',choices=('items','skus','parameters','reviews','questions','answers','media','checkpoints','review_summary'))
+            command.add_argument('--kind',choices=('basic_info','items','skus','parameters','reviews','questions','answers','media','checkpoints','review_summary'))
             command.add_argument('--question-id',type=int,help='仅 kind=answers：按问题内部编号筛选')
             command.add_argument('--include-quarantined',action='store_true')
     database = commands.add_parser("database", help="MySQL 基础连接、显式升级、字段字典与独立库验证")
@@ -144,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif args.action == "collect":
                     result = execute_collect(settings, args.keyword, limit=args.limit, pages=args.page, wait=not args.no_wait, with_details=args.with_details)
                 else:
-                    result = execute_detail(settings, args.input, wait=not args.no_wait, video=args.video, main_images=args.main_images, skus=args.skus, parameters=args.parameters, detail_images=args.detail_images, review_summary=args.review_summary, reviews=args.reviews, all_reviews=args.all_reviews, questions=args.questions)
+                    result = execute_detail(settings, args.input, wait=not args.no_wait, basic_info=args.basic_info, video=args.video, main_images=args.main_images, skus=args.skus, parameters=args.parameters, detail_images=args.detail_images, review_summary=args.review_summary, reviews=args.reviews, all_reviews=args.all_reviews, questions=args.questions)
                 print(f"[{result.status}] {result.message}")
                 if result.task_id:
                     print(f"任务编号：{result.task_id}")

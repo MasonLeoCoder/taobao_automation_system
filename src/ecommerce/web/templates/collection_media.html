@@ -1,0 +1,7 @@
+{% macro inline_media(rows,label='评论') %}
+{% set poster=rows|selectattr('role','in',['review_poster','append_poster','answer_poster'])|first %}
+<div class="review-media">{% for item in rows if item.role.endswith('image') or item.role.endswith('video') %}
+{% set src=url_for('pages.collection_file',file_id=item.file_id) if item.file_id else item.url %}
+<figure>{% if src %}{% if item.role.endswith('image') %}<a href="{{ src }}" target="_blank" rel="noopener noreferrer" aria-label="放大查看{{ label }}图片"><img class="review-thumbnail" src="{{ src }}" loading="lazy" referrerpolicy="no-referrer" alt="{{ label }}图片" data-review-media></a>{% else %}<video controls preload="none" src="{{ src }}" {% if poster and (poster.file_id or poster.url) %}poster="{{ url_for('pages.collection_file',file_id=poster.file_id) if poster.file_id else poster.url }}"{% endif %} data-review-media></video>{% endif %}<span class="review-media-error" hidden>来源媒体加载失败</span>{% else %}<span class="review-media-error">媒体地址不可用</span>{% endif %}</figure>
+{% endfor %}</div>
+{% endmacro %}

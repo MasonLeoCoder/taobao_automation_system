@@ -13,6 +13,7 @@ from ecommerce.infrastructure.storage.database import now
 from ecommerce.platforms.taobao.detail import matches_detail_url
 from ecommerce.platforms.taobao.detail_images import image_asset_key
 from ecommerce.platforms.taobao.verification import active_guard
+from ecommerce.shared.sku_stock import classify_disabled_sku
 
 OUT_OF_STOCK_PRICE = "当前缺货，无法识别价格"
 SKU_ROOT = "#skuOptionsArea"
@@ -59,7 +60,7 @@ SKU_SNAPSHOT = r"""() => {
  const lines=header.split('\n').map(s=>s.trim()).filter(Boolean);
  const sales=lines.filter(s=>/^已售\s*/.test(s));
  const globalStock=root?text(root).split('\n').filter(s=>/^(?:该规格|当前规格|所选规格|当前商品|商品)?(?:已)?(?:缺货|无货|售罄|暂无库存)[！!。\s]*$/.test(s.trim())).join(' '):'';
- return {ready:roots.length===1&&mainTitles.length===1&&groups.length>0&&groups.every(g=>g.name&&g.options.length&&g.options.every(o=>o.name)),
+ return {ready:roots.length===1&&groups.length>0&&groups.every(g=>g.name&&g.options.length&&g.options.every(o=>o.name)),
   title:mainTitles.length===1?mainTitles[0]:null,sales_text:sales.length===1?sales[0]:null,
   evaluation_hint:lines.find(s=>/人评价/.test(s))||null,returning_customer_hint:lines.find(s=>/回头客/.test(s))||null,
   cart_hint:lines.find(s=>/加购/.test(s))||null,groups,prices:uniquePrices,quantity,loading,current_image:currentImage,global_stock:globalStock};
@@ -220,9 +221,6 @@ class SkuReader:
         if len(initial['quantity']) != 1 or initial['quantity'][0] != '1':
             self.guard.request_attention(self.page, "请将商品购买数量手动设置为 1 后回复继续", step="核对采集价格数量")
         self.wait(lambda v: v['quantity'] == ['1'], "购买数量尚未确认为 1")
-        product = {"title": initial['title'], **parse_sales(initial['sales_text']),
-                   "evaluation_hint": initial['evaluation_hint'], "returning_customer_hint": initial['returning_customer_hint'],
-                   "cart_hint": initial['cart_hint'], "captured_at": now()}
         records = []
         ranges = [range(len(g['options'])) for g in initial['groups']]
         inventory = [{"name": g['name'], "option_count": len(g['options']),
@@ -271,6 +269,8 @@ class SkuReader:
                               price_reason='页面已明确显示缺货' if blocked['no_stock'] else '规格不可选，页面未提供明确缺货依据，无法识别价格')
                 if blocked['no_stock']:
                     record['price'] = OUT_OF_STOCK_PRICE
+                else:
+                    classify_disabled_sku(record)
                 current = self.read()
             else:
                 self.guard.resume_check = lambda: self.safe() and self.selected(self.read(), indexes)
@@ -310,9 +310,9 @@ class SkuReader:
             self.guard.resume_check = self.safe
             if self.on_progress:
                 self.guard.perform('保存已识别的 SKU 进度', lambda: self.on_progress({
-                    'product_info': product, 'groups': inventory, 'skus': records,
+                    'groups': inventory, 'skus': records,
                     'candidate_count': math.prod(len(r) for r in ranges), 'processed_count': len(records)}))
-        return {"product_info": product, "groups": inventory,
+        return {"groups": inventory,
                 "skus": records, "candidate_count": len(records)}
 
 

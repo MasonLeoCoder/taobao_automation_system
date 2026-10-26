@@ -1,0 +1,23 @@
+{% from 'collection_media.html' import inline_media with context %}
+{% macro answer_card(answer) %}
+<div class="qa-answer" data-answer-id="{{ answer.id }}">
+<div class="qa-author">{{ answer.author or '用户未记录' }}{% for label in (answer.payload or {}).get('identity_labels',[]) %}<span class="qa-identity">{{ label }}</span>{% endfor %}{% for label in (answer.payload or {}).get('purchase_labels',[]) %}<span class="qa-purchase">{{ label }}</span>{% endfor %}</div>
+<div class="qa-answer-text">{{ answer.content or '未记录回答文字' }}</div>
+{% if answer.date_raw or answer.sku_text %}<div class="qa-answer-meta">{% if answer.date_raw %}{{ answer.date_raw }}{% endif %}{% if answer.date_raw and answer.sku_text %} · {% endif %}{{ answer.sku_text or '' }}</div>{% endif %}
+{{ inline_media(answer.media,'回答') }}
+</div>
+{% endmacro %}
+{% macro question_cards(detail) %}
+<div class="qa-sort" role="group" aria-label="问题排序"><span>排序</span>{% for code,name in [('position','原始顺序'),('content','问题内容'),('author','提问用户'),('captured_at','采集时间')] %}<a class="button action-button {{ 'action-primary' if detail.sort_spec.sort==code else 'action-neutral' }}" href="{{ sort_url(code,detail.sort_spec,{'batch':detail.batch.id}) }}">{{ name }} {{ ('↑' if detail.sort_spec.order=='asc' else '↓') if detail.sort_spec.sort==code else '↕' }}</a>{% endfor %}</div>
+<div class="qa-list" role="list" aria-label="问大家">
+{% for question in detail.records %}<article class="qa-card" role="listitem" data-question-id="{{ question.id }}">
+<h3 class="qa-question"><span class="qa-question-mark" aria-hidden="true">问</span><span>{{ question.question or '问题文字未记录' }}</span></h3>
+{% if question.author or question.date_raw %}<p class="qa-question-meta">{% if question.author %}提问用户：{{ question.author }}{% endif %}{% if question.author and question.date_raw %} · {% endif %}{{ question.date_raw or '' }}</p>{% endif %}
+<div class="qa-content">
+{% if question.answers %}{{ answer_card(question.answers[0]) }}{% else %}<p class="qa-empty">暂无已采集回答</p>{% endif %}
+{% if question.answers|length>1 %}<details class="qa-more"><summary><span class="qa-expand-label">查看全部已采集回答（{{ question.answers|length }}）⌄</span><span class="qa-collapse-label">收起回答 ⌃</span></summary><div class="qa-extra-answers">{% for answer in question.answers[1:] %}{{ answer_card(answer) }}{% endfor %}</div></details>{% elif question.answers %}<p class="qa-count">已采集 1 条回答</p>{% endif %}
+{% if not question.answers_complete %}<p class="qa-incomplete">回答采集未完成，目前仅展示已保存内容。</p>{% endif %}
+</div></article>{% else %}<p class="qa-empty">{{ '本次已确认无问答。' if detail.batch.status=='no_questions' else '本批次没有已保存的问题。' }}</p>{% endfor %}
+</div>
+<script src="{{ url_for('static',filename='reviews.js') }}" defer></script>
+{% endmacro %}

@@ -89,6 +89,7 @@ class Blockage:
     until: float = 0
     key: str = ""
     frame_location: str | None = None
+    check_details: dict | None = None
 
 
 class TaobaoGuard:
@@ -125,6 +126,8 @@ class TaobaoGuard:
         self.control_state_path = self.control_path.with_suffix(".state.json")
         self._prompt_id = None
         self._prompt_allowed = set()
+        self._prompt_message = ''
+        self.feedback_file_only = False
         self._file_replies = {}
         self._stdin_unavailable = False
         self.event_path = self.log_dir / "taobao" / f"{self.task_id}.jsonl"
@@ -160,6 +163,8 @@ class TaobaoGuard:
                   "step": self.step, "progress": self.progress, **details}
         if blockage:
             record.update(kind=blockage.kind, location=safe_location(blockage.page.url), source=blockage.source)
+            if blockage.check_details is not None:
+                record['check_details']=blockage.check_details
             if blockage.frame_location is not None:
                 record["frame_location"] = blockage.frame_location
         from ecommerce.infrastructure.tasks.events import sanitize
@@ -405,25 +410,28 @@ class TaobaoGuard:
         self.control_state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.control_state_path.with_suffix(".tmp")
         temporary.write_text(json.dumps({"task_id": self.task_id, "state": self.state, "step": self.step,
-                                         "prompt_id": self._prompt_id, "allowed": sorted(self._prompt_allowed)}, ensure_ascii=False), encoding="utf-8")
+                                           "prompt_id": self._prompt_id, "allowed": sorted(self._prompt_allowed),
+                                           "message": self._prompt_message}, ensure_ascii=False), encoding="utf-8")
         temporary.replace(self.control_state_path)
 
     def read_feedback(self, prompt, allowed=None):
         """终端和跨进程反馈共用提示编号；旧指令不能放行新的验证。"""
-        previous = self._prompt_id, self._prompt_allowed
+        from ecommerce.infrastructure.tasks.events import sanitize
+        previous = self._prompt_id, self._prompt_allowed, self._prompt_message
         self._prompt_id, self._prompt_allowed = uuid4().hex, set(allowed or {"继续"})
+        self._prompt_message = sanitize(prompt)
         self._publish_prompt()
         try:
             return self._read_feedback(prompt)
         finally:
             self._file_replies.pop(self._prompt_id, None)
-            self._prompt_id, self._prompt_allowed = previous
+            self._prompt_id, self._prompt_allowed, self._prompt_message = previous
             self._publish_prompt()
 
     def _read_feedback(self, prompt):
         """仅输入线程读终端；主线程继续派发浏览器事件及检查停止指令。"""
         requested_at = time.monotonic()
-        if self._feedback_thread is None:
+        if self._feedback_thread is None and not self.feedback_file_only:
             def read_lines():
                 while True:
                     try:
@@ -548,8 +556,13 @@ class TaobaoGuard:
                         resumed = self.resume_check()
                     except PlaywrightError:
                         resumed = False
-                    if not resumed:
-                        blockage = Blockage("resume_check", pages[-1], "登录状态或当前业务页面未通过复核")
+                    if isinstance(resumed,Blockage):
+                        blockage=resumed
+                    elif not resumed:
+                        if incident[0]=='business':
+                            blockage=Blockage('business',incident[1],incident[2])
+                        else:
+                            blockage = Blockage("resume_check", pages[-1], "登录状态或当前业务页面未通过复核")
             if not first:
                 self._transition("running")
         except (TaskStopped, KeyboardInterrupt):
@@ -587,9 +600,9 @@ class TaobaoGuard:
         self._record("paced", action=action, seconds=round(seconds, 3))
         self.wait(seconds * 1000)
 
-    def request_attention(self, page, reason, *, step=None):
+    def request_attention(self, page, reason, *, step=None,check_details=None):
         """页面结构或业务结果无法确认时交给人工，不自动刷新或重放。"""
-        self._queue(Blockage("business", page, reason, key="business:" + uuid4().hex))
+        self._queue(Blockage("business", page, reason, key="business:" + uuid4().hex,check_details=check_details))
         self.checkpoint(step)
 
     def perform(self, step, action, *, completed=None):

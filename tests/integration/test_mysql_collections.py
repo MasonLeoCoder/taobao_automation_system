@@ -68,7 +68,7 @@ class MySQLCollectionTests(unittest.TestCase):
             connection.execute(t['product_current_sections'].delete().where(t['product_current_sections'].c.product_id.in_(product_ids)))
             connection.execute(t['task_events'].delete().where(t['task_events'].c.task_id.in_(self.task_ids)))
             connection.execute(media.delete().where(media_where))
-            for name in ['collection_checkpoints','answer_observations','question_observations','review_observations',
+            for name in ['product_info_observations','collection_checkpoints','answer_observations','question_observations','review_observations',
                          'sku_observations','parameter_observations','list_observations','review_summaries']:
                 connection.execute(t[name].delete().where(t[name].c.batch_id.in_(batch_ids)))
             connection.execute(t['collection_batches'].update().where(t['collection_batches'].c.id.in_(batch_ids)).values(derived_from_batch_id=None))
@@ -348,7 +348,7 @@ class MySQLCollectionTests(unittest.TestCase):
                 source['list_source']={'source_batch_key':listing['batch_id'],'product_index':index,'product_id':identifier}
                 with patch.object(detail_service,'active_guard',return_value=guard),patch.object(detail_service,'inspect_detail_entry',return_value=detail),\
                      patch.object(detail_service,'save_session'),patch('ecommerce.modules.collection.detail_parameters.collect_parameters',collect_parameters):
-                    outputs.append(detail_service.collect_detail_page(settings,object(),detail,source=source,video=False,main_images=False,skus=False,
+                    outputs.append(detail_service.collect_detail_page(settings,object(),detail,source=source,basic_info=False,video=False,main_images=False,skus=False,
                         parameters=True,detail_images=False,review_summary=False,reviews=False,questions=False))
                 self.assertIsNone(getattr(session,'detail_source',None))
                 self.assertIsNone(getattr(session,'collection_run_key',None))
@@ -367,6 +367,46 @@ class MySQLCollectionTests(unittest.TestCase):
                 batch=connection.execute(sa.select(t['collection_batches']).where(t['collection_batches'].c.run_id==run['id'])).mappings().one()
                 self.assertEqual((batch['product_id'],batch['search_keyword']),(run['product_id'],'脱敏样例'))
         self.assertNotEqual(outputs[0]['entry_key'],outputs[1]['entry_key'])
+
+    def test_basic_info_stays_effective_when_same_run_sku_is_partial(self):
+        """统一任务内基本信息独立入库，后续SKU部分结果不能覆盖它。"""
+        from ecommerce.modules.collection.detail_report import DetailCollectionReport
+        from ecommerce.modules.collection.detail_basic_info import collect_basic_info
+        from ecommerce.platforms.taobao.detail import resolve_detail_input
+        from ecommerce.shared.exceptions import NeedsAttention
+        from unittest.mock import MagicMock
+        settings=replace(self.base,collection_backend='mysql')
+        def action():
+            session=current_events();self.task_ids.add(session.task_id)
+            fixture=create_sources(settings,session.task_id,self.external_id)
+            requested={name:name in {'basic_info','skus'} for name in ('basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions')}
+            report=DetailCollectionReport(settings,self.external_id,session.task_id,requested)
+            guard=MagicMock(task_id=session.task_id)
+            guard.perform.side_effect=lambda label,callback,**kw:callback()
+            guard.checkpoint.side_effect=lambda label:session.checkpoint(label)
+            page=MagicMock(url='https://item.taobao.com/item.htm?id='+self.external_id);page.is_closed.return_value=False
+            detail=MagicMock(page=page,target=resolve_detail_input(self.external_id))
+            report.start('basic_info')
+            with patch('ecommerce.modules.collection.detail_basic_info.active_guard',return_value=guard),patch(
+                    'ecommerce.modules.collection.detail_basic_info.read_basic_info',return_value={'title':'独立入库标题','sales_text':'已售 20+',
+                        'field_states':{'title':'provided','sales_text':'provided'}}):
+                basic=collect_basic_info(settings,detail)
+            report.finish('basic_info',basic,True)
+            sku={k:v for k,v in fixture['records']['skus'].items() if k!='product_info'}
+            sku.update(schema_version=3,scope='product_skus')
+            fixture['paths']['skus'].write_text(json.dumps(sku,ensure_ascii=False),encoding='utf-8')
+            report.start('skus')
+            save_detail_section(fixture['root'],self.external_id,'sku_details_last_attempt',sku)
+            report.finish('skus',sku,False);report.finalize('SKU部分完成')
+            session.checkpoint('所有基本信息和SKU尝试已入库')
+            raise NeedsAttention('SKU部分完成，基本信息已保存')
+        result=run_task(settings,'example.collection.basic_then_skus',action)
+        self.assertEqual(result.status,'needs_attention',result.message)
+        document=detail_document(settings,self.external_id)
+        self.assertEqual(document['product_info']['title'],'独立入库标题')
+        self.assertEqual(document['sku_details_last_attempt']['status'],'partial')
+        self.assertNotIn('product_info',document['sku_details_last_attempt'])
+        self.assertNotIn('sku_details',document)
 
     def test_runtime_full_report_retains_sections_and_links_events(self):
         """同任务内逐模块保存后仍保留汇总、有效分区和部分SKU，事件关联真实运行。"""
@@ -389,7 +429,7 @@ class MySQLCollectionTests(unittest.TestCase):
         self.assertEqual(result.status,'succeeded')
         document=detail_document(settings,self.external_id)
         self.assertEqual(document['collection_summary']['status'],'complete_with_warnings')
-        self.assertEqual(len(document['collection_summary']['steps']),8)
+        self.assertEqual(len(document['collection_summary']['steps']),9)
         self.assertNotIn('sku_details',document)
         self.assertEqual(document['sku_details_last_attempt']['status'],'partial')
         events=self.store.tasks.list_events(task_id=result.task_id,limit=200)['events']
