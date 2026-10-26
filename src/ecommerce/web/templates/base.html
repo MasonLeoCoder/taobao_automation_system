@@ -16,8 +16,7 @@
     <a class="{{ 'active' if active == 'logs' }}" href="/logs">运行日志</a>
     <a class="{{ 'active' if active == 'collections' and ('/searches' in request.path or '/batches' in request.path or request.args.get('view')=='searches') }}" href="{{ url_for('pages.collection_searches') }}">搜索列表</a>
     <a class="{{ 'active' if active == 'collections' and '/searches' not in request.path and '/batches' not in request.path and request.args.get('view')!='searches' }}" href="{{ url_for('pages.collection_details') }}">商品库</a>
-    <p>业务模块</p>
-    {% for item in features %}<a class="{{ 'active' if active == item.key }}" href="/modules/{{ item.key }}">{{ item.name }}{% if item.status == 'planned' %}<small>规划中</small>{% endif %}</a>{% endfor %}
+    <a class="{{ 'active' if active == 'collection' }}" href="{{ url_for('pages.module',key='collection') }}">商品采集</a>
   </nav>
   <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。<small>基础架构 · v0.2</small></div>
 </aside>

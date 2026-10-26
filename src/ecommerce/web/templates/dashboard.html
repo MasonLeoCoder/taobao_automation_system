@@ -1,15 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="intro"><div><p class="eyebrow">WORKSPACE OVERVIEW</p><h1>把店铺工作，安排得更清楚。</h1><p>在这里查看功能进度与任务结果，逐步连接商品、数据和运营。</p></div><a class="button action-button action-history" href="/tasks">查看任务记录 ↗</a></section>
+<section class="intro"><div><p class="eyebrow">WORKSPACE OVERVIEW</p><h1>商品采集与资料查看。</h1><p>查看采集进度、任务记录和已保存的商品资料。</p></div><a class="button action-button action-history" href="/tasks">查看任务记录 ↗</a></section>
 <section class="metrics" aria-label="运行统计">
   <article><span>累计任务</span><strong>{{ total }}</strong><small>已记录的自动化执行</small></article>
   <article><span>成功完成</span><strong>{{ counts.get('succeeded',0) }}</strong><small>完成既定任务步骤</small></article>
   <article><span>需要处理</span><strong>{{ counts.get('failed',0) + counts.get('needs_attention',0) }}</strong><small>失败或需要人工检查</small></article>
   <article><span>正在运行</span><strong>{{ counts.get('running',0) }}</strong><small>异常退出状态于下次任务启动时核对</small></article>
 </section>
-<section class="section-heading"><div><h2>业务空间</h2><p>已迁移的能力与接下来的建设方向</p></div><span class="subtle">{{ features | length }} 个模块</span></section>
-<section class="cards">
-{% for item in features %}<a class="card" href="/modules/{{ item.key }}"><div><span class="index">0{{ loop.index }}</span><span class="badge {{ item.status }}">{{ item.label }}</span></div><h3>{{ item.name }}</h3><p>{{ item.description }}</p><span class="card-link">查看模块 <b>↗</b></span></a>{% endfor %}
+<section class="section-heading"><div><h2>采集入口</h2><p>配置采集范围，完成后在搜索列表和商品库查看资料。</p></div></section>
+<section class="panel">
+  <h2>商品采集</h2>
+  <p>按关键词采集商品列表，或输入商品 ID、链接选择详情模块；支持设置采集范围、查看进度和日志。</p>
+  <a class="button action-button action-primary" href="{{ url_for('pages.module',key='collection') }}">配置采集 →</a>
 </section>
-<section class="bottom-grid"><article class="panel"><p class="eyebrow">NEXT STEP</p><h2>从 Excel 到商品草稿</h2><p>下一阶段优先打通资料检查、商品填写和草稿保存，逐个记录执行结果。</p><div class="steps"><span>01 资料检查</span><span>02 商品填写</span><span>03 保存草稿</span></div></article><article class="panel"><h2>账号准备情况</h2><p>{{ '检测到本地登录状态文件。' if has_session_file else '尚未检测到本地登录状态文件。' }}会话是否有效，需要在线检查。</p><a class="button action-button action-primary" href="/modules/account">查看登录方式 →</a></article></section>
 {% endblock %}

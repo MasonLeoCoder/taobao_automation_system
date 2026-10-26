@@ -26,16 +26,13 @@ def tasks():
 
 @pages.get("/modules/<key>")
 def module(key: str):
-    """展示能力说明；参数：模块标识；返回：模块页面或 404。"""
-    feature = next((item for item in FEATURES if item["key"] == key), None)
-    if feature is None:
+    """展示网页采集入口；参数：模块标识；返回：采集配置页，已移除入口返回404。"""
+    if key!='collection':
         abort(404)
-    if key=='collection':
-        from ecommerce.modules.collection.web_collection import MODULES
-        settings=current_app.config['SETTINGS']
-        return render_template('collection_start.html',active=key,features=FEATURES,shop_name=settings.shop_name,
-            modules=MODULES,enabled=settings.task_backend=='mysql' and settings.collection_backend=='mysql')
-    return render_template("module.html", active=key, feature=feature, **overview(current_app.config["SETTINGS"]))
+    from ecommerce.modules.collection.web_collection import MODULES
+    settings=current_app.config['SETTINGS']
+    return render_template('collection_start.html',active=key,features=FEATURES,shop_name=settings.shop_name,
+        modules=MODULES,enabled=settings.task_backend=='mysql' and settings.collection_backend=='mysql')
 
 
 @pages.get("/api/status")

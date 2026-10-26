@@ -28,11 +28,20 @@ class AppTests(unittest.TestCase):
 
     def test_pages_and_empty_state(self):
         """所有导航均可访问且空状态真实；参数：无；返回：无。"""
-        for path in ("/", "/tasks", "/modules/account", "/modules/product", "/modules/collection", "/modules/selection", "/modules/reports", "/modules/analysis", "/health", "/static/app.css"):
+        for path in ("/", "/tasks", "/logs", "/collections/searches", "/collections/details", "/modules/collection", "/health", "/static/app.css"):
             with self.client.get(path) as response:
                 self.assertEqual(response.status_code, 200, path)
-        self.assertEqual(self.client.get("/modules/missing").status_code, 404)
+                if response.mimetype=='text/html':
+                    page=response.get_data(as_text=True)
+                    for key in ('account','product','selection','reports','analysis'):
+                        self.assertNotIn(f'href="/modules/{key}"',page)
+        for key in ('account','product','selection','reports','analysis','missing'):
+            self.assertEqual(self.client.get('/modules/'+key).status_code,404,key)
         self.assertIn("还没有执行记录", self.client.get("/tasks").get_data(as_text=True))
+        self.assertIn('前往商品采集',self.client.get('/tasks').get_data(as_text=True))
+        home=self.client.get('/').get_data(as_text=True)
+        for obsolete in ('从 Excel 到商品草稿','账号准备情况','规划中'):
+            self.assertNotIn(obsolete,home)
         self.assertEqual(self.client.get("/api/status").json["total"], 0)
         self.assertEqual(self.client.post("/api/status").status_code, 405)
 
@@ -48,7 +57,7 @@ class AppTests(unittest.TestCase):
     def test_cli_from_another_directory(self):
         """从外部目录运行及未实现命令退出状态；参数：无；返回：无。"""
         env = dict(os.environ, ECOMMERCE_ROOT=self.temp.name, PYTHONUTF8="1")
-        for args, expected in [(["--help"], 0), (["status"], 0), (["tasks"], 0), (["download"], 2), (["product", "draft"], 2), (["web", "--port", "0"], 1), (["--config", "missing.toml", "status"], 1)]:
+        for args, expected in [(["--help"], 0), (["account","login","--help"],0), (["product","open","--help"],0), (["status"], 0), (["tasks"], 0), (["download"], 2), (["product", "draft"], 2), (["web", "--port", "0"], 1), (["--config", "missing.toml", "status"], 1)]:
             result = subprocess.run([sys.executable, str(ROOT / "main.py"), *args], cwd=self.temp.name, env=env, capture_output=True)
             self.assertEqual(result.returncode, expected, result.stderr)
 

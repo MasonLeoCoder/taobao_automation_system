@@ -9,5 +9,5 @@
 {% for task in tasks %}<tr><td><a href="{{ url_for('pages.logs',task_id=task.id) }}" title="{{ task.id }}">{{ task.name }}</a><small>{{ task.id[:12] }}</small></td><td><span class="badge {{ task.status }}">{{ labels[task.status] }}</span></td><td>{{ task.started_at | full_local_time }}</td><td>{{ task.finished_at | full_local_time }}</td><td>{{ task.message or '任务执行中' }}</td></tr>{% endfor %}
 </tbody></table></div>
 {{ pager(pagination) }}
-{% else %}<section class="empty"><span class="empty-symbol">↗</span><h2>还没有执行记录</h2><p>运行登录或商品入口任务后，这里会显示状态和结果。</p><a class="button action-button action-primary" href="/modules/account">从账号登录开始 →</a></section>{% endif %}
+{% else %}<section class="empty"><span class="empty-symbol">↗</span><h2>还没有执行记录</h2><p>开始一次商品采集后，这里会显示任务状态和执行结果。</p><a class="button action-button action-primary" href="{{ url_for('pages.module',key='collection') }}">前往商品采集 →</a></section>{% endif %}
 {% endblock %}
