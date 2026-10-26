@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 from ecommerce.modules.collection.detail_images import collect_main_images
 from ecommerce.modules.collection.detail_storage import product_directory, save_detail_section
 from ecommerce.platforms.taobao.detail import DetailPage, resolve_detail_input
-from ecommerce.platforms.taobao.detail_images import HEAD_IMAGES_SOURCE, ITEM_IMAGES_SOURCE, collect_main_image_links
+from ecommerce.platforms.taobao.detail_images import DOM_IMAGES_SOURCE, collect_main_image_links
 from ecommerce.platforms.taobao.verification import TaobaoGuard
 from ecommerce.shared.config import DEFAULT_TAOBAO_TIMING, load_settings
 from ecommerce.shared.exceptions import TaskStopped
@@ -32,7 +32,7 @@ def png(index):
 
 
 def photo_url(index):
-    return f'https://img.alicdn.com/main{index}.png'
+    return f'https://img.alicdn.com/main{index}.png_q50.jpg_.webp'
 
 
 def gallery_html(video=True,count=5,duplicate=False):
@@ -40,7 +40,7 @@ def gallery_html(video=True,count=5,duplicate=False):
     entries=([{'type':'video','url':urls[0]}] if video else [])+[{'type':'image','url':url} for url in urls]+[{'type':'parameters'}]
     thumbs=''
     for index,entry in enumerate(entries):
-        content=f'<img class="thumbnailPic--fixture" src="{entry["url"]}_q50.jpg_.webp" width=30 height=30>' if 'url' in entry else '参数'
+        content=f'<img class="thumbnailPic--fixture" src="{entry["url"]}" width=30 height=30>' if 'url' in entry else '参数'
         thumbs+=f'<div class="thumbnail--fixture {"thumbnailActive--fixture" if index==0 else ""}">{content}</div>'
     main='<div id="mainPicVideoEl">视频封面</div>' if video else f'<img id="mainPicImageEl" src="{urls[0]}" width=200 height=200>'
     tabs=('<div class="switchTabsItem--fixture">视频</div>' if video else '')+'<div class="switchTabsItem--fixture">图集</div><div class="switchTabsItem--fixture">参数</div>'
@@ -114,16 +114,18 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.html=gallery_html(**options)
         self.page.reload()
 
-    def test_five_images_exclude_video_cover_and_use_actual_full_image_urls(self):
+    def test_six_dom_images_deduplicate_first_pair_and_number_five_images(self):
         record=self.collect()
         self.assertEqual(record['status'],'complete')
         self.assertEqual(record['collected_count'],5)
-        self.assertEqual(record['video_cover_skipped'],1)
+        self.assertEqual(record['video_cover_skipped'],0)
+        self.assertEqual((record['raw_image_count'],record['duplicate_count']),(6,1))
+        self.assertEqual(record['schema_version'],3)
         self.assertEqual(record['parameters_skipped'],1)
-        self.assertEqual([p['slot_index'] for p in record['images']],[2,3,4,5,6])
+        self.assertEqual([p['slot_index'] for p in record['images']],[1,3,4,5,6])
         self.assertEqual(self.page.evaluate('imageClicks'),[])
-        self.assertEqual(record['collection_method'],'page_data')
-        self.assertEqual(record['source_path'],ITEM_IMAGES_SOURCE)
+        self.assertEqual(record['collection_method'],'dom_thumbnails')
+        self.assertEqual(record['source_path'],DOM_IMAGES_SOURCE)
         folder=product_directory(self.settings,ITEM_ID)/'1-1主图'
         self.assertEqual(sorted(p.name for p in folder.iterdir()),['1.png','2.png','3.png','4.png','5.png'])
         for index,image in enumerate(record['images'],1):
@@ -140,31 +142,49 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual([p['slot_index'] for p in record['images']],[1,2,3,4,5])
         self.assertEqual(record['images'][0]['image_url'],photo_url(1))
 
-    def test_cropped_item_images_use_verified_original_gallery_addresses(self):
-        """复现实际淘宝裁切列表，仍按页面原图地址下载，保留全部位置。"""
-        originals=[f'https://img.alicdn.com/imgextra/i2/123/main{i}_!!123.png' for i in range(1,6)]
-        cropped=[url.replace('_!!','~crop,48,0,600,800~_!!') for url in originals]
-        self.page.evaluate('''({originals,cropped})=>{
-          const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
-          res.item.images=cropped;res.componentsVO.headImageVO.images=originals;
-          [...document.querySelectorAll('.thumbnailPic--fixture')].slice(1).forEach((img,i)=>img.src=originals[i]+'_q50.jpg_.webp');
-        }''',{'originals':originals,'cropped':cropped})
-        self.opener.open.side_effect=lambda request,timeout:Response(request.full_url,png(originals.index(request.full_url)+1))
+    def test_user_provided_dom_six_images_become_five_ordered_files(self):
+        """复现用户给出的DOM地址与节点结构，去重后按首次出现编号；参数：无；返回：无。"""
+        urls=[
+            '//img.alicdn.com/imgextra/i1/2218637507912/O1CN01hcQDq628JkpRRe2Ox_!!4611686018427387208-0-item_pic.jpg_q50.jpg_.webp',
+            '//img.alicdn.com/imgextra/i3/2218637507912/O1CN01kdxMSS28JkpT7pwcj_!!2218637507912.jpg_q50.jpg_.webp',
+            '//img.alicdn.com/imgextra/i1/2218637507912/O1CN01GwdOjM28JkpRf5CdK_!!2218637507912.jpg_q50.jpg_.webp',
+            '//img.alicdn.com/imgextra/i4/2218637507912/O1CN01ONie7x28JkpRinhv5_!!2218637507912.jpg_q50.jpg_.webp',
+            '//img.alicdn.com/imgextra/i2/2218637507912/O1CN01I3LKlS28JkpT7poKa_!!2218637507912.jpg_q50.jpg_.webp']
+        entries=''.join(f'<div class="thumbnail--TxeB1sWz"><div class="thumbnailItem--WQyauvvr"><img src="{url}" class="thumbnailPic--QasTmWDm"></div></div>' for url in [urls[0],*urls])
+        self.html='<div id="picGalleryEle"><div class="thumbnails--v976to2t">'+entries+'<div class="thumbnail--TxeB1sWz"><div class="thumbnailItem--WQyauvvr thumbnailItemOther--sDO8U6H8"><div>参数</div></div></div></div></div>'
+        self.page.reload()
+        absolute=['https:'+url for url in urls]
+        self.opener.open.side_effect=lambda request,timeout:Response(request.full_url,png(absolute.index(request.full_url)+1))
         record=self.collect()
-        self.assertEqual(record['status'],'complete');self.assertEqual(record['source_path'],HEAD_IMAGES_SOURCE)
-        self.assertEqual([row['image_url'] for row in record['images']],originals)
+        self.assertEqual(record['collected_count'],5)
+        self.assertEqual([image['image_url'] for image in record['images']],absolute)
+        self.assertEqual([image['index'] for image in record['images']],[1,2,3,4,5])
+        self.assertEqual([image['slot_index'] for image in record['images']],[1,3,4,5,6])
+        self.assertEqual(record['duplicate_count'],1)
+        self.assertEqual([Path(image['image_path']).name for image in record['images']],['1.png','2.png','3.png','4.png','5.png'])
+        self.assertEqual(self.opener.open.call_count,5)
+
+    def test_conflicting_page_data_never_overrides_dom_download_addresses(self):
+        """两套页面数据不同仍只下载DOM实际地址；参数：无；返回：无。"""
+        self.page.evaluate('''()=>{
+          const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
+          res.item.images=['https://img.alicdn.com/unrelated.png'];res.componentsVO.headImageVO.images=[];
+        }''')
+        record=self.collect()
+        self.assertEqual(record['status'],'complete');self.assertEqual(record['source_path'],DOM_IMAGES_SOURCE)
+        self.assertEqual([row['image_url'] for row in record['images']],[photo_url(i) for i in range(1,6)])
         self.assertEqual(self.page.evaluate('imageClicks'),[]);self.assertEqual(self.opener.open.call_count,5)
 
-    def test_mismatch_resume_keeps_exact_reason_and_records_comparison(self):
-        """继续后仍有差异时显示具体业务原因，恢复正确数据后才放行。"""
-        self.page.evaluate("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[2]='https://img.alicdn.com/other.png'")
+    def test_invalid_dom_resume_keeps_specific_reason_until_address_is_restored(self):
+        """DOM无效地址恢复前保持暂停并记录位置；参数：无；返回：无。"""
+        self.page.evaluate("document.querySelectorAll('.thumbnailPic--fixture')[3].src='https://example.com/other.png'")
         messages=[]
         def attention(message):
             messages.append(message)
             if len(messages)==2:
-                self.assertTrue(message.startswith('【检查尚未通过】'));self.assertIn('第3张',message)
+                self.assertTrue(message.startswith('【检查尚未通过】'));self.assertIn('DOM',message)
                 self.assertNotIn('登录状态',message)
-                self.page.evaluate('url=>window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[2]=url',photo_url(3))
+                self.page.evaluate("url=>document.querySelectorAll('.thumbnailPic--fixture')[3].src=url",photo_url(3))
             return '继续'
         with self.guard(attention) as guard:
             manifest=collect_main_image_links(self.result,100)
@@ -172,15 +192,16 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual(len(manifest['images']),5);self.assertEqual(len(messages),2)
         failures=[row for row in events if row.get('event')=='blocked' and row.get('check_details')]
         self.assertTrue(failures)
-        self.assertTrue(any(not comparison['same_origin_asset'] and comparison['position']==3 for row in failures for comparison in row['check_details']['comparisons']))
+        self.assertTrue(any(image['slot_index']==4 and image['image_url'] is None for row in failures for image in row['check_details']['dom_images']))
         self.assertEqual(self.page.evaluate('imageClicks'),[])
 
-    def test_repeated_source_urls_keep_all_five_positions(self):
+    def test_all_duplicate_dom_urls_save_only_first_image(self):
         self.replace_gallery(duplicate=True)
         record=self.collect()
-        self.assertEqual(record['collected_count'],5)
-        self.assertEqual([p['index'] for p in record['images']],[1,2,3,4,5])
+        self.assertEqual(record['collected_count'],1)
+        self.assertEqual([p['index'] for p in record['images']],[1])
         self.assertEqual(len(set(p['image_url'] for p in record['images'])),1)
+        self.assertEqual(self.opener.open.call_count,1)
 
     def test_current_large_image_can_be_wrong_or_loading_without_affecting_list(self):
         self.page.evaluate('''()=>{window.imageDelay=150;
@@ -233,7 +254,7 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
                 record=self.collect()
                 self.assertEqual(record['status'],'complete')
                 self.assertEqual((record['expected_count'],record['available_count'],record['collected_count']),(1,1,1))
-                self.assertEqual(record['images'][0]['slot_index'],2 if video else 1)
+                self.assertEqual(record['images'][0]['slot_index'],1)
 
     def test_more_than_five_images_are_not_truncated(self):
         self.replace_gallery(count=8)
@@ -289,8 +310,8 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertEqual([p['image_url'] for p in record['images']],[photo_url(i) for i in (1,2)])
         self.assertEqual(self.page.evaluate('imageClicks'),[])
 
-    def test_wrong_image_source_requires_manual_review(self):
-        self.page.evaluate("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[2]='https://img.alicdn.com/other.png'")
+    def test_wrong_product_url_requires_manual_review(self):
+        self.page.goto('https://item.taobao.com/item.htm?id=999')
         with self.guard(lambda message:'停止'):
             with self.assertRaises(TaskStopped):
                 collect_main_image_links(self.result,100)
@@ -309,26 +330,21 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         folder=product_directory(self.settings,ITEM_ID)
         self.assertFalse(list(folder.glob('.main-images-*')))
 
-    def test_verified_head_image_list_is_used_when_item_list_is_absent(self):
-        self.page.evaluate('delete window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images')
+    def test_dom_collection_does_not_require_page_data_or_video_tabs(self):
+        self.page.evaluate("delete window.__ICE_APP_CONTEXT__;document.querySelector('.bottomSwitchTabsWrap--fixture').remove()")
         record=self.collect()
-        self.assertEqual(record['source_path'],HEAD_IMAGES_SOURCE)
+        self.assertEqual(record['source_path'],DOM_IMAGES_SOURCE)
         self.assertEqual(record['collected_count'],5)
         self.assertEqual(self.page.evaluate('imageClicks'),[])
 
-    def test_missing_mismatched_or_invalid_data_pauses_without_click_or_download(self):
+    def test_missing_ambiguous_or_invalid_dom_pauses_without_click_or_download(self):
         cases=[
-            ('delete window.__ICE_APP_CONTEXT__','未提供'),
-            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.itemId='999'",'商品ID'),
-            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.ssrItemId='999'",'商品ID'),
-            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images.pop()','数量'),
-            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.componentsVO.headImageVO.images.reverse()','顺序'),
-            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images=[]','为空'),
-            ('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images={url:"not-a-list"}','格式'),
-            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[0]='https://example.com/main1.png'",'无效地址'),
-            ("window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images[0]='https://img.alicdn.com/other/main1.png'",'来源'),
-            ('''(()=>{const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
-                 res.recommendations={images:res.item.images};delete res.item.images;delete res.componentsVO.headImageVO.images})()''','未提供'),
+            ("document.querySelector('#picGalleryEle').remove()",'画廊'),
+            ("document.querySelector('.thumbnails--fixture').remove()",'结构'),
+            ("document.querySelector('.thumbnails--fixture').innerHTML='参数'",'尚未提供图片'),
+            ("document.querySelectorAll('.thumbnailPic--fixture')[0].src='https://example.com/main1.png'",'图片地址'),
+            ("document.querySelectorAll('.thumbnailPic--fixture')[0].removeAttribute('src')",'图片地址'),
+            ("document.querySelector('#picGalleryEle').append(document.querySelector('.thumbnails--fixture').cloneNode(true))",'结构'),
         ]
         for expression,reason in cases:
             with self.subTest(reason=reason,expression=expression):
@@ -382,8 +398,7 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
 
     def test_changed_source_address_does_not_reuse_old_batch(self):
         self.fail_third_download()
-        self.page.evaluate('''()=>{const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
-          res.item.images=res.item.images.map(u=>u+'?revision=2');res.componentsVO.headImageVO.images=[...res.item.images]}''')
+        self.page.evaluate("document.querySelectorAll('.thumbnailPic--fixture').forEach(img=>img.src=img.getAttribute('src')+'?revision=2')")
         record=self.collect()
         self.assertIsNone(record['resumed_from_batch_id'])
         self.assertEqual(record['reused_count'],0)
@@ -453,14 +468,13 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         original=self.opener.open.side_effect
         def response(request,timeout):
             if request.full_url==photo_url(1):
-                self.page.evaluate('window.__ICE_APP_CONTEXT__.loaderData.home.data.res.item.images.reverse()')
+                self.page.evaluate("document.querySelectorAll('.thumbnailPic--fixture')[3].src='https://img.alicdn.com/other.png'")
             return original(request,timeout)
         self.opener.open.side_effect=response
         messages=[]
         def restore(message):
             messages.append(message)
-            self.page.evaluate('''()=>{const res=window.__ICE_APP_CONTEXT__.loaderData.home.data.res;
-                res.item.images=[...res.componentsVO.headImageVO.images]}''')
+            self.page.evaluate("url=>document.querySelectorAll('.thumbnailPic--fixture')[3].src=url",photo_url(3))
             return '继续'
         with self.guard(restore),patch('ecommerce.modules.collection.detail_images.build_opener',return_value=self.opener):
             record=collect_main_images(self.settings,self.result)

@@ -18,6 +18,7 @@ STATUS_LABELS = {
     'no_reviews':'无评价（已确认）','no_questions':'无问答（已确认）',
     'pending':'未执行','not_run':'未执行（前序模块未通过）','not_requested':'未启用',
     'running':'尚未完成','interrupted':'已中断','needs_attention':'需要人工处理',
+    'skipped':'已跳过（未找到入口）',
 }
 
 
@@ -62,7 +63,7 @@ class DetailCollectionReport:
         step.update(status=value.get('video_status') if name=='video' else value.get('status','unconfirmed'),
                     continuation_allowed=allowed,finished_at=now(),message=value.get('message',''),
                     warnings=value.get('warnings',[]),blocking_issues=value.get('blocking_issues',[]))
-        for key in ('record_path','history_record_path','image_directory','result_section','summary','stop_reason'):
+        for key in ('record_path','history_record_path','image_directory','result_section','summary','stop_reason','entry_search'):
             if key in value:
                 step[key]=value[key]
         self.save()
@@ -97,12 +98,15 @@ class DetailCollectionReport:
         status={'complete':'详情采集完成','complete_with_warnings':'详情采集完成（含警告，部分数据待核对）',
                 'partial':'详情采集部分完成','interrupted':'详情采集已中断',
                 'needs_attention':'详情采集需要人工处理','failed':'详情采集失败'}.get(self.record['status'],'详情采集尚未完成')
+        if self.record['status']=='complete_with_warnings' and any(step['status']=='skipped' for step in self.record['steps']):
+            status='详情采集结束（含跳过项目，详见日志）'
         print('\n【本次详情采集汇总】'+status,flush=True)
         for step in self.record['steps']:
             suffix='（记录警告后允许继续）' if step['status']=='partial' and step['continuation_allowed'] else ''
             print(step['label']+'：'+STATUS_LABELS.get(step['status'],step['status'])+suffix,flush=True)
             for warning in step['warnings']:
-                print('  待核对：'+warning.get('sku_name','')+'；'+warning['message'],flush=True)
+                prefix='  提示：' if warning.get('code')=='questions_entry_not_found' else '  待核对：'
+                print(prefix+warning.get('sku_name','')+'；'+warning['message'],flush=True)
             for issue in step.get('blocking_issues',[]):
                 print('  阻断项：'+issue.get('sku_name','')+'；'+issue['message'],flush=True)
             if step['status'] in {'partial','interrupted','needs_attention','failed'}:

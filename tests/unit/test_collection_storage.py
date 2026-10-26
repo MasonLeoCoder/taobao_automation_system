@@ -15,6 +15,57 @@ from tests.collection_fixture import create_sources
 
 
 class CollectionStorageTests(unittest.TestCase):
+    def test_diagnostic_stop_reason_is_a_code_and_original_text_is_preserved(self):
+        """中文暂停诊断可转换入库，原件及原始元数据不被改写，其他代码约束仍生效。"""
+        from ecommerce.infrastructure.storage.collection_store import database_values,CollectionDataError
+        from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import build_metadata
+        from ecommerce.infrastructure.storage.collection_codes import stop_reason_fields
+        table=build_metadata().tables['collection_batches']
+        original=self.fixture['records']['reviews']
+        for reason in ('评价含未识别内容结构','Unexpected review content: <section>', '诊断'*50):
+            record=dict(original,status='partial',stop_reason=reason)
+            path=self.fixture['paths']['reviews']
+            path.write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
+            before=path.read_bytes()
+            header,rows=open_snapshot(self.settings,build_snapshot(self.settings,'batch',record,path,module='reviews'))
+            list(rows)
+            values=database_values(table,header['values'])
+            self.assertEqual(values['stop_reason'],'diagnostic_pause')
+            self.assertEqual(values['result_payload']['record']['stop_reason'],reason)
+            self.assertEqual(values['result_payload']['record']['stop_reason_message'],reason)
+            self.assertEqual(values['coverage_status'],'incomplete')
+            self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(stop_reason_fields('limit_reached'),{'stop_reason':'limit_reached'})
+        self.assertEqual(stop_reason_fields(None),{'stop_reason':None})
+        with self.assertRaises(ValueError):stop_reason_fields(3)
+        with self.assertRaises(CollectionDataError):database_values(table,{'module':'中文模块'})
+
+    def test_writer_accepts_legacy_diagnostic_snapshot_without_mutating_its_values(self):
+        """旧快照写入兼容不改原始快照、指纹或其他字段，也不发布部分结果。"""
+        from ecommerce.infrastructure.storage.collection_store import database_values,CollectionDataError
+        from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import build_metadata
+        metadata=build_metadata()
+        reason='评价含未识别内容结构'
+        values={'status':'partial','stop_reason':reason,'coverage_status':'incomplete',
+            'result_payload':{'_fingerprint':'original-sha','record':{'stop_reason':reason,'message':reason}}}
+        before=json.dumps(values,ensure_ascii=False,sort_keys=True)
+        converted=database_values(metadata.tables['collection_batches'],values)
+        self.assertEqual(converted['stop_reason'],'diagnostic_pause')
+        self.assertEqual(converted['result_payload']['record']['stop_reason_message'],reason)
+        self.assertEqual(converted['result_payload']['record']['stop_reason'],reason)
+        self.assertEqual(converted['result_payload']['_fingerprint'],'original-sha')
+        self.assertEqual(converted['coverage_status'],'incomplete')
+        self.assertEqual(json.dumps(values,ensure_ascii=False,sort_keys=True),before)
+        question={'answers_complete':False,'answer_stop_reason':'回答列表发生变化',
+                  'payload':{'answer_stop_reason':'回答列表发生变化','_snapshot_sha':'original-question-sha'}}
+        converted=database_values(metadata.tables['question_observations'],question)
+        self.assertEqual(converted['answer_stop_reason'],'diagnostic_pause')
+        self.assertEqual(converted['payload']['answer_stop_reason_message'],'回答列表发生变化')
+        self.assertEqual(question['answer_stop_reason'],'回答列表发生变化')
+        self.assertEqual(converted['payload']['_snapshot_sha'],'original-question-sha')
+        with self.assertRaises(CollectionDataError):
+            database_values(metadata.tables['collection_batches'],{'status':'中文状态'})
+
     def test_schema_upgrade_excludes_both_platform_resources(self):
         """淘宝资源忙时拒绝结构升级，失败后已取得的其他资源锁正常释放。"""
         from ecommerce.infrastructure.tasks.lock import shop_lock

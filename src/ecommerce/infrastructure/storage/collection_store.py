@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from ecommerce.infrastructure.storage.collection_snapshot import open_snapshot
+from ecommerce.infrastructure.storage.collection_codes import stop_reason_fields
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,safe_error
 from ecommerce.infrastructure.storage.task_store import task_store,fingerprint,database_time,iso_value
 from ecommerce.infrastructure.storage.time_values import database_now
@@ -37,6 +38,23 @@ def database_values(table,values):
     if set(values)-set(table.c.keys()):
         raise CollectionDataError('采集快照含未支持的字段')
     converted=dict(values)
+    # 旧不可变快照可能把诊断文字放进代码列；仅转换这两个指定字段，保留原件和指纹。
+    diagnostic={'collection_batches':('stop_reason','result_payload'),
+                'question_observations':('answer_stop_reason','payload')}.get(table.name)
+    if diagnostic and diagnostic[0] in converted:
+        field,payload_field=diagnostic
+        try:
+            reasons=stop_reason_fields(converted[field],field=field)
+        except ValueError as error:
+            raise CollectionDataError(str(error)) from None
+        converted[field]=reasons[field]
+        if field+'_message' in reasons:
+            payload=dict(converted.get(payload_field) or {})
+            if table.name=='collection_batches':
+                payload['record']={**(payload.get('record') or {}),field+'_message':reasons[field+'_message']}
+            else:
+                payload[field+'_message']=reasons[field+'_message']
+            converted[payload_field]=payload
     for key,value in converted.items():
         column=table.c[key]
         if isinstance(column.type,sa.DateTime):

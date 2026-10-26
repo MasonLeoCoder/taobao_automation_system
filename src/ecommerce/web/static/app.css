@@ -158,3 +158,25 @@ img[data-image-preview-ready]{cursor:zoom-in}
 .catalog-table .actions-heading,.catalog-table .actions-cell{position:sticky;right:0;box-shadow:-1px 0 0 var(--line),-8px 0 12px -10px #172a3855}
 .catalog-table .actions-heading{z-index:3;background:#eef3f1}
 .catalog-table .actions-cell{z-index:2;background:#fff}
+
+/* 采集配置：独立表单、可选模块与可恢复的任务列表。 */
+.collection-workspace{max-width:1120px}.collection-workspace [hidden]{display:none!important}
+.collection-mode-tabs button{border:0;background:transparent;padding:12px 20px;border-radius:8px;color:var(--muted);font:600 14px "Segoe UI","Microsoft YaHei",sans-serif;cursor:pointer}
+.collection-mode-tabs button[aria-selected=true]{background:#e4efea;color:var(--accent)}
+.collection-form fieldset{border:0;padding:0;margin:0;min-width:0}.collection-form h2{margin-top:0}.collection-form .muted{margin-bottom:24px}
+.collection-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.collection-field-wide{grid-column:1/-1}
+.collection-field{display:flex;flex-direction:column;gap:10px;min-width:0;color:#526571;font-size:13px;font-weight:600}
+.collection-field input:not([type=checkbox]),.collection-field select{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid #cbd6d1;border-radius:8px;background:#fcfdfc;color:var(--ink);font:14px "Segoe UI","Microsoft YaHei",sans-serif}
+.collection-field input:disabled,.collection-field select:disabled{background:#f0f3f1;color:#8a9690}.collection-field small,.collection-check small{display:block;font-weight:400;color:var(--muted);font-size:12px;line-height:1.8}
+.collection-check{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink);font-weight:400;cursor:pointer}.collection-check input{width:17px;height:17px;accent-color:var(--accent);flex-shrink:0}
+.collection-detail-switch{margin-top:26px;padding:20px;background:#f3f8f5;border:1px solid #dce9e2;border-radius:9px}.collection-detail-switch small{margin-top:5px}
+.collection-help{font-size:12px;line-height:1.9;color:var(--muted);margin:16px 0}
+.collection-module-heading{display:flex;gap:16px;align-items:center;margin:26px 0 16px;font-size:13px}.collection-module-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.collection-module-grid .collection-check{padding:14px 12px;border:1px solid #dce5df;border-radius:8px}.collection-module-grid .collection-check:has(input:checked){background:#f3f8f5;border-color:#b7cfc2}
+.collection-ranges{margin-top:26px}.collection-submit{display:flex;align-items:center;justify-content:space-between;gap:24px;border-top:1px solid var(--line);padding-top:22px;margin-top:28px}
+.collection-submit strong{font-size:13px}.collection-submit p{font-size:12px;color:var(--muted);line-height:1.9;margin:8px 0 0;overflow-wrap:anywhere}.collection-submit button{flex-shrink:0;min-width:136px;min-height:44px}
+.collection-feedback{font-size:13px;color:var(--accent);line-height:1.8;overflow-wrap:anywhere}.collection-feedback:empty{display:none}
+.collection-recent{margin-top:26px}.collection-recent .section-heading{margin-top:0}.collection-job{border-top:1px solid var(--line);padding:22px 0;overflow-wrap:anywhere}.collection-job:last-child{padding-bottom:0}.collection-job h3{margin:0 0 8px;font-size:15px}.collection-job p{font-size:13px;line-height:1.8;margin:10px 0}.collection-job small{color:var(--muted)}
+.collection-job details{font-size:12px;color:var(--muted);margin:12px 0}.collection-job summary{cursor:pointer;color:var(--accent)}.collection-job details p{max-height:240px;overflow:auto;white-space:pre-wrap}.collection-job .collection-job-configuration{font-size:12px;color:var(--muted)}
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:700px){.collection-form-grid{grid-template-columns:1fr}.collection-module-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.collection-submit{align-items:stretch;flex-direction:column;gap:16px}.collection-mode-tabs button{padding:12px 14px}.collection-recent .section-heading{align-items:flex-start;flex-direction:column;gap:8px}}

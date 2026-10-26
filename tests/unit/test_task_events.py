@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from ecommerce.infrastructure.storage import database
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError
-from ecommerce.infrastructure.tasks.events import EventJournal,TaskEvents,sanitize,notify,current_events,event_session
+from ecommerce.infrastructure.tasks.events import EventJournal,TaskEvents,sanitize,notify,current_events,event_session,pending_task_status
 from ecommerce.infrastructure.tasks.ownership import owner_alive,process_started_at,atomic_json
 from ecommerce.modules.account.taobao_control import request_control
 from ecommerce.shared.config import load_settings
@@ -34,6 +34,73 @@ class MemoryStore:
 
 
 class TaskEventsTests(unittest.TestCase):
+    def test_pending_halt_is_read_only_sanitized_and_scoped_to_task_and_database(self):
+        """未入库中断可显示，但不补写、不挪确认位置，不采用其他任务或库的提示。"""
+        session=TaskEvents(self.settings,self.store,'collection.taobao.detail.open')
+        session.emit('paced','滚动评价列表',state='running')
+        session.journal.drain(self.store)
+        ack=session.journal.ack.read_bytes()
+        session.emit('session_halted','复核评价',state='needs_attention',details={'reason':'入库失败 password=PRIVATE'})
+        before=session.journal.path.read_bytes()
+        status=pending_task_status(self.settings,session.task_id)
+        self.assertEqual(status['state'],'halted');self.assertNotIn('PRIVATE',status['message'])
+        self.assertEqual(status['source'],'local_pending')
+        self.assertEqual(session.journal.path.read_bytes(),before)
+        self.assertEqual(session.journal.ack.read_bytes(),ack)
+        session.emit('storage_resumed','已恢复',state='running')
+        self.assertIsNone(pending_task_status(self.settings,session.task_id))
+        session.journal.drain(self.store)
+        self.assertIsNone(pending_task_status(self.settings,session.task_id))
+        for overrides in ({'task_id':'a'*32},{'database':'another_db'}):
+            session.journal.append({**session.operation('event','session_halted',state='needs_attention'),**overrides})
+            self.assertIsNone(pending_task_status(self.settings,session.task_id))
+        with self.assertRaises(MySQLStorageError):session.journal.drain(self.store)
+
+    def test_pending_halt_blocks_stale_continue_but_allows_explicit_stop(self):
+        """旧人工提示不能恢复已经退出的业务，停止仍使用核实的本地任务入口。"""
+        settings=replace(self.settings,task_backend='mysql')
+        session=TaskEvents(settings,self.store,'collection.taobao.detail.open')
+        atomic_json(session.active_path,session.owner)
+        session.emit('session_halted',state='needs_attention',details={'reason':'入库字段不符合约定'})
+        state_path=session.active_path.with_name(session.task_id+'.state.json')
+        atomic_json(state_path,{'task_id':session.task_id,'prompt_id':'b'*32,'allowed':['继续']})
+        with self.assertRaisesRegex(ValueError,'不能继续'):
+            request_control(settings,'continue',task_id=session.task_id,prompt_id='b'*32)
+        self.assertIn('已发送停止',request_control(settings,'stop',task_id=session.task_id))
+        self.assertTrue(session.journal.pending())
+
+    def test_pending_status_handles_large_tail_and_storage_wait_recovery(self):
+        """大流水只读有界末尾，忽略不完整末条，恢复事件清除旧等待。"""
+        session=TaskEvents(self.settings,self.store,'collection.taobao.detail.open')
+        session.emit('manual_wait','大提示'*100000)
+        session.emit('storage_wait','结果尚未入库',state='needs_attention')
+        self.assertEqual(pending_task_status(self.settings,session.task_id)['state'],'storage_pending')
+        session.emit('storage_resumed','恢复',state='running')
+        self.assertIsNone(pending_task_status(self.settings,session.task_id))
+        with session.journal.path.open('ab') as handle:handle.write(b'{"unfinished":')
+        self.assertIsNone(pending_task_status(self.settings,session.task_id))
+        atomic_json(session.journal.ack,{'offset':session.journal.path.stat().st_size+1})
+        self.assertEqual(pending_task_status(self.settings,session.task_id)['state'],'unverified')
+
+    def test_finished_web_task_keeps_pending_result_notice_after_owner_exits(self):
+        """已停止但结束事件尚未入库时仍显示真实结论，跨库或归属不明不能借用。"""
+        from ecommerce.infrastructure.tasks import web_jobs
+        from ecommerce.infrastructure.tasks.ownership import execution_key
+        from ecommerce.modules.monitoring.service import local_task_alerts
+        settings=replace(self.settings,task_backend='mysql')
+        session=TaskEvents(settings,self.store,'collection.taobao.detail.open')
+        session.append(session.operation('finish','task_finished','用户已停止任务',state='cancelled'))
+        row={**session.owner,'state':'needs_attention','execution_key':execution_key(settings.for_platform('taobao'))}
+        before=session.journal.path.read_bytes()
+        with patch('ecommerce.infrastructure.tasks.ownership.active_local_tasks',return_value=[]),patch.object(
+                web_jobs,'rows',return_value=[row]),patch('ecommerce.infrastructure.tasks.ownership.owner_alive',return_value=False):
+            alerts=local_task_alerts(settings,session.task_id)
+            self.assertEqual(alerts[0]['state'],'finished_pending')
+            self.assertEqual(alerts[0]['message'],'用户已停止任务')
+            row['database']='another_db'
+            self.assertEqual(local_task_alerts(settings,session.task_id),[])
+        self.assertEqual(session.journal.path.read_bytes(),before);self.assertFalse(session.journal.ack.exists())
+
     def test_browser_greenlet_inherits_thread_task_without_cross_thread_leak(self):
         """同步浏览器回调保留任务，嵌套作用域恢复，其他线程及退出后均无关联。"""
         from greenlet import greenlet

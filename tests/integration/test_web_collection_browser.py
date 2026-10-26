@@ -60,6 +60,120 @@ class WebCollectionBrowserTests(unittest.TestCase):
         row=jobs.rows(self.settings)[0];row['state']='running';jobs.save(self.settings,row)
         return row
 
+    def test_keyword_form_dispatches_parameters_once_and_restores_progress(self):
+        """配置关键词任务、重复点击去重，并在刷新后恢复进度；参数：无；返回：无。"""
+        self.page.goto('http://127.0.0.1/modules/collection')
+        self.page.get_by_label('搜索关键词',exact=True).fill('粘毛器')
+        self.page.get_by_label('采集页数',exact=True).fill('3')
+        self.page.get_by_label('不限数量',exact=True).uncheck()
+        self.page.get_by_label('每页最多商品数',exact=True).fill('3')
+        self.page.locator('#collection-with-details').check()
+        expect(self.page.locator('#collection-request-summary')).to_contain_text('每页最多 3 个商品')
+        expect(self.page.locator('#collection-detail-order')).to_be_visible()
+        submit=self.page.get_by_role('button',name='开始采集',exact=True)
+        expect(submit).to_be_enabled()
+        submit.evaluate('(button) => {button.click();button.click();}')
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('关键词“粘毛器”')
+        self.assertEqual(len(jobs.rows(self.settings)),1)
+        row=jobs.rows(self.settings)[0]
+        self.assertEqual(row['options'],{'mode':'keyword','keyword':'粘毛器','pages':3,'limit':3,'with_details':True})
+        row.update(state='running',progress={'current_page':2,'completed_page_count':1,'collected_count':3,'detail_completed_count':2})
+        jobs.save(self.settings,row)
+        self.page.reload()
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('已保存 1/3 页',timeout=7000)
+        expect(self.page.locator('#collection-job-list')).to_contain_text('详情完成 2 个商品')
+        expect(self.page.locator('#collection-submit')).to_be_disabled()
+        row.update(state='succeeded',message='已保存结果；'+('详细说明；'*40),result={'batch_id':20,'valid':True})
+        jobs.save(self.settings,row)
+        expect(self.page.locator('#collection-submit')).to_be_enabled(timeout=7000)
+        result=self.page.locator('#collection-job-list').get_by_role('link',name='查看采集结果',exact=True)
+        expect(result).to_have_attribute('href','/collections/searches/'+row['id'])
+        expect(self.page.locator('#collection-job-list details')).not_to_have_attribute('open','')
+        self.assertIn('每页最多 3 个商品',self.page.locator('#collection-job-list').inner_text())
+        self.assertEqual(self.errors,[])
+
+    def test_detail_form_selects_modules_independent_ranges_and_new_product(self):
+        """新商品无需历史记录，模块和数量范围按配置派发；参数：无；返回：无。"""
+        self.page.goto('http://127.0.0.1/modules/collection')
+        self.page.get_by_role('tab',name='商品详情采集',exact=True).click()
+        self.page.get_by_label('商品 ID／链接',exact=True).fill('456')
+        expect(self.page.locator('#collection-keyword')).to_be_disabled()
+        self.page.get_by_role('button',name='取消全选',exact=True).click()
+        self.page.get_by_role('button',name='开始采集',exact=True).click()
+        expect(self.page.locator('#collection-submit-status')).to_contain_text('至少选择一个')
+        self.assertEqual(jobs.rows(self.settings),[])
+        expect(self.page.get_by_label('评价数量范围',exact=True)).to_be_disabled()
+        self.page.get_by_label('评价明细',exact=True).check()
+        self.page.get_by_label('问大家',exact=True).check()
+        self.page.get_by_label('评价数量范围',exact=True).select_option('all')
+        self.page.get_by_role('button',name='开始采集',exact=True).click()
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('商品 456')
+        row=jobs.rows(self.settings)[0]
+        self.assertEqual(row['modules'],['reviews','questions'])
+        self.assertTrue(row['options']['all_reviews']);self.assertFalse(row['options']['all_questions'])
+        self.assertEqual(self.errors,[])
+
+    def test_keyword_manual_feedback_uses_current_task_and_global_controls(self):
+        """关键词登录提示在其他页面仍可恢复并明确继续；参数：无；返回：无。"""
+        self.page.goto('http://127.0.0.1/modules/collection')
+        self.page.get_by_label('搜索关键词',exact=True).fill('测试')
+        self.page.get_by_role('button',name='开始采集',exact=True).click()
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('关键词“测试”')
+        row=jobs.rows(self.settings)[0];row['state']='running';jobs.save(self.settings,row);self.publish(row)
+        self.page.goto('http://127.0.0.1/tasks')
+        modal=self.page.locator('#collection-attention')
+        expect(modal).to_be_visible(timeout=7000)
+        expect(modal).to_contain_text('关键词“测试”')
+        modal.get_by_role('button',name='继续',exact=True).click()
+        expect(modal).not_to_be_visible()
+        path=self.settings.workspace/'storage/task_controls'/f"{row['id']}.json"
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8')),{'action':'continue','prompt_id':'b'*32})
+        self.assertEqual(self.errors,[])
+
+    def test_recollect_link_prefills_product_and_module_and_mobile_layout_fits(self):
+        """重新采集带入当前商品和模块，窄屏不出现整页溢出；参数：无；返回：无。"""
+        self.page.goto('http://127.0.0.1/collections/products/123?module=video')
+        self.page.get_by_role('link',name='重新采集／配置采集范围 →',exact=True).click()
+        expect(self.page.get_by_label('商品 ID／链接',exact=True)).to_have_value('123')
+        expect(self.page.locator('[name="modules"]:checked')).to_have_count(1)
+        expect(self.page.get_by_label('视频',exact=True)).to_be_checked()
+        self.page.set_viewport_size({'width':390,'height':844})
+        self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
+        self.assertEqual(self.errors,[])
+
+    def test_configuration_history_failure_prevents_submission(self):
+        """状态不可核实时禁止派发并显示明确错误；参数：无；返回：无。"""
+        self.page.route('**/api/collection-jobs',lambda route:route.fulfill(status=503,json={'error':'数据库暂不可用'}))
+        self.page.goto('http://127.0.0.1/modules/collection')
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('数据库暂不可用')
+        expect(self.page.locator('#collection-submit')).to_be_disabled()
+        self.assertEqual(jobs.rows(self.settings),[])
+        self.assertEqual(self.errors,[])
+
+    def test_skipped_questions_close_task_without_attention_or_successful_data_claim(self):
+        """页面区分入口跳过和采集成功，刷新后正常收尾可重新发起；参数：无；返回：无。"""
+        from ecommerce.modules.collection import web_collection as service
+        self.page.goto('http://127.0.0.1/modules/collection?mode=detail&input=123&modules=questions')
+        self.page.get_by_role('button',name='开始采集',exact=True).click()
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('商品 123')
+        row=jobs.rows(self.settings)[0]
+        record={'status':'skipped','stop_reason':'entry_not_found','message':'未找到问大家入口，已跳过',
+            'entry_search':{'scroll_count':3,'max_scrolls':10,'unchanged_count':3,'stop_reason':'stable_position'}}
+        self.fixture.put('collection_runs',id=90,task_id=row['id'],product_id=1,started_at=self.fixture.now,status='complete_with_warnings')
+        self.fixture.put('collection_steps',id=90,run_id=90,module='questions',requested=True,status='skipped',
+                         continuation_allowed=True,finished_at=self.fixture.now,payload={'record':record})
+        row.update(state='succeeded',message='详情采集结束（含跳过项目）',result=service.saved_result(self.settings,row))
+        jobs.save(self.settings,row)
+        expect(self.page.locator('#collection-job-list')).to_contain_text('已结束（含跳过项目）',timeout=7000)
+        expect(self.page.locator('#collection-submit')).to_be_enabled()
+        expect(self.page.locator('#collection-attention')).not_to_be_visible()
+        self.page.goto('http://127.0.0.1/collections/products/123')
+        card=self.page.locator('[data-collection-module="questions"]')
+        expect(card).to_contain_text('已跳过',timeout=7000)
+        expect(card).to_contain_text('未找到问大家入口')
+        expect(card.get_by_role('button',name='重新采集',exact=True)).to_be_enabled()
+        self.assertEqual(self.errors,[])
+
     def publish(self,row,prompt='b'*32,allowed=None):
         """模拟守卫人工提示；参数：派发、提示编号、允许值；返回：无。"""
         atomic_json(self.settings.workspace/'storage/task_controls'/f"{row['id']}.state.json",
@@ -129,6 +243,48 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(video.get_by_role('link',name='查看本次采集尝试')).to_be_visible(timeout=7000)
         expect(video.get_by_role('button',name='重新采集')).to_be_enabled()
         expect(video).to_contain_text('仅保存部分资料')
+        self.assertEqual(self.errors,[])
+
+    def test_pending_halt_displays_real_reason_in_collection_and_logs_without_continue(self):
+        """未入库中断在采集栏和日志页可见，停止前保持资源占用且不展示继续。"""
+        from ecommerce.infrastructure.tasks.events import EventJournal
+        row=self.launch()
+        journal=EventJournal(self.settings,row['id'])
+        journal.append({'op':'event','task_id':row['id'],'database':self.settings.mysql.database,
+            'event_type':'session_halted','state':'needs_attention','step':'复核评价',
+            'details':{'reason':'采集停止原因字段校验失败'}})
+        original=journal.path.read_bytes()
+        self.page.reload()
+        bar=self.page.locator('#collection-task-bar')
+        expect(bar).to_contain_text('采集已中断',timeout=7000)
+        expect(bar).to_contain_text('采集停止原因字段校验失败')
+        expect(bar.get_by_role('button',name='停止采集')).to_be_visible()
+        expect(self.page.locator('#collection-attention')).not_to_be_visible()
+        expect(self.page.get_by_role('button',name='继续',exact=True)).to_have_count(0)
+        self.page.goto('http://127.0.0.1/logs?task_id='+row['id'])
+        notice=self.page.locator('[data-local-task-alert]')
+        expect(notice).to_contain_text('采集已中断');expect(notice).to_contain_text('采集停止原因字段校验失败')
+        self.assertEqual(journal.path.read_bytes(),original);self.assertFalse(journal.ack.exists())
+        self.assertEqual(self.errors,[])
+
+    def test_halted_bulk_task_keeps_completed_module_label_and_marks_only_current_module(self):
+        """多模块任务中断不改写已完成模块的显示，当前模块仍显示中断原因。"""
+        from ecommerce.infrastructure.tasks.events import EventJournal
+        from ecommerce.modules.collection.web_collection import start_configured
+        job=start_configured(self.settings,{'mode':'detail','input':'123','modules':['video','questions']})
+        row=jobs.read(self.settings,job['id'])
+        row.update(state='running',progress={'current_module':'questions','started_modules':['video','questions'],
+            'results':[{'module':'video','valid':True,'batch_id':20,'label':'查看资料'}]})
+        jobs.save(self.settings,row)
+        journal=EventJournal(self.settings,row['id'])
+        journal.append({'op':'event','task_id':row['id'],'database':self.settings.mysql.database,
+            'event_type':'session_halted','state':'needs_attention','details':{'reason':'保存问答失败'}})
+        self.page.goto('http://127.0.0.1/collections/products/123')
+        video=self.page.locator('[data-collection-module="video"] .module-job-status')
+        questions=self.page.locator('[data-collection-module="questions"] .module-job-status')
+        expect(video).to_contain_text('采集完成',timeout=7000)
+        expect(video).not_to_contain_text('中断')
+        expect(questions).to_contain_text('采集已中断');expect(questions).to_contain_text('保存问答失败')
         self.assertEqual(self.errors,[])
 
     def test_basic_info_button_dispatches_separately_and_refresh_displays_own_data(self):

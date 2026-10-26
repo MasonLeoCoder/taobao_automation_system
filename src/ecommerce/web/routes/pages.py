@@ -1,6 +1,6 @@
 """页面路由与只读状态接口。"""
 from flask import Blueprint, abort, current_app, jsonify, render_template,request, send_file
-from ecommerce.modules.monitoring.service import overview, task_history
+from ecommerce.modules.monitoring.service import overview, task_history, local_task_alerts
 from ecommerce.shared.features import FEATURES
 
 pages = Blueprint("pages", __name__)
@@ -30,6 +30,11 @@ def module(key: str):
     feature = next((item for item in FEATURES if item["key"] == key), None)
     if feature is None:
         abort(404)
+    if key=='collection':
+        from ecommerce.modules.collection.web_collection import MODULES
+        settings=current_app.config['SETTINGS']
+        return render_template('collection_start.html',active=key,features=FEATURES,shop_name=settings.shop_name,
+            modules=MODULES,enabled=settings.task_backend=='mysql' and settings.collection_backend=='mysql')
     return render_template("module.html", active=key, feature=feature, **overview(current_app.config["SETTINGS"]))
 
 
@@ -83,7 +88,8 @@ def logs():
     from ecommerce.web.presentation import present_log_event
     data['events']=[present_log_event(event) for event in data['events']]
     return render_template('logs.html',active='logs',features=FEATURES,
-                           shop_name=current_app.config['SETTINGS'].shop_name,time_filters=filters,pagination=data,**data)
+                           shop_name=current_app.config['SETTINGS'].shop_name,time_filters=filters,pagination=data,
+                           runtime_alerts=local_task_alerts(current_app.config['SETTINGS'],request.args.get('task_id') or None),**data)
 
 
 def log_time_filters():

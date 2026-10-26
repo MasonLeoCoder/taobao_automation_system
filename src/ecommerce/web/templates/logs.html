@@ -4,6 +4,12 @@
 {% block title %}运行日志{% endblock %}{% block breadcrumb %}运行日志{% endblock %}
 {% block content %}
 {% if request.args.get('return_to') %}<p class="back-link"><a class="button action-button action-neutral" href="{{ safe_return(request.args.get('return_to')) }}">← 返回来源页面</a></p>{% endif %}<section class="intro"><div><p class="eyebrow">TASK EVENTS</p><h1>运行过程，可查询。</h1><p>按任务、级别和时间查看历史，快速找到需要关注的记录。</p></div></section>
+{% for alert in runtime_alerts %}<section class="panel" role="alert" data-local-task-alert>
+<h2>{{ '采集已中断，浏览器仅保留现场' if alert.state == 'halted' else '任务已结束，结果待入库' if alert.state == 'finished_pending' else '任务状态待核对' if alert.state == 'unverified' else '采集结果等待入库' }}</h2>
+<p>任务 {{ alert.task_id }}{% if alert.step %} · {{ alert.step }}{% endif %}</p>
+<p>{{ alert.message }}</p>
+<p>以上是本机任务提示。下方为已入库历史日志，最后一条“操作间隔等待”不代表当前仍在等待。{{ '请停止当前任务后重新发起；已有记录和待入库流水保留。' if alert.state == 'halted' else '已有记录及待入库流水保留；重新发起前，系统会按既有恢复流程核对待入库结果。' if alert.state == 'finished_pending' else '请核对本地任务状态；可发送停止，不能直接继续或确认。' if alert.state == 'unverified' else '可等待数据库恢复或停止任务，不能用继续跳过入库确认。' }}</p>
+</section>{% endfor %}
 <form method="get" action="{{ url_for('pages.logs') }}" class="event-filter-panel" aria-labelledby="log-filter-title">
 {% if sort_spec is defined %}<input type="hidden" name="sort" value="{{ sort_spec.sort }}"><input type="hidden" name="order" value="{{ sort_spec.order }}">{% endif %}
   {% if request.args.get('return_to') %}<input type="hidden" name="return_to" value="{{ safe_return(request.args.get('return_to')) }}">{% endif %}<div class="event-filter-heading"><h2 id="log-filter-title">筛选日志</h2><span class="timezone-label">北京时间 · UTC+08:00</span></div>

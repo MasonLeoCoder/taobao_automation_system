@@ -1,5 +1,6 @@
 """问大家：默认50题，逐题收齐页面可提供的回答，逐批保存并整批发布。"""
 from ecommerce.infrastructure.tasks.events import notify as print
+from ecommerce.infrastructure.storage.collection_codes import stop_reason_fields
 import csv
 import hashlib
 import json
@@ -92,6 +93,7 @@ class QuestionStore:
 
     def complete(self, key, reason):
         value = self.get(key)
+        value.pop('answer_stop_reason_message',None)
         value.update(answers_complete=True, answer_stop_reason=reason)
         with self.db:
             self.db.execute('UPDATE questions SET payload=? WHERE question_key=?', (compact(value), key))
@@ -99,7 +101,7 @@ class QuestionStore:
     def invalidate(self, key, reason):
         value = self.get(key)
         if value:
-            value.update(answers_complete=False, answer_stop_reason=reason)
+            value.update(answers_complete=False, **stop_reason_fields(reason,field='answer_stop_reason'))
             with self.db:
                 self.db.execute('UPDATE questions SET payload=? WHERE question_key=?', (compact(value), key))
 
@@ -308,6 +310,21 @@ def collect_questions(settings, result, *, all_questions=False, stable_ms=500, m
         raise RuntimeError('问大家采集必须在淘宝守卫中运行')
     if type(all_questions) is not bool:
         raise ValueError('全部问题参数必须是布尔值')
+    # 在创建问答批次前完成入口寻找，跳过不能产生零条成功结果或覆盖旧资料。
+    while True:
+        guard.checkpoint('打开并核对问大家')
+        try:
+            entry=ensure_questions_open(result,settings.timeout_ms)
+            break
+        except ValueError as error:
+            guard.request_attention(result.page,str(error)+'；请恢复当前商品后回复继续',step='复核问大家入口')
+    if entry and entry.get('status')=='skipped':
+        from ecommerce.infrastructure.tasks.events import emit_event
+        emit_event('collection_module_skipped',entry['message'],details={
+            'module':'questions','product_id':result.target.item_id,'reason':'entry_not_found','entry_search':entry['entry_search']})
+        log.info(entry['message'])
+        return {**entry,'product_id':result.target.item_id,'task_id':guard.task_id,
+                'warnings':[{'code':'questions_entry_not_found','message':entry['message']}]}
     item_id, limit = result.target.item_id, None if all_questions else 50
     product_dir = product_directory(settings, item_id)
     batch_id = guard.task_id + '-' + uuid4().hex[:8]
@@ -337,7 +354,7 @@ def collect_questions(settings, result, *, all_questions=False, stable_ms=500, m
     def record(status, reason, *, end=False):
         completed = sum(json.loads(r[0])['answers_complete'] for r in store.db.execute('SELECT payload FROM questions'))
         display_count = parse_display_count(current.get('count_raw'))
-        return {**base, 'status': status, 'stop_reason': reason, 'captured_at': now(), 'collected_count': store.count,
+        return {**base, 'status': status, **stop_reason_fields(reason), 'captured_at': now(), 'collected_count': store.count,
                 'answer_count': store.answer_count, 'completed_question_count': completed, 'end_confirmed': end,
                 'question_count_display': display_count, 'question_count_difference': None if display_count['value'] is None else display_count['value'] - store.count,
                 'last_attention_reason': last_attention_reason, 'filter': '全部', 'title_count_is_reference_only': True,
@@ -391,13 +408,6 @@ def collect_questions(settings, result, *, all_questions=False, stable_ms=500, m
             pause(str(error))
 
     try:
-        while True:
-            guard.checkpoint('打开并核对问大家')
-            try:
-                ensure_questions_open(result, settings.timeout_ms)
-                break
-            except ValueError as error:
-                pause(str(error))
         current = snapshot()
         selection_confirmed = True
         while True:

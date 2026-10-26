@@ -565,6 +565,34 @@ class TaobaoDetailReviewsBrowserTests(unittest.TestCase):
             self.collect(lambda message: '停止')
         self.assertEqual(self.document()['reviews']['batch_id'], first['batch_id'])
 
+    def test_unknown_structure_pause_exports_database_safe_reason_and_preserves_saved_reviews(self):
+        """真实页面解析触发人工处理时，诊断快照通过字段校验且不替换已完成资料。"""
+        from ecommerce.infrastructure.storage.collection_snapshot import open_snapshot
+        from ecommerce.infrastructure.storage.collection_store import database_values
+        from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import build_metadata
+        from ecommerce.modules.collection.database_records import build_snapshot
+        first=self.collect()
+        self.reload(drawer(review(1)+review(2,extra='<div>未识别的追加内容</div>')))
+        checked=[]
+        def attention(message):
+            document=self.document();last=document['reviews_last_attempt']
+            self.assertEqual(last['stop_reason'],'diagnostic_pause')
+            self.assertIn('未识别',last['stop_reason_message']);self.assertEqual(last['collected_count'],1)
+            self.assertEqual(document['reviews']['batch_id'],first['batch_id'])
+            path=product_directory(self.settings,ITEM_ID)/last['history_record_file']
+            header,rows=open_snapshot(self.settings,build_snapshot(self.settings,'batch',last,path,module='reviews'))
+            metadata=build_metadata()
+            database_values(metadata.tables['collection_batches'],header['values'])
+            observations=[]
+            for row in rows:
+                database_values(metadata.tables[row['table']],row['values'])
+                if row['table']=='review_observations':observations.append(row)
+            self.assertEqual(len(observations),1);checked.append(message)
+            return '停止'
+        with self.assertRaises(TaskStopped):self.collect(attention)
+        self.assertEqual(len(checked),1)
+        self.assertEqual(self.document()['reviews']['batch_id'],first['batch_id'])
+
     def test_wrong_filter_requires_explicit_manual_restore(self):
         self.reload(drawer(review(1), selected='有图'))
         prompts = []

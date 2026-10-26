@@ -252,6 +252,23 @@ def _browse(c, tables, view, **o):
             result['search_pages']=result.pop('pages')
             result.update(search_observations(c,tables,rows,o))
         return result
+    if view=='module_skip':
+        # 只接受同一任务、商品的最新问答步骤，旧运行和本地进度不能替代数据库证据。
+        if not re.fullmatch(r'[a-f0-9]{32}',o.get('task_id','')) or not re.fullmatch(r'[1-9][0-9]{0,24}',o.get('product_id','')):
+            raise ValueError('模块跳过查询的任务或商品编号无效')
+        runs,steps=tables['collection_runs'],tables['collection_steps']
+        latest=c.execute(sa.select(steps).join(runs,runs.c.id==steps.c.run_id).join(p,p.c.id==runs.c.product_id).where(
+            runs.c.task_id==o['task_id'],p.c.platform=='taobao',p.c.platform_product_id==o['product_id'],
+            steps.c.module=='questions',steps.c.requested.is_(True)).order_by(runs.c.started_at.desc(),runs.c.id.desc(),steps.c.id.desc()).limit(1)).mappings().first()
+        record=((latest or {}).get('payload') or {}).get('record') or {}
+        search=record.get('entry_search') or {}
+        confirmed=bool(latest and latest['status']=='skipped' and latest['continuation_allowed'] and latest['finished_at']
+            and record.get('status')=='skipped' and record.get('stop_reason')=='entry_not_found'
+            and search.get('max_scrolls')==10 and type(search.get('scroll_count')) is int and 0<=search['scroll_count']<=10
+            and (search.get('stop_reason')=='scroll_limit_reached' and search['scroll_count']==10
+                 or search.get('stop_reason')=='stable_position' and type(search.get('unchanged_count')) is int and search['unchanged_count']>=3))
+        return {'skipped':confirmed,'reason':'entry_not_found' if confirmed else None,
+                'message':record.get('message') if confirmed else None}
     if view == 'product':
         product_id = o['product_id']
         if not re.fullmatch(r'[0-9]{1,25}', product_id) or int(product_id) == 0:

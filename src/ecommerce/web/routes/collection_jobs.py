@@ -1,4 +1,4 @@
-"""本机单模块及剩余模块采集的短请求接口；不在请求中执行浏览器操作。"""
+"""本机关键词、详情及补采的短请求接口；不在请求中执行浏览器操作。"""
 import secrets
 from urllib.parse import urlsplit
 
@@ -39,14 +39,50 @@ def missing(error):
 
 def present(state):
     """补充站内结果和日志链接；参数：公开状态；返回：页面所需状态。"""
-    state['product_url']=url_for('pages.collection_product',product_id=state['product_id'])
-    state['result_url']=url_for('pages.collection_product',product_id=state['product_id'],batch=state['batch_id']) if state['batch_id'] else None
+    state['product_url']=url_for('pages.collection_product',product_id=state['product_id']) if state['product_id'] else None
+    if state.get('mode')=='detail' and not any(item.get('batch_id') for item in state.get('results',[])):
+        state['product_url']=None
+    state['result_url']=url_for('pages.collection_product',product_id=state['product_id'],batch=state['batch_id']) if state['batch_id'] and state['product_id'] else None
     state['logs_url']=url_for('pages.logs',task_id=state['id'])
-    if state.get('mode')=='remaining':
+    state['status_url']=url_for('collection_jobs.job_status',identifier=state['id'])
+    if state.get('mode') in {'remaining','detail'}:
         state['result_url']=state['product_url']
+    if state.get('mode')=='keyword' and (state['batch_id'] or state.get('progress',{}).get('completed_page_count')):
+        state['result_url']=url_for('pages.collection_search',task_id=state['id'])
     for item in state.get('results',[]):
         item['result_url']=url_for('pages.collection_product',product_id=state['product_id'],batch=item['batch_id']) if item['batch_id'] else None
     return state
+
+
+def configured_job(identifier):
+    """读取当前执行配置内的任务；参数：派发编号；返回：经归属核验的派发。"""
+    settings=current_app.config['SETTINGS']
+    return service.get_job(settings,identifier)
+
+
+@collection_jobs.get('/api/collection-jobs')
+def history():
+    """恢复配置页最近任务；参数：无；返回：公开状态。"""
+    return jsonify(jobs=[present(state) for state in service.history(current_app.config['SETTINGS'])])
+
+
+@collection_jobs.post('/api/collection-jobs')
+def create():
+    """派发关键词或任意商品采集；参数：JSON配置；返回：202任务描述。"""
+    return jsonify(present(service.start_configured(current_app.config['SETTINGS'],request.get_json()))),202
+
+
+@collection_jobs.get('/api/collection-jobs/<identifier>')
+def job_status(identifier):
+    """查询本执行配置的任务；参数：编号；返回：公开状态。"""
+    return jsonify(present(service.public_status(current_app.config['SETTINGS'],configured_job(identifier))))
+
+
+@collection_jobs.post('/api/collection-jobs/<identifier>/control')
+def job_control(identifier):
+    """将人工反馈送至指定任务；参数：编号、指令；返回：接收说明。"""
+    row=configured_job(identifier)
+    return control(row['product_id'],identifier)
 
 
 @collection_jobs.get('/api/collection-jobs/active')

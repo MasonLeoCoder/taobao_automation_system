@@ -191,7 +191,7 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
             "product_ids": [item.get('product_id') for item in items], "image_downloads": image_downloads, "empty": not items}
 
 
-def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_attention=None, with_details=False):
+def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_attention=None, with_details=False, on_login_required=None, on_progress=None):
     """逐页采集并保留每页结果；参数：配置、词、每页上限、页数、保留窗口及人工回调；返回：汇总。"""
     from ecommerce.platforms.taobao.cards import validate_limit
     from ecommerce.platforms.taobao.pagination import validate_pages, advance_next_page
@@ -231,7 +231,7 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
         return destination
 
     with browser_session(settings, on_attention=on_attention) as (context, home):
-        home = authenticate(context, home, settings)
+        home = authenticate(context, home, settings,**({'on_login_required':on_login_required} if on_login_required else {}))
         result = open_search(context, home, keyword, settings.timeout_ms)
         guard = active_guard()
         emit_event('list_collection_requested', '开始逐页采集', details={'requested_page_count': pages, 'per_page_limit': limit})
@@ -239,9 +239,13 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
         reason = 'requested_pages_reached'
         try:
             for number in range(1, pages + 1):
+                if on_progress:
+                    on_progress({'current_page':number,'current_product':None,'current_module':None})
                 collected = collect_from_search(settings, context, result, limit=limit, page_number=number,
                                                 requested_pages=pages, pagination_evidence=arrival)
                 completed.append(collected)
+                if on_progress:
+                    on_progress({'completed_page_count':len(completed),'collected_count':sum(item['collected_count'] for item in completed)})
                 emit_event('list_page_saved', '当前页批次已保存并确认入库', details={key: collected[key] for key in ('page_number', 'source_batch_key', 'collected_count')})
                 print(collected['message'], flush=True)
                 if collected['empty']:
@@ -249,7 +253,8 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
                     break
                 if with_details:
                     from ecommerce.modules.collection.search_details import collect_page_details
-                    collect_page_details(settings,context,result,collected,detail_seen,detail_attempts)
+                    collect_page_details(settings,context,result,collected,detail_seen,detail_attempts,
+                                         **({'on_progress':on_progress} if on_progress else {}))
                 if number == pages:
                     break
                 next_result, arrival = advance_next_page(result, number, settings.timeout_ms)

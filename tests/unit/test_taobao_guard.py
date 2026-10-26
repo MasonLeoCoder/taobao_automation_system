@@ -17,6 +17,16 @@ from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 
 
 class TaobaoGuardTests(unittest.TestCase):
+    def test_halted_state_has_no_continue_prompt_and_keeps_sanitized_reason(self):
+        """业务退出发布保留现场标记，清除旧提示，网页不能把它当成可继续的暂停。"""
+        with self.guard() as guard,patch('builtins.print'):
+            guard._prompt_id='b'*32;guard._prompt_allowed={'继续'}
+            self.page.is_closed.return_value=True
+            guard.hold_without_input(reason='入库失败 password=PRIVATE')
+            state=json.loads(guard.control_state_path.read_text(encoding='utf-8'))
+            self.assertTrue(state['halted']);self.assertIsNone(state['prompt_id']);self.assertEqual(state['allowed'],[])
+            self.assertNotIn('PRIVATE',state['message']);self.assertIn('入库失败',state['message'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

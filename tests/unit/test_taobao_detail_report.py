@@ -36,6 +36,23 @@ def sku_result(folder,*,bad=None):
 
 
 class DetailReportTests(unittest.TestCase):
+    def test_missing_question_entry_finishes_with_explicit_skip_and_no_module_record(self):
+        """入口跳过写入汇总且允许任务结束，不伪造零条问答批次；参数：无；返回：无。"""
+        value={'status':'skipped','stop_reason':'entry_not_found','message':'未找到问大家入口，已跳过',
+               'entry_search':{'scroll_count':10,'max_scrolls':10,'unchanged_count':0,'stop_reason':'scroll_limit_reached'},
+               'warnings':[{'code':'questions_entry_not_found','message':'未找到问大家入口，已跳过'}]}
+        with ExitStack() as stack:
+            self.setup_service(stack)
+            collect=stack.enter_context(patch('ecommerce.modules.collection.detail_questions.collect_questions',return_value=value))
+            message=detail_service.open_detail_input(self.settings,ITEM_ID,wait=False,questions=True)
+        collect.assert_called_once()
+        report=self.report();step=next(s for s in report['steps'] if s['name']=='questions')
+        self.assertEqual(step['status'],'skipped');self.assertTrue(step['continuation_allowed'])
+        self.assertEqual(step['entry_search']['scroll_count'],10)
+        self.assertEqual(report['status'],'complete_with_warnings')
+        self.assertIn('含跳过',message)
+        self.assertFalse(list(self.folder.rglob('questions.json')))
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.settings=replace(load_settings(root=Path(self.temp.name)).for_platform('taobao'),headless=True)

@@ -38,7 +38,7 @@ def parser() -> argparse.ArgumentParser:
     detail.add_argument("--input", required=True, help="纯数字商品 ID，或完整淘宝/天猫详情链接")
     detail.add_argument("--basic-info", action="store_true", help="独立采集标题、店铺、详情销量及页面展示价格，不遍历SKU")
     detail.add_argument("--video", action="store_true", help="采集并下载主图区域的视频；无视频则返回无视频并跳过")
-    detail.add_argument("--main-images", action="store_true", help="直接读取页面主图列表，按实际数量和顺序保存至 1-1主图；同来源未完成批次可补采")
+    detail.add_argument("--main-images", action="store_true", help="读取缩略图DOM图片，按完整地址去重、依次编号保存至 1-1主图；同来源未完成批次可补采")
     detail.add_argument("--skus", action="store_true", help="只采集规格组合、逐项SKU价格及图片，图片按规格名称保存至 sku图")
     detail.add_argument("--parameters", action="store_true", help="动态读取参数信息，保留完整原文、同名项和原始HTML")
     detail.add_argument("--detail-images", action="store_true", help="按图文详情顺序下载全部图片，数字编号保存至商品目录的详情图")

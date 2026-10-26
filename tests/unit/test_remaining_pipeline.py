@@ -33,7 +33,7 @@ class RemainingPipelineTests(unittest.TestCase):
         self.module=SimpleNamespace(collect_main_video=collect('video'),collect_skus=collect('skus'),collect_questions=collect('questions'),
                                      sku_continuation_allowed=lambda value:value['status']=='complete')
 
-    def run_pipeline(self):
+    def run_pipeline(self,**options):
         """执行三个选中模块，其他六项不请求；参数：无；返回：真实汇总结果。"""
         with patch('ecommerce.modules.collection.detail_service.active_guard',return_value=self.guard),patch(
                 'ecommerce.modules.collection.detail_service.inspect_detail_entry',return_value=self.detail),patch(
@@ -41,7 +41,19 @@ class RemainingPipelineTests(unittest.TestCase):
                 'ecommerce.modules.collection.detail_service.import_module',return_value=self.module):
             return collect_detail_page(self.settings,object(),self.detail,basic_info=False,video=True,main_images=False,
                 skus=True,parameters=False,detail_images=False,review_summary=False,reviews=False,questions=True,
-                on_module_event=lambda module,stage:self.events.append((module,stage)))
+                on_module_event=lambda module,stage:self.events.append((module,stage)),**options)
+
+    def test_question_limit_is_independent_and_legacy_all_remains_compatible(self):
+        """明确问题选项覆盖旧共用开关，省略时保留CLI兼容；参数：无；返回：无。"""
+        seen=[]
+        def questions(settings,result,**options):
+            seen.append(options['all_questions'])
+            return {'status':'complete','message':'问答完成','record_path':str(self.settings.workspace/'fixture.json')}
+        self.module.collect_questions=questions
+        self.run_pipeline(all_reviews=True,all_questions=False)
+        self.run_pipeline(all_reviews=False,all_questions=True)
+        self.run_pipeline(all_reviews=True)
+        self.assertEqual(seen,[False,True,True])
 
     def test_only_selected_modules_run_and_finished_progress_follows_storage_checkpoint(self):
         result=self.run_pipeline()

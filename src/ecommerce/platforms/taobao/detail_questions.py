@@ -150,9 +150,16 @@ def wait_snapshot(result, timeout_ms, *, stable_ms=500, changed_from=None):
 
 
 def ensure_questions_open(result, timeout_ms):
+    """寻找并打开问答；参数：商品页面、超时；返回：正常为空，入口缺失返回跳过依据。"""
     guard, page, item_id = active_guard(), result.page, result.target.item_id
+    def inspect():
+        """确认页面及问答结构仍可识别；参数：无；返回：当前快照。"""
+        snapshot=read_questions(page,item_id)
+        if snapshot.get('state')=='unrecognized_structure':
+            raise ValueError(snapshot.get('reason') or '问大家结构未确认')
+        return snapshot
     guard.checkpoint('准备打开问大家')
-    value = read_questions(page, item_id)
+    value = inspect()
     if value['panel_present'] or value.get('empty_text'):
         return
     # 支持在 --reviews 后串行执行；只关闭已识别的评价侧栏。
@@ -165,13 +172,16 @@ def ensure_questions_open(result, timeout_ms):
         guard.perform('关闭评价侧栏后进入问大家', lambda: close.click(timeout=min(timeout_ms, 5000)), completed=lambda: reviews.count() == 0)
     button = page.locator(PREVIEW).get_by_text('查看全部问答', exact=True)
     # 刚打开详情时下方模块尚未挂载。以普通页面滚动触发懒加载；入口出现即停止。
-    # 滚动保护上限和稳定底部均只表示需要人工检查，不能推断为无问答。
-    unchanged = 0
-    for _ in range(50):
-        value = read_questions(page, item_id)
+    # 仅入口缺失可以跳过；页面、验证和结构错误仍由原守卫处理。
+    unchanged = scroll_count = 0
+    for _ in range(10):
+        value = inspect()
         if value.get('empty_text') or value['panel_present']:
             return
-        if button.count() == 1:
+        count=button.count()
+        if count>1:
+            raise ValueError('查看全部问答入口不唯一')
+        if count==1:
             break
         guard.pause_between('scroll')
         before = page.evaluate('()=>[scrollY,document.documentElement.scrollHeight,innerHeight]')
@@ -180,13 +190,26 @@ def ensure_questions_open(result, timeout_ms):
                 raise ValueError('寻找问大家入口时目标商品发生变化')
             page.evaluate('()=>window.scrollBy(0,Math.max(80,innerHeight*0.75))')
         guard.perform('分段滚动加载问大家入口', scroll)
+        scroll_count += 1
         guard.wait(min(timeout_ms, 500))
         after = page.evaluate('()=>[scrollY,document.documentElement.scrollHeight,innerHeight]')
         unchanged = unchanged + 1 if before == after else 0
         if unchanged >= 3:
             break
-    if button.count() != 1:
-        raise ValueError('查看全部问答入口尚未确认')
+    # 最后一次滚动可能刚挂载入口或明确空态，必须再读一次。
+    guard.checkpoint('复核问大家入口寻找结果')
+    value=inspect()
+    if value.get('empty_text') or value['panel_present']:
+        return
+    count=button.count()
+    if count>1:
+        raise ValueError('查看全部问答入口不唯一')
+    if count==0:
+        search={'scroll_count':scroll_count,'max_scrolls':10,'unchanged_count':unchanged,
+                'stop_reason':'stable_position' if unchanged>=3 else 'scroll_limit_reached'}
+        return {'status':'skipped','stop_reason':'entry_not_found','entry_search':search,
+                'message':f'未找到问大家入口，已跳过（滚动{scroll_count}次；'+
+                    ('连续3次页面位置和高度不变）' if unchanged>=3 else '达到10次滚动上限）')}
     guard.pause_between('page')
     guard.perform('打开全部问答', lambda: button.click(timeout=min(timeout_ms, 5000)),
                   completed=lambda: read_questions(page, item_id)['panel_present'])

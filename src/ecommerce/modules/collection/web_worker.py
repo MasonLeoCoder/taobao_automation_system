@@ -8,7 +8,7 @@ from ecommerce.infrastructure.tasks import web_jobs as jobs
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import process_started_at
 from ecommerce.infrastructure.tasks.events import sanitize
-from ecommerce.modules.collection.web_collection import bound_job,run_collection,validate,saved_result
+from ecommerce.modules.collection.web_collection import bound_job,run_collection,validate_job,saved_result
 from ecommerce.shared.config import Settings,MySQLSettings
 from ecommerce.shared.exceptions import TaskBusy
 
@@ -33,7 +33,7 @@ def execute(workspace, identifier):
                 if row['state']!='queued':
                     return
                 row.update(state='running',owner_pid=os.getpid(),owner_process_started_at=process_started_at(os.getpid()),
-                           message='正在采集当前商品的所选模块')
+                           message='正在执行所选采集任务')
                 jobs.save(settings,row)
             break
         except TaskBusy:
@@ -41,7 +41,7 @@ def execute(workspace, identifier):
                 raise
             time.sleep(.2*(attempt+1))
     try:
-        validate(settings,row['product_id'],None if row.get('mode')=='remaining' else row['module'])
+        validate_job(settings,row)
         result=run_collection(settings,row)
         row.update(state=result.status,message=sanitize(result.message))
         # 先记执行器结论，再核对页面结果；断库不能把已完成业务谎报为采集失败。
@@ -51,7 +51,7 @@ def execute(workspace, identifier):
         # 查询的是已发布、已确认的本任务结果；旧任务和其他模块不能冒充本次成功。
         row['result']=saved_result(settings,row)
         row['state']=result.status
-        if result.status=='succeeded' and not row['result']['valid']:
+        if result.status=='succeeded' and not row['result'].get('satisfied',row['result']['valid']):
             row.update(state='needs_attention',message='任务已结束，但未确认本模块有效结果；请查看采集尝试或任务日志')
     except Exception as error:
         row.update(state='verification_pending' if row.get('task_status') else 'failed',

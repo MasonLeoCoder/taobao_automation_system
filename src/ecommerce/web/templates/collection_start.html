@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% set module_labels={'basic_info':'基本信息','video':'视频','main_images':'主图','skus':'SKU','parameters':'商品参数','detail_images':'详情图片','review_summary':'评价概览','reviews':'评价明细','questions':'问大家'} %}
+{% block title %}商品采集{% endblock %}
+{% block breadcrumb %}商品采集{% endblock %}
+{% block content %}
+<section class="intro"><div><p class="eyebrow">PRODUCT COLLECTION</p><h1>商品采集</h1><p>配置采集范围，启动后在这里查看进度与结果。</p></div><div class="module-actions"><a class="button action-button action-history" href="{{ url_for('pages.collection_searches') }}">搜索列表</a><a class="button action-button action-history" href="{{ url_for('pages.collection_details') }}">商品库</a></div></section>
+{% if not enabled %}<p class="panel" role="alert">采集尚未启用，请先配置 MySQL 任务与采集存储。</p>{% endif %}
+<section class="collection-workspace" data-collection-workspace>
+<div class="tabs collection-mode-tabs" role="tablist" aria-label="采集方式"><button type="button" id="keyword-tab" role="tab" aria-controls="keyword-panel" aria-selected="true" data-mode-tab="keyword">关键词采集</button><button type="button" id="detail-tab" role="tab" aria-controls="detail-panel" aria-selected="false" tabindex="-1" data-mode-tab="detail">商品详情采集</button></div>
+<form id="collection-start-form" class="panel collection-form">
+<fieldset {{ 'disabled' if not enabled }}>
+<div id="keyword-panel" role="tabpanel" aria-labelledby="keyword-tab">
+<h2>按关键词采集商品</h2><p class="muted">按销量排序，从第一页开始连续采集；每页单独保存结果。</p>
+<div class="collection-form-grid"><label class="collection-field collection-field-wide" for="collection-keyword">搜索关键词<input id="collection-keyword" name="keyword" maxlength="100" required placeholder="例如：粘毛器" autocomplete="off"></label>
+<div class="collection-field"><label for="collection-pages">采集页数</label><input id="collection-pages" name="pages" type="number" min="1" step="1" value="1" required aria-describedby="collection-pages-help"><small id="collection-pages-help">从第 1 页开始，遇到末页提前结束。</small></div>
+<div class="collection-field"><span>每页商品上限</span><label class="collection-check"><input id="collection-unlimited" type="checkbox" checked>不限数量</label><label for="collection-limit" class="visually-hidden">每页最多商品数</label><input id="collection-limit" name="limit" type="number" min="1" step="1" value="10" disabled><small>指定数量时，按每页分别计算。</small></div></div>
+<label class="collection-check collection-detail-switch"><input id="collection-with-details" name="with_details" type="checkbox"><span>连带采集商品详情<small>采集九个详情模块，评价默认最多 100 条，问大家默认最多 50 题。</small></span></label>
+<p id="collection-detail-order" class="collection-help" hidden>先保存当前页列表，再逐商品采集九个详情模块，完成后翻页。同任务中已成功采集的商品详情会复用。</p>
+</div>
+<div id="detail-panel" role="tabpanel" aria-labelledby="detail-tab" hidden>
+<h2>按商品采集详情</h2><p class="muted">填写商品 ID 或完整淘宝／天猫详情链接，采集你选中的模块。</p>
+<label class="collection-field" for="collection-input">商品 ID／链接<input id="collection-input" name="input" maxlength="8192" placeholder="商品 ID，或 https://item.taobao.com/item.htm?id=…" disabled required autocomplete="off"></label>
+<div class="collection-module-heading"><strong>采集模块</strong><button type="button" class="range-button" id="collection-select-all">全选</button></div>
+<div class="collection-module-grid">{% for module in modules %}<label class="collection-check"><input type="checkbox" name="modules" value="{{ module }}" checked disabled>{{ module_labels[module] }}</label>{% endfor %}</div>
+<div class="collection-form-grid collection-ranges"><div class="collection-field"><label for="collection-review-range">评价数量范围</label><select id="collection-review-range" disabled><option value="limited">默认上限：100 条有效评价</option><option value="all">不限数量</option></select></div><div class="collection-field"><label for="collection-question-range">问大家数量范围</label><select id="collection-question-range" disabled><option value="limited">默认上限：50 个问题</option><option value="all">不限数量</option></select></div></div>
+<p class="collection-help">每个问题采集全部可见回答。不限数量表示取消程序上限，实际内容以平台提供为准。已有资料也会重新采集，并保留历史。</p>
+</div>
+<div class="collection-submit"><div><strong>本次采集范围</strong><p id="collection-request-summary" aria-live="polite"></p></div><button class="button action-button action-primary" id="collection-submit" type="submit" {{ 'disabled' if not enabled }}>开始采集</button></div>
+<p id="collection-submit-status" class="collection-feedback" role="status" aria-live="polite"></p>
+</fieldset></form>
+<section class="panel collection-recent"><div class="section-heading"><h2>最近采集任务</h2><span class="muted">自动更新 · 关闭页面后任务继续运行</span></div><p id="collection-history-status" class="muted" role="status">正在读取任务…</p><div id="collection-job-list"></div></section>
+</section>
+{% endblock %}

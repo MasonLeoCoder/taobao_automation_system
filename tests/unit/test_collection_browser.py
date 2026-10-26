@@ -67,6 +67,22 @@ class CollectionBrowserTests(unittest.TestCase):
         with self.engine.begin() as c:
             c.execute(self.store.tables[table_name].insert().values(**values))
 
+    def test_module_skip_requires_exact_task_product_and_latest_confirmed_step(self):
+        """跳过查询绑定当前任务商品，较新失败步骤不能借旧跳过放行；参数：无；返回：无。"""
+        self.put('collection_runs',id=80,task_id=self.task,product_id=1,started_at=self.now,status='complete_with_warnings')
+        record={'status':'skipped','stop_reason':'entry_not_found','message':'未找到问大家入口，已跳过',
+                'entry_search':{'scroll_count':3,'max_scrolls':10,'unchanged_count':3,'stop_reason':'stable_position'}}
+        self.put('collection_steps',id=80,run_id=80,module='questions',requested=True,status='skipped',
+                 continuation_allowed=True,finished_at=self.now,payload={'record':record})
+        result=browse(self.settings,'module_skip',task_id=self.task,product_id='123')
+        self.assertTrue(result['skipped'])
+        self.assertFalse(browse(self.settings,'module_skip',task_id='b'*32,product_id='123')['skipped'])
+        self.assertFalse(browse(self.settings,'module_skip',task_id=self.task,product_id='456')['skipped'])
+        self.put('collection_runs',id=81,task_id=self.task,product_id=1,started_at=self.now,status='failed')
+        self.put('collection_steps',id=81,run_id=81,module='questions',requested=True,status='failed',
+                 continuation_allowed=False,finished_at=self.now,payload={'record':{}})
+        self.assertFalse(browse(self.settings,'module_skip',task_id=self.task,product_id='123')['skipped'])
+
     def batch(self,identifier,module,**extra):
         """建立已发布批次；参数：编号、模块和覆盖字段；返回：无。"""
         values=dict(id=identifier,module=module,task_id=self.task,visibility='published',status='complete',

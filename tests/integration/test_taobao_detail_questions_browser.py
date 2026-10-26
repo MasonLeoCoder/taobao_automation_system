@@ -206,6 +206,37 @@ class TaobaoDetailQuestionsBrowserTests(unittest.TestCase):
         self.assertIn('无问答', str(logs.output))
         self.assertEqual(self.items(result), [])
 
+    def test_missing_entry_skips_after_ten_scrolls_without_overwriting_existing_questions(self):
+        """找不到入口正常返回跳过，旧问答和有效文件不变；参数：无；返回：无。"""
+        self.collect()
+        before=self.document()
+        old_files=sorted(str(p) for p in self.folder().rglob('*') if p.is_file())
+        self.reload('<div style="height:50000px">商品介绍，没有问答入口</div>')
+        def attention(message):
+            self.fail('入口缺失不应请求人工处理：'+message)
+        with self.assertLogs('ecommerce.modules.collection.detail_questions',level='INFO') as logs:
+            result=self.collect(attention)
+        self.assertEqual(result['status'],'skipped')
+        self.assertEqual(result['entry_search']['scroll_count'],10)
+        self.assertEqual(result['entry_search']['stop_reason'],'scroll_limit_reached')
+        self.assertIn('未找到问大家入口，已跳过',str(logs.output))
+        self.assertEqual(self.document(),before)
+        self.assertEqual(sorted(str(p) for p in self.folder().rglob('*') if p.is_file()),old_files)
+
+    def test_missing_entry_at_stable_bottom_skips_after_three_scrolls(self):
+        """连续三次位置高度不变即提前跳过，不创建问答批次；参数：无；返回：无。"""
+        self.reload('<div>商品介绍，没有问答入口</div>')
+        result=self.collect(lambda message:self.fail('不应等待人工：'+message))
+        self.assertEqual(result['status'],'skipped')
+        self.assertEqual(result['entry_search']['scroll_count'],3)
+        self.assertEqual(result['entry_search']['stop_reason'],'stable_position')
+        self.assertFalse(self.folder().exists())
+
+    def test_ambiguous_entry_does_not_use_missing_entry_skip(self):
+        """两个入口属于结构冲突，继续沿用人工处理；参数：无；返回：无。"""
+        self.reload('<div class="askAnswerWrap--fixture"><button>查看全部问答</button><button>查看全部问答</button></div>')
+        with self.assertRaises(TaskStopped):self.collect(lambda message:'停止')
+
     def test_unanswered_question_remains_in_json_and_csv(self):
         self.reload(drawer(question(1, empty=True), count='1'))
         result = self.collect()

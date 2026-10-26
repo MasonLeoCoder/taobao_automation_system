@@ -14,6 +14,16 @@ from ecommerce.web.app import create_app
 
 
 class LogFilterTests(unittest.TestCase):
+    def test_local_halt_notice_is_separate_from_saved_history_and_html_is_escaped(self):
+        """日志页显示未入库的真实原因，保持历史分页和原始记录不变。"""
+        alert={'task_id':'a'*32,'state':'halted','message':'字段校验失败<script>secret()</script>','step':'复核评价'}
+        with patch('ecommerce.web.routes.pages.local_task_alerts',return_value=[alert]):
+            page=self.client.get('/logs?task_id='+'a'*32).get_data(as_text=True)
+        self.assertIn('data-local-task-alert',page);self.assertIn('采集已中断',page)
+        self.assertIn('已入库历史日志',page)
+        self.assertIn('&lt;script&gt;',page);self.assertNotIn('<script>secret()',page)
+        self.assertIn('样例日志',page)
+
     def setUp(self):
         """建立临时网页和日志查询替身；参数：无；返回：无。"""
         temp=tempfile.TemporaryDirectory()

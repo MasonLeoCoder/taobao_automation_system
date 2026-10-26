@@ -31,6 +31,7 @@ EVENT_STEPS = {
     'task_finished': '任务结束', 
     'session_ended': '浏览器会话结束',
     'collection_saved': '保存采集资料', 
+    'collection_module_skipped': '问大家入口寻找',
     'storage_wait': '等待数据入库',
     'storage_resumed': '数据存储已恢复',
 }
@@ -49,6 +50,7 @@ EVENT_TYPES = {
     'list_detail_interrupted': '列表详情采集中断',
     'progress': '执行进度更新',
     'collection_saved': '采集数据已入库',
+    'collection_module_skipped': '模块已跳过',
     'state_changed': '执行状态变化',
     'blocked': '执行遇到阻碍',
     'task_progress': '任务状态更新',

@@ -406,12 +406,12 @@ class TaobaoGuard:
             else:
                 self._record("stale_feedback_ignored")
 
-    def _publish_prompt(self):
+    def _publish_prompt(self, *, halted=False):
         self.control_state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.control_state_path.with_suffix(".tmp")
         temporary.write_text(json.dumps({"task_id": self.task_id, "state": self.state, "step": self.step,
                                            "prompt_id": self._prompt_id, "allowed": sorted(self._prompt_allowed),
-                                           "message": self._prompt_message}, ensure_ascii=False), encoding="utf-8")
+                                           "message": self._prompt_message, "halted": halted}, ensure_ascii=False), encoding="utf-8")
         temporary.replace(self.control_state_path)
 
     def read_feedback(self, prompt, allowed=None):
@@ -639,6 +639,10 @@ class TaobaoGuard:
     def hold_without_input(self, *, reason=None):
         """中断后保留现场及真实原因，只派发浏览器事件，不恢复已退出的业务。"""
         self._transition("needs_attention")
+        from ecommerce.infrastructure.tasks.events import sanitize
+        self._prompt_id, self._prompt_allowed = None, set()
+        self._prompt_message = sanitize(reason or '人工输入不可用，业务已中断，浏览器仅保留现场')
+        self._publish_prompt(halted=True)
         if reason:
             print("任务已中断，原因："+reason+"；当前保留浏览器现场，请关闭窗口结束任务。", flush=True)
             self._record("session_halted", reason=reason)

@@ -31,6 +31,10 @@ def request_control(settings, action, *, task_id=None, prompt_id=None):
     task_id = tasks[0]["id"]
     if action in replies and tasks[0].get('storage_pending'):
         raise ValueError('当前等待数据库恢复，不能用继续或确认绕过存储暂停；可发送停止')
+    if action in replies and settings.task_backend=='mysql':
+        from ecommerce.modules.monitoring.service import local_task_alerts
+        if local_task_alerts(settings,task_id,active_tasks=tasks):
+            raise ValueError('任务已中断或结果待入库，不能继续或确认；可发送停止并核对日志')
     if not re.fullmatch(r"[a-f0-9]{32}", task_id):
         raise ValueError("任务编号格式无效")
     directory = settings.workspace / "storage/task_controls"

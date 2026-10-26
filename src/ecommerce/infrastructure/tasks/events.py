@@ -128,6 +128,54 @@ class EventJournal:
         return count
 
 
+def pending_task_status(settings, task_id):
+    """只读未入库流水末尾的阻断提示；参数：配置、已核实的任务；返回：提示或空，不推进确认。"""
+    journal=EventJournal(settings,task_id)
+    if not journal.path.exists():
+        return None
+    try:
+        offset=journal._offset()
+        with journal.path.open('rb') as handle:
+            size=handle.seek(0,2)
+            if offset>size:
+                raise NeedsAttention('事件流水确认位置异常，请保留现场核对')
+            start=max(offset,size-131072)
+            handle.seek(start)
+            if start>offset:
+                handle.readline(131072)  # 截断的首条不作为状态证据。
+            lines=handle.read(131072).splitlines(keepends=True)
+        result=None
+        for line in lines:
+            if not line.endswith(b'\n'):
+                continue
+            try:
+                operation=json.loads(line)
+            except (ValueError,UnicodeDecodeError):
+                continue
+            if (not isinstance(operation,dict) or operation.get('task_id')!=task_id
+                    or operation.get('database')!=settings.mysql.database):
+                continue
+            event=operation.get('event_type')
+            details=operation.get('details') or {}
+            if event=='session_halted' and operation.get('state')=='needs_attention':
+                reason=details.get('reason') if isinstance(details,dict) else None
+                result={'state':'halted','message':sanitize(reason if isinstance(reason,str) and reason else '业务已中断，浏览器仅保留现场'),
+                        'step':operation.get('step'),'time':operation.get('time'),'source':'local_pending'}
+            elif event=='storage_wait':
+                result={'state':'storage_pending','message':sanitize(operation.get('message') or '采集结果尚未确认入库'),
+                        'step':operation.get('step'),'time':operation.get('time'),'source':'local_pending'}
+            elif event=='task_finished':
+                result={'state':'finished_pending','message':sanitize(operation.get('message') or '任务已结束，结果尚未确认入库'),
+                        'step':operation.get('step'),'time':operation.get('time'),'source':'local_pending'}
+            elif event in {'storage_resumed','session_ended'} or (
+                    event=='state_changed' and operation.get('state') in {'running','resuming','stopped'}):
+                result=None
+        return result
+    except (OSError,NeedsAttention,ValueError) as error:
+        return {'state':'unverified','message':'无法核对本地任务提示：'+sanitize(str(error)),
+                'source':'local_pending','step':None,'time':None}
+
+
 class TaskEvents:
     """有界队列只负责唤醒，全部积压记录留在磁盘，内存不随日志量增长。"""
     def __init__(self,settings,store,name,task_id=None):

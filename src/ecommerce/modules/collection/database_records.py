@@ -10,6 +10,7 @@ import sqlite3
 
 from ecommerce.infrastructure.storage.collection_snapshot import file_record,json_array,save_snapshot,sqlite_records
 from ecommerce.infrastructure.storage.task_store import fingerprint
+from ecommerce.infrastructure.storage.collection_codes import stop_reason_fields
 
 MODULE_FILES={'basic_info':'basic_info.json','video':'video.json','main_images':'main_images.json','skus':'sku_details.json',
     'parameters':'parameters.json','detail_images':'detail_images.json','review_summary':'review_summary.json',
@@ -152,7 +153,8 @@ def _long_rows(settings,module,record,directory):
                     raise ValueError('问题明细与模块工作库内容不一致')
                 key={'position':count}
                 yield row('question_observations',key,{**_identity(question,'question'),'question':question['question'],
-                    'answers_complete':bool(question['answers_complete']),'answer_stop_reason':question['answer_stop_reason'],
+                    'answers_complete':bool(question['answers_complete']),
+                    'answer_stop_reason':stop_reason_fields(question['answer_stop_reason'],field='answer_stop_reason')['answer_stop_reason'],
                     'captured_at':question.get('captured_at'),'payload':question})
                 actual_answers=connection.execute('SELECT payload FROM answers WHERE question_key=? ORDER BY position',(question['question_key'],))
                 if answers is None:
@@ -328,12 +330,16 @@ def build_snapshot(settings,kind,record,source_path,*,module=None,directory=None
     elif kind=='batch':
         scope_key,contract,coverage=scope_contract(module,scope_record)
         metadata={k:v for k,v in record.items() if k not in {'items','skus','images','raw_items','raw_html','image_results','unknown_fragments'}}
+        # 原文件和源停止原因不改写，兼容转换只影响代码列，并补充诊断原文。
+        reason_fields=stop_reason_fields(record.get('stop_reason'))
+        if 'stop_reason_message' in reason_fields:
+            metadata['stop_reason_message']=reason_fields['stop_reason_message']
         status=record.get('video_status',record.get('status',record.get('collection_status')))
         header['values']={'platform':'taobao','source_batch_key':record['batch_id'],'module':module,'status':status,
             'scope':record.get('scope'),'scope_key':scope_key,'collection_mode':record.get('mode'),
             'requested_limit':record.get('requested_limit'),'answer_limit':record.get('answer_limit'),
             'selection_filter':record.get('filter'),'sort_label':record.get('sort',record.get('sort_label')),
-            'coverage_status':coverage,'stop_reason':record.get('stop_reason'),'end_confirmed':record.get('end_confirmed'),
+            'coverage_status':coverage,'stop_reason':reason_fields['stop_reason'],'end_confirmed':record.get('end_confirmed'),
             'completion_evidence':record.get('completion_evidence'),'captured_at':record.get('captured_at'),
             'observed_at':None if record.get('source_batch_id') else record.get('captured_at'),
             'confirmed_at':(record.get('completion_evidence') or {}).get('confirmed_at'),

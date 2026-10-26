@@ -1,4 +1,4 @@
-"""商品单模块或补齐剩余模块的网页采集派发、状态和定向反馈。"""
+"""关键词、任意商品详情及补采的网页派发、状态和定向反馈。"""
 from dataclasses import asdict,replace
 from datetime import datetime
 import json
@@ -40,6 +40,72 @@ def validate(settings, product_id, module=None):
     return query(settings,'browse_product',product_id=product_id)
 
 
+def normalize_request(body):
+    """严格解析新建采集参数；参数：网页 JSON；返回：脱敏后的固定配置。"""
+    from ecommerce.platforms.taobao.search import validate_keyword
+    from ecommerce.platforms.taobao.cards import validate_limit
+    from ecommerce.platforms.taobao.pagination import validate_pages
+    from ecommerce.platforms.taobao.detail import resolve_detail_input
+    if not isinstance(body,dict):
+        raise ValueError('采集参数必须为对象')
+    mode=body.get('mode')
+    if mode=='keyword':
+        if set(body)-{'mode','keyword','pages','limit','with_details'}:
+            raise ValueError('关键词采集包含不支持的参数')
+        details=body.get('with_details',False)
+        if type(details) is not bool:
+            raise ValueError('连带详情选项必须为布尔值')
+        return {'mode':mode,'keyword':validate_keyword(body.get('keyword')),
+                'pages':validate_pages(body.get('pages',1)),'limit':validate_limit(body.get('limit')),'with_details':details}
+    if mode=='detail':
+        if set(body)-{'mode','input','modules','all_reviews','all_questions'}:
+            raise ValueError('详情采集包含不支持的参数')
+        target=resolve_detail_input(body.get('input'))
+        if not re.fullmatch('[1-9][0-9]{0,24}',target.item_id):
+            raise ValueError('商品编号须为不含前导零的正整数')
+        modules=body.get('modules')
+        if (not isinstance(modules,list) or not modules or
+                any(not isinstance(module,str) or module not in MODULES for module in modules)
+                or len(set(modules))!=len(modules)):
+            raise ValueError('请选择至少一个有效模块，且不能重复')
+        options={key:body.get(key,False) for key in ('all_reviews','all_questions')}
+        for key,module in (('all_reviews','reviews'),('all_questions','questions')):
+            if type(options[key]) is not bool or options[key] and module not in modules:
+                raise ValueError('不限数量仅适用于已选中的评价或问大家模块')
+        # 去除链接跟踪、授权参数，同时保留淘宝/天猫入口区别。
+        return {'mode':mode,'input':target.item_id if target.input_type=='id' else target.canonical_url,
+                'modules':[module for module in MODULES if module in modules],**options}
+    raise ValueError('请选择关键词采集或商品详情采集')
+
+
+def validate_job(settings,row):
+    """按入口验证执行配置；参数：配置、派发；返回：无，新商品无需预先存在。"""
+    if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
+        raise ValueError('网页采集需要同时启用 MySQL 任务和采集存储')
+    if row.get('mode') in {'keyword','detail'}:
+        normalized=normalize_request(row['options'])
+        if normalized!=row['options'] or normalized['mode']!=row['mode']:
+            raise ValueError('采集参数与已确认配置不一致')
+        if row['mode']=='detail':
+            from ecommerce.platforms.taobao.detail import resolve_detail_input
+            if resolve_detail_input(normalized['input']).item_id!=row['product_id'] or normalized['modules']!=row['modules']:
+                raise ValueError('商品或模块与派发配置不一致')
+    else:
+        validate(settings,row['product_id'],None if row.get('mode')=='remaining' else row['module'])
+
+
+def start_configured(settings,body):
+    """从配置页新建任务；参数：配置、请求；返回：可恢复的后台任务状态。"""
+    options=normalize_request(body)
+    product_id=None
+    if options['mode']=='detail':
+        from ecommerce.platforms.taobao.detail import resolve_detail_input
+        product_id=resolve_detail_input(options['input']).item_id
+    selected=options.get('modules',[])
+    validate_job(settings,{'mode':options['mode'],'options':options,'product_id':product_id,'modules':selected})
+    return _start(settings,product_id,'list' if options['mode']=='keyword' else 'selected',options['mode'],options)
+
+
 def start(settings, product_id, module):
     """互斥派发单模块；参数：配置、商品、模块；返回：派发描述，相同在途请求复用任务。"""
     validate(settings,product_id,module)
@@ -52,20 +118,22 @@ def start_remaining(settings,product_id):
     return _start(settings,product_id,'remaining','remaining')
 
 
-def _start(settings,product_id,module,mode):
+def _start(settings,product_id,module,mode,options=None):
     """持短锁派发并冻结本次计划；参数：配置、商品、入口、模式；返回：公开状态。"""
     platform=settings.for_platform('taobao')
     with shop_lock(jobs.directory(settings)):
         for row in jobs.rows(settings):
             state=public_status(settings,row)
             if not state['done']:
-                if row['product_id']==product_id and row['module']==module:
+                if (row['product_id']==product_id and row['module']==module
+                        and row.get('mode','single')==mode and row.get('options')==options):
                     return state
                 raise TaskBusy('已有网页采集任务进行中，请先完成或停止当前任务')
         if active_local_tasks(platform):
             raise TaskBusy('淘宝浏览器已有任务运行，请先完成当前任务')
-        selected=plan(settings,product_id) if mode=='remaining' else {'modules':[module],'skipped_modules':[]}
-        if not selected['modules']:
+        selected=plan(settings,product_id) if mode=='remaining' else {
+            'modules':options.get('modules',[]) if options else [module],'skipped_modules':[]}
+        if mode!='keyword' and not selected['modules']:
             raise ValueError('该商品九个模块均有有效完成结果，无需采集')
         identifier=uuid4().hex
         # 配置对象只有密码环境变量名，没有密码；子进程精确复用本次网页配置。
@@ -75,6 +143,8 @@ def _start(settings,product_id,module,mode):
              'execution_key':execution_key(platform),'created_at':now(),'state':'queued',
              'owner_pid':None,'owner_process_started_at':None,'config':config,
              'message':'正在启动后台补采任务' if mode=='remaining' else '正在启动后台单模块采集','result':None}
+        if options:
+            row.update(options=options,message='正在启动关键词采集' if mode=='keyword' else '正在启动所选详情采集')
         jobs.save(settings,row)
         try:
             process=jobs.launch(settings,identifier)
@@ -96,6 +166,12 @@ def bound_job(settings, product_id, identifier):
     return row
 
 
+def get_job(settings,identifier):
+    """读取并核验本执行配置内的任务；参数：配置、派发编号；返回：派发记录。"""
+    row=jobs.read(settings,identifier)
+    return bound_job(settings,row['product_id'],identifier)
+
+
 def public_status(settings, row):
     """产生可供网页展示的真实状态；参数：配置、派发；返回：不含配置、路径或凭据的状态。"""
     state=row['state']
@@ -103,6 +179,7 @@ def public_status(settings, row):
     message=row['message']
     prompt=None
     storage_pending=False
+    halted=False
     if not done:
         live=jobs.alive(row)
         if live is False:
@@ -124,6 +201,20 @@ def public_status(settings, row):
                 pass
             if storage_pending:
                 state,message='storage_pending','正在等待数据库恢复；可以停止，继续不能跳过入库确认'
+            if live is True and active:
+                from ecommerce.modules.monitoring.service import local_task_alerts
+                alerts=local_task_alerts(settings,row['id'],active_tasks=[active])
+                if alerts:
+                    alert=alerts[0]
+                    prompt=None
+                    if alert['state']=='halted':
+                        halted=True
+                        state,message='needs_attention','采集已中断，浏览器仅保留现场；原因：'+alert['message']+'。请停止当前任务后重新发起，已有记录和待入库流水保留。'
+                    elif alert['state']=='unverified':
+                        state,message='unverified',alert['message']+'；请核对日志，不能继续或确认，停止入口仍可用'
+                    else:
+                        storage_pending=True
+                        state,message='storage_pending',alert['message']+'；可以停止，继续不能跳过入库确认'
     result=row.get('result') or {}
     if state in {'interrupted','verification_pending'}:
         # 进程退出或结论文件未写完时，只恢复数据库结果，不重放采集动作。
@@ -133,7 +224,7 @@ def public_status(settings, row):
             if task.get('finished_at'):
                 state,message=task['status'],task.get('message') or '任务已结束'
                 result=saved_result(settings,row)
-                if state=='succeeded' and not result['valid']:
+                if state=='succeeded' and not result.get('satisfied',result['valid']):
                     state,message='needs_attention','任务已结束，尚未确认有效模块资料；请核对日志和采集尝试'
         except LookupError:
             pass
@@ -141,8 +232,10 @@ def public_status(settings, row):
             message+='；数据库暂不可用，结果待核对'
     return {'id':row['id'],'product_id':row['product_id'],'module':row['module'],'state':state,'done':done,
             'mode':row.get('mode','single'),'created_at':row['created_at'],
-            'message':message,'prompt':prompt,'storage_pending':storage_pending,
+            'options':row.get('options'), 'progress':row.get('progress',{}),
+            'message':message,'prompt':prompt,'storage_pending':storage_pending,'halted':halted,
             'batch_id':result.get('batch_id'),'valid':bool(result.get('valid')),
+            'skipped':bool(result.get('skipped')),'skip_reason':result.get('reason') if result.get('skipped') else None,
             'result_label':result.get('label','查看采集结果'),
             **bulk_progress(row,result)}
 
@@ -154,17 +247,46 @@ def bulk_progress(row,result):
     selected=row.get('modules',[row['module']])
     return {'modules':selected,'skipped_modules':row.get('skipped_modules',[]),'results':results,
             'current_module':progress.get('current_module'),'started_modules':progress.get('started_modules',[]),
-            'completed_count':sum(bool(item['valid']) for item in results),'total_count':len(selected)}
+            'completed_count':sum(bool(item['valid']) for item in results),
+            'skipped_count':sum(bool(item.get('skipped')) for item in results) or int(bool(result.get('skipped'))),
+            'total_count':len(selected)}
 
 
 def saved_result(settings,row):
     """核对本任务已发布模块，不能用旧结果代替；参数：配置和派发；返回：结果定位。"""
-    bulk=row.get('mode')=='remaining'
-    data=validate(settings,row['product_id'],None if bulk else row['module'])
+    if row.get('mode')=='keyword':
+        try:
+            pages=query(settings,'browse_search',task_id=row['id'])['pages']
+        except LookupError:
+            pages=[]
+        count=(row.get('progress') or {}).get('completed_page_count',0)
+        return {'batch_id':pages[0]['id'] if pages else None,'valid':bool(pages) and len(pages)>=count,
+                'label':'查看采集列表','page_count':len(pages)}
+    bulk=row.get('mode') in {'remaining','detail'}
+    if row.get('mode')=='detail':
+        try:
+            data=validate(settings,row['product_id'])
+        except LookupError:
+            data={'history':[],'current_ids':[]}
+    else:
+        data=validate(settings,row['product_id'],None if bulk else row['module'])
     if bulk:
-        results=[module_result(data,row['id'],module) for module in row['modules']]
-        return {'batch_id':None,'valid':all(item['valid'] for item in results),'modules':results,'label':'查看商品资料'}
-    return module_result(data,row['id'],row['module'])
+        results=[saved_module(settings,row,data,module) for module in row['modules']]
+        return {'batch_id':None,'valid':all(item['valid'] for item in results),
+                'satisfied':all(item['valid'] or item.get('skipped',False) for item in results),
+                'modules':results,'label':'查看商品资料'}
+    return saved_module(settings,row,data,row['module'])
+
+
+def saved_module(settings,row,data,module):
+    """核对模块资料或同任务跳过依据；参数：配置、派发、商品资料、模块；返回：独立结论。"""
+    result=module_result(data,row['id'],module)
+    if module=='questions':
+        evidence=query(settings,'browse_module_skip',task_id=row['id'],product_id=row['product_id'])
+        if evidence.get('skipped'):
+            result.update(batch_id=None,valid=False,skipped=True,satisfied=True,reason='entry_not_found',
+                          message=evidence['message'],label='查看任务日志')
+    return result
 
 
 def module_result(data,task_id,module):
@@ -223,11 +345,25 @@ def active(settings):
     return result
 
 
+def history(settings):
+    """恢复配置页最近任务；参数：配置；返回：最近二十个本执行配置的公开状态。"""
+    selected=[row for row in jobs.rows(settings)
+              if row['execution_key']==execution_key(settings.for_platform('taobao'))][:20]
+    return [public_status(settings,row) for row in selected]
+
+
 def run_collection(settings, row):
     """在同一资源锁和浏览器中执行所选模块；参数：配置、派发；返回：统一任务结果。"""
     from ecommerce.infrastructure.tasks.runner import run_task
     from ecommerce.modules.collection.detail_service import open_detail_input
     browser_settings=replace(settings.for_platform('taobao'),headless=False)
+    if row.get('mode')=='keyword':
+        from ecommerce.modules.collection.service import collect_keyword
+        options=row['options']
+        return run_task(browser_settings,'collection.taobao.collect',lambda:collect_keyword(
+            browser_settings,options['keyword'],pages=options['pages'],limit=options['limit'],with_details=options['with_details'],
+            wait=False,on_attention=web_attention,on_login_required=web_attention,
+            on_progress=lambda values:keyword_progress(settings,row,values)),task_id=row['id'])
     def action():
         """持有浏览器资源锁后复查补采范围，只执行剩余项目；参数：无；返回：采集说明。"""
         if row.get('mode')=='remaining':
@@ -244,11 +380,25 @@ def run_collection(settings, row):
             flags={module:module in row['modules'] for module in MODULES}
             return open_detail_input(browser_settings,row['product_id'],wait=False,on_attention=web_attention,
                                      on_login_required=web_attention,on_module_event=lambda module,stage:module_progress(settings,row,module,stage),**flags)
+        if row.get('mode')=='detail':
+            row['progress']={'current_module':None,'started_modules':[],'results':[]}
+            jobs.save(settings,row)
+            flags={module:module in row['modules'] for module in MODULES}
+            return open_detail_input(browser_settings,row['options']['input'],wait=False,
+                on_attention=web_attention,on_login_required=web_attention,
+                all_reviews=row['options']['all_reviews'],all_questions=row['options']['all_questions'],
+                on_module_event=lambda module,stage:module_progress(settings,row,module,stage),**flags)
         flags={module:module==row['module'] for module in MODULES}
         return open_detail_input(browser_settings,row['product_id'],wait=False,
                                  on_attention=web_attention,on_login_required=web_attention,**flags)
     return run_task(browser_settings,'collection.taobao.detail.open',
                     action,task_id=row['id'])
+
+
+def keyword_progress(settings,row,values):
+    """保存关键词在途计数；参数：配置、派发、已完成事实；返回：无。"""
+    row.setdefault('progress',{}).update(values)
+    jobs.save(settings,row)
 
 
 def module_progress(settings,row,module,stage):
@@ -260,7 +410,7 @@ def module_progress(settings,row,module,stage):
             progress['started_modules'].append(module)
     else:
         data=validate(settings,row['product_id'])
-        value=module_result(data,row['id'],module)
+        value=saved_module(settings,row,data,module)
         progress['results']=[item for item in progress['results'] if item['module']!=module]+[value]
         progress['current_module']=None
     jobs.save(settings,row)

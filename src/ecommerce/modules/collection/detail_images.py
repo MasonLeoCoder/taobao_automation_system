@@ -286,7 +286,8 @@ def collect_main_images(settings,result):
     previous_batches=_previous_progress(product_dir,result.target.item_id,fingerprint)
     batch_id=guard.task_id+'-'+uuid4().hex[:8]
     directory=product_dir/'history'/batch_id
-    record={'schema_version':2,'batch_id':batch_id,'task_id':guard.task_id,'product_id':result.target.item_id,
+    record={'schema_version':3 if links['collection_method']=='dom_thumbnails' else 2,
+            'batch_id':batch_id,'task_id':guard.task_id,'product_id':result.target.item_id,
             'source_url':resolve_detail_input(result.page.url).canonical_url,'captured_at':now(),
             'scope':'main_gallery_images','expected_count':links['expected_count'],'available_count':links['available_count'],
             'video_cover_skipped':links['video_cover_skipped'],'parameters_skipped':links['parameters_skipped'],
@@ -296,6 +297,8 @@ def collect_main_images(settings,result):
             'resumed_from_batch_id':previous_batches[0]['batch_id'] if previous_batches else None,
             'image_results':[{**p,'status':'pending','error':None} for p in links['images']],
             'images':[],'status':'in_progress','error':None}
+    if links['collection_method']=='dom_thumbnails':
+        record.update({key:links[key] for key in ('raw_image_count','duplicate_count','deduplication')})
     save_images_progress(directory,record)
 
     def completed(image, entry):

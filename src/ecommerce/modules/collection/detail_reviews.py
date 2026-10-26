@@ -16,6 +16,7 @@ from ecommerce.infrastructure.storage.database import now
 from ecommerce.modules.collection.detail_images import _remove_owned_tree
 from ecommerce.modules.collection.export import format_capture_time
 from ecommerce.modules.collection.detail_storage import product_directory, read_detail_document, save_detail_section
+from ecommerce.infrastructure.storage.collection_codes import stop_reason_fields
 from ecommerce.platforms.taobao.detail import matches_detail_url
 from ecommerce.platforms.taobao.detail_review_summary import parse_display_count, read_review_summary
 from ecommerce.platforms.taobao.detail_reviews import ensure_reviews_open, expand_review, read_reviews, resolve_review_video, scroll_reviews, snapshot_key, wait_snapshot
@@ -136,7 +137,7 @@ def export_reviews(store, directory, record):
     json_path, csv_path = folder / '评价明细.json', folder / '评价明细.csv'
     json_temp, csv_temp = json_path.with_suffix('.json.tmp'), csv_path.with_suffix('.csv.tmp')
     fields = ('序号', '商品ID', '用户显示名称', '评价日期原文', '购买规格', '评价正文', '评价图片链接', '评价视频链接', '视频封面链接', '追加评价', '未展示媒体链接说明', '采集时间')
-    summary = {k: record.get(k) for k in ('status', 'stop_reason', 'scope', 'requested_limit', 'scanned_count',
+    summary = {k: record.get(k) for k in ('status', 'stop_reason', 'stop_reason_message', 'scope', 'requested_limit', 'scanned_count',
         'collected_count', 'skipped_template_count', 'review_count_display', 'folded_count', 'folded_text',
         'end_confirmed', 'bottom_confirmation_rounds', 'completion_evidence')}
     try:
@@ -267,7 +268,7 @@ def collect_reviews(settings, result, *, all_reviews=False, stable_ms=500, max_s
 
     def record(status, reason, *, end=False):
         folded_count = parse_display_count(current.get('folded_count_raw'))['value']
-        return {**base, 'captured_at': now(), 'status': status, 'stop_reason': reason, 'filter': selection[0] if selection else current.get('filter'),
+        return {**base, 'captured_at': now(), 'status': status, **stop_reason_fields(reason), 'filter': selection[0] if selection else current.get('filter'),
                 'sort': selection[1] if selection else current.get('sort'), 'scanned_count': store.scanned, 'collected_count': store.collected,
                 'skipped_template_count': store.skipped, 'end_confirmed': end,
                 'review_availability': 'none' if status == 'no_reviews' else 'present' if store.scanned else 'unconfirmed',

@@ -1,4 +1,4 @@
-"""本机 Web 服务，提供资料查询与后台单模块采集入口。"""
+"""本机 Web 服务，提供资料查询与可配置的后台采集入口。"""
 from datetime import datetime
 from ecommerce.shared.time import BEIJING
 from flask import Flask
