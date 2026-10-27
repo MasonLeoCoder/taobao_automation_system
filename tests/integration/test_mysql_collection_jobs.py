@@ -205,7 +205,7 @@ class MySQLCollectionJobsTests(unittest.TestCase):
         directory=self.settings.workspace/'storage/web_collection_jobs';directory.mkdir(parents=True,exist_ok=True)
         (directory/f'{job}.json').write_text('{broken',encoding='utf-8')
         self.assertEqual(web_jobs.read(self.settings,job)['id'],job)
-        self.assertEqual(web_collection.history(self.settings)[0]['id'],job)
+        self.assertEqual(web_collection.history(self.settings)['jobs'][0]['id'],job)
 
     def test_background_process_reads_database_configuration(self):
         job=self.submit();row=self.store.claim(self.key,job)
@@ -271,7 +271,7 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
         self.assertEqual(result.status,'succeeded')
         row=self.store.read(result.task_id)
         self.assertEqual(row['origin'],'cli');self.assertEqual(row['task_id'],result.task_id)
-        self.assertIn(result.task_id,[r['id'] for r in web_collection.history(self.settings)])
+        self.assertIn(result.task_id,[r['id'] for r in web_collection.history(self.settings)['jobs']])
         active=self.submit();self.claim(active)
         runner=unittest.mock.Mock()
         queued=request_execute(self.platform,'collection.taobao.synthetic',lambda:'不能抢占',
@@ -339,3 +339,45 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
             queue_after=dict(c.execute(sa.select(self.t['collection_queue_states']).where(self.t['collection_queue_states'].c.execution_key==self.key)).mappings().one())
         self.assertEqual(queue_before,queue_after)
         self.assertIsNone(self.store.read(second)['task_id'])
+
+    def test_history_page_uses_mysql_filter_before_limit_and_keeps_all_requests(self):
+        """超过一页的申请按资源过滤后分页，历史失败项不会被最新20条截掉。"""
+        from datetime import datetime
+        self.store.pause(self.key,True,'合成分页暂停')
+        ids=[self.submit(product_id=str(200000+i),options={'mode':'detail','input':str(200000+i),
+            'modules':['video'],'all_reviews':False,'all_questions':False}) for i in range(45)]
+        j=self.t['collection_jobs']
+        ordered=sorted(ids,reverse=True)
+        with self.store.connection(True) as c:
+            c.execute(j.update().where(j.c.execution_key==self.key).values(created_at=datetime(2026,10,27,10)))
+            c.execute(j.update().where(j.c.id==ordered[-1]).values(dispatch_state='start_failed'))
+        pages=[self.store.history_page(self.key,page) for page in (1,2,3)]
+        self.assertEqual([len(page['jobs']) for page in pages],[20,20,5])
+        self.assertEqual([row['id'] for page in pages for row in page['jobs']],ordered)
+        failure=self.store.history_page(self.key,1,'failed')
+        self.assertEqual(failure['total'],1);self.assertEqual(failure['jobs'][0]['id'],ordered[-1])
+        waiting=self.store.history_page(self.key,999,'waiting')
+        self.assertEqual((waiting['page'],waiting['pages'],waiting['total']),(3,3,44))
+        self.assertTrue(self.store.queue_state(self.key)['paused'])
+        self.assertTrue(all(row['task_id'] is None for page in pages for row in page['jobs']))
+
+    def test_history_mysql_json_prompt_and_actual_finished_task_take_precedence(self):
+        """MySQL原生JSON提示归人工处理，已结束执行不受旧提示误导。"""
+        from datetime import datetime
+        self.store.pause(self.key,True,'合成状态验证')
+        ids=[self.submit(product_id=str(300000+i),options={'mode':'detail','input':str(300000+i),
+            'modules':['video'],'all_reviews':False,'all_questions':False}) for i in range(5)]
+        j,t=self.t['collection_jobs'],self.t['tasks']
+        with self.store.connection(True) as c:
+            for identifier,status in zip(ids[:3],('cancelled','failed','succeeded')):
+                c.execute(t.insert().values(id=identifier,name='collection.taobao.synthetic',origin='live',
+                    execution_key=self.key,status=status,started_at=datetime(2026,10,27,10),finished_at=datetime(2026,10,27,11)))
+                c.execute(j.update().where(j.c.id==identifier).values(dispatch_state='started',task_id=identifier,
+                    prompt={'prompt_id':'old-prompt','storage_pending':True}))
+            c.execute(j.update().where(j.c.id==ids[3]).values(dispatch_state='claimed',prompt={'storage_pending':True}))
+            c.execute(j.update().where(j.c.id==ids[4]).values(dispatch_state='claimed',prompt=None))
+        for identifier,status in zip(ids,('stopped','failed','completed','attention','running')):
+            with self.subTest(status=status):
+                data=self.store.history_page(self.key,1,status)
+                self.assertEqual(data['total'],1)
+                self.assertEqual(data['jobs'][0]['id'],identifier)

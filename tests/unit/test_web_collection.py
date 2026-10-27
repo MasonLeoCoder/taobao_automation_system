@@ -533,5 +533,98 @@ class WebCollectionTests(unittest.TestCase):
         self.assertEqual(response.status_code,503)
         self.launch.assert_not_called()
 
+    def history_requests(self,count):
+        """准备同一时刻的合成暂停申请；参数：数量；返回：存储、申请列表。"""
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        store=CollectionJobStore(self.settings)
+        store.pause(execution_key(self.settings.for_platform('taobao')),True,'合成分页验证')
+        rows=[service.start_configured(self.settings,{'mode':'detail','input':str(100000+i),'modules':['video']}) for i in range(count)]
+        with store.connection(True) as c:
+            c.execute(store.tables['collection_jobs'].update().values(created_at=datetime(2026,10,27,10)))
+        return store,rows
+
+    def test_collection_history_paginates_all_requests_with_stable_ties_and_resource_scope(self):
+        import sqlalchemy as sa
+        store,rows=self.history_requests(48)
+        j=store.tables['collection_jobs']
+        with store.connection(True) as c:
+            c.execute(j.update().where(j.c.id==rows[-1]['id']).values(execution_key='f'*64,created_at=datetime(2026,10,28)))
+        pages=[self.client.get(f'/api/collection-jobs?page={page}').get_json() for page in (1,2,3)]
+        self.assertEqual([len(page['jobs']) for page in pages],[20,20,7])
+        self.assertTrue(all(page['total']==47 and page['pages']==3 and page['page_size']==20 for page in pages))
+        actual=[row['id'] for page in pages for row in page['jobs']]
+        self.assertEqual(actual,sorted([row['id'] for row in rows[:-1]],reverse=True))
+        self.assertEqual(len(set(actual)),47)
+        self.assertTrue(all(row['can_start'] for page in pages for row in page['jobs']))
+        self.launch.assert_not_called()
+
+    def test_collection_history_filters_actual_execution_and_unstarted_states_before_paging(self):
+        store,rows=self.history_requests(31)
+        # 最新20条均保留等待，历史行仍应被数据库状态筛选找到。
+        ids=sorted([row['id'] for row in rows],reverse=True)
+        values=[jobs.read(self.settings,identifier) for identifier in ids[-7:]]
+        for row,state in zip(values[:4],('running','cancelled','failed','succeeded')):
+            row['state']=state;self.save(row)
+        self.job_db.prompt(values[0],{'prompt_id':'synthetic','message':'合成验证','allowed':['继续']})
+        j=store.tables['collection_jobs']
+        with store.connection(True) as c:
+            c.execute(j.update().where(j.c.id==values[4]['id']).values(dispatch_state='cancelled'))
+            c.execute(j.update().where(j.c.id==values[5]['id']).values(dispatch_state='start_failed'))
+            c.execute(j.update().where(j.c.id==values[6]['id']).values(dispatch_state='interrupted'))
+        expected={'waiting':24,'running':0,'attention':1,'stopped':3,'completed':1,'failed':2}
+        for status,total in expected.items():
+            with self.subTest(status=status):
+                data=self.client.get(f'/api/collection-jobs?status={status}').get_json()
+                self.assertEqual(data['total'],total)
+                self.assertTrue(all(row['history_status']==status for row in data['jobs']))
+        stopped=self.client.get('/api/collection-jobs?status=stopped').get_json()
+        self.assertTrue(all(row['done'] for row in stopped['jobs']))
+        self.launch.assert_not_called()
+
+    def test_collection_history_handles_empty_filters_and_clamps_obsolete_last_page(self):
+        store,rows=self.history_requests(21)
+        data=self.client.get('/api/collection-jobs?page=2').get_json()
+        self.assertEqual(data['page'],2)
+        store.control(data['jobs'][0]['id'],'stop')
+        data=self.client.get('/api/collection-jobs?page=2&status=waiting').get_json()
+        self.assertEqual((data['page'],data['pages'],data['total']),(1,1,20))
+        empty=self.client.get('/api/collection-jobs?page=9999&status=failed').get_json()
+        self.assertEqual((empty['page'],empty['pages'],empty['total'],empty['jobs']),(1,1,0,[]))
+
+    def test_collection_history_rejects_invalid_page_or_status_without_dispatch(self):
+        for query in ('page=0','page=-1','page=1.5','page=abc','page=99999999999','page=1&page=2','status=unknown','status=all&status=waiting'):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get('/api/collection-jobs?'+query).status_code,409)
+        self.launch.assert_not_called()
+
+    def test_collection_history_classifies_legacy_and_pending_configuration(self):
+        import sqlalchemy as sa
+        store,rows=self.history_requests(3)
+        j=store.tables['collection_jobs']
+        with store.connection(True) as c:
+            for row,state in zip(rows,('succeeded','failed',None)):
+                payload=dict(c.scalar(sa.select(j.c.payload).where(j.c.id==row['id'])))
+                payload.update({'legacy_state':state} if state else {'migration_pending':True})
+                c.execute(j.update().where(j.c.id==row['id']).values(payload=payload,dispatch_state='legacy_finished' if state else 'paused'))
+        for status in ('completed','failed','attention'):
+            data=self.client.get('/api/collection-jobs?status='+status).get_json()
+            self.assertEqual(data['total'],1)
+
+    def test_collection_history_database_failure_is_not_reported_as_empty(self):
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        with patch.object(CollectionJobStore,'history_page',side_effect=MySQLStorageError('合成分页断库')):
+            response=self.client.get('/api/collection-jobs?page=2&status=waiting')
+        self.assertEqual(response.status_code,503)
+        self.assertIn('error',response.get_json())
+        self.launch.assert_not_called()
+
+    def test_active_execution_is_not_hidden_by_more_than_two_hundred_waiting_requests(self):
+        """在途查询优先实际执行，分页与等待申请数量不会挤掉当前运行状态。"""
+        store,rows=self.history_requests(205)
+        oldest=min(rows,key=lambda row:row['id'])
+        self.save({**jobs.read(self.settings,oldest['id']),'state':'running'})
+        self.assertIn(oldest['id'],[row['id'] for row in service.active(self.settings)])
+
 
 if __name__=='__main__':unittest.main()

@@ -112,8 +112,14 @@ def configured_job(identifier):
 
 @collection_jobs.get('/api/collection-jobs')
 def history():
-    """恢复配置页最近任务；参数：无；返回：公开状态。"""
-    return jsonify(jobs=[present(state) for state in service.history(current_app.config['SETTINGS'])])
+    """分页读取当前资源采集申请；参数：page/status；返回：公开状态及分页信息。"""
+    import re
+    page=request.args.get('page','1')
+    if not re.fullmatch('[1-9][0-9]{0,9}',page) or any(len(request.args.getlist(key))>1 for key in ('page','status')):
+        raise ValueError('采集任务页码或状态无效')
+    result=service.history(current_app.config['SETTINGS'],int(page),request.args.get('status','all'))
+    result['jobs']=[present(state) for state in result['jobs']]
+    return jsonify(result)
 
 
 @collection_jobs.post('/api/collection-jobs')

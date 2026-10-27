@@ -12,6 +12,7 @@ from ecommerce.shared.exceptions import NeedsAttention
 
 PENDING = ('waiting', 'paused', 'claimed')
 TERMINAL = ('start_failed', 'cancelled', 'interrupted', 'legacy_finished')
+HISTORY_STATUSES = ('all', 'waiting', 'running', 'attention', 'stopped', 'completed', 'failed')
 
 
 class JobConflict(ValueError, NeedsAttention):
@@ -161,6 +162,8 @@ class CollectionJobStore:
         if not row.get('mode'):
             row['mode']='single' if row['module'] in MODULES else 'detail'
         row.setdefault('modules',[row['module']] if row['mode']=='single' else [])
+        if 'history_status' in record:
+            row['history_status']=record['history_status']
         if state == 'started':
             row['state'] = record['actual_status'] or 'unverified'
             row['task_status'] = record['actual_status']
@@ -194,6 +197,8 @@ class CollectionJobStore:
             query = query.where(j.c.execution_key==execution_key)
         if pending:
             query = query.where(sa.or_(j.c.dispatch_state.in_(PENDING),sa.and_(j.c.dispatch_state=='started',t.c.finished_at.is_(None))))
+            # 在途查询优先保留已领取/执行项，避免大量等待申请挤掉底部运行状态。
+            query = query.order_by(sa.case((j.c.dispatch_state.in_(('claimed','started')),0),else_=1))
         with self.connection() as c:
             return [self._public_row(row) for row in c.execute(query.order_by(j.c.created_at.desc(),j.c.id.desc()).limit(limit)).mappings()]
 
@@ -203,6 +208,44 @@ class CollectionJobStore:
         with self.connection() as c:
             row = c.execute(sa.select(q).where(q.c.execution_key==key)).mappings().first()
             return {'paused':bool(row and row['paused']),'reason':row['reason'] if row else None}
+
+    def history_status(self):
+        """按入库申请、执行结论和人工提示归类；参数：无；返回：SQL状态表达式。"""
+        j,t=self.tables['collection_jobs'],self.tables['tasks']
+        legacy=j.c.payload['legacy_state'].as_string()
+        attention=sa.or_(j.c.prompt['prompt_id'].as_string().is_not(None),
+            j.c.prompt['halted'].as_boolean()==True,j.c.prompt['storage_pending'].as_boolean()==True)
+        return sa.case(
+            (j.c.dispatch_state.in_(('cancelled','interrupted')),'stopped'),
+            (j.c.dispatch_state=='start_failed','failed'),
+            (sa.and_(j.c.dispatch_state=='legacy_finished',legacy=='succeeded'),'completed'),
+            (sa.and_(j.c.dispatch_state=='legacy_finished',legacy=='failed'),'failed'),
+            (sa.and_(j.c.dispatch_state=='legacy_finished',legacy.in_(('cancelled','interrupted'))),'stopped'),
+            (j.c.dispatch_state=='legacy_finished','attention'),
+            (sa.and_(t.c.finished_at.is_not(None),t.c.status=='succeeded'),'completed'),
+            (sa.and_(t.c.finished_at.is_not(None),t.c.status=='failed'),'failed'),
+            (sa.and_(t.c.finished_at.is_not(None),t.c.status=='cancelled'),'stopped'),
+            (sa.or_(t.c.status=='needs_attention',t.c.finished_at.is_not(None)),'attention'),
+            (sa.or_(attention,j.c.payload['migration_pending'].as_boolean()==True),'attention'),
+            (j.c.dispatch_state.in_(('waiting','paused')),'waiting'),
+            else_='running')
+
+    def history_page(self, key, page=1, status='all'):
+        """同一查询条件先计数再分页；参数：资源、正整数页码、状态；返回：记录及分页信息。"""
+        if type(page) is not int or page<1 or status not in HISTORY_STATUSES:
+            raise ValueError('采集任务页码或状态无效')
+        j=self.tables['collection_jobs']
+        bucket=self.history_status()
+        query=self._statement().add_columns(bucket.label('history_status')).where(j.c.execution_key==key)
+        if status!='all':
+            query=query.where(bucket==status)
+        with self.connection() as c, c.begin():
+            total=c.scalar(sa.select(sa.func.count()).select_from(query.subquery()))
+            pages=max(1,(total+19)//20)
+            page=min(page,pages)
+            rows=c.execute(query.order_by(j.c.created_at.desc(),j.c.id.desc()).offset((page-1)*20).limit(20)).mappings().all()
+        return {'jobs':[self._public_row(row) for row in rows],'page':page,'page_size':20,
+            'total':total,'pages':pages,'status':status}
 
     def pause(self, key, paused=True, reason='用户停止或执行中断'):
         """原子修改资源和等待申请；参数：资源、暂停开关、原因；返回：无。"""

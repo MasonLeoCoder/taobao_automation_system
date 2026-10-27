@@ -209,7 +209,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
 
     def test_configuration_history_failure_prevents_submission(self):
         """状态不可核实时禁止派发并显示明确错误；参数：无；返回：无。"""
-        self.page.route('**/api/collection-jobs',lambda route:route.fulfill(status=503,json={'error':'数据库暂不可用'}))
+        self.page.route('**/api/collection-jobs?*',lambda route:route.fulfill(status=503,json={'error':'数据库暂不可用'}))
         self.page.goto('http://127.0.0.1/modules/collection')
         expect(self.page.locator('#collection-task-bar')).to_contain_text('数据库暂不可用')
         expect(self.page.locator('#collection-submit')).to_be_disabled()
@@ -524,7 +524,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(self.page.locator('#collection-queue-list')).to_contain_text('隔离排队样例',timeout=7000)
         queued=jobs.rows(self.settings)
         self.assertEqual(len(queued),2)
-        self.assertEqual(queued[0]['state'],'queued')
+        self.assertEqual(next(item for item in queued if item['id']!=row['id'])['state'],'queued')
         self.assertEqual(jobs.read(self.settings,row['id'])['state'],'running')
         self.assertEqual(self.errors,[])
 
@@ -594,6 +594,118 @@ class WebCollectionBrowserTests(unittest.TestCase):
             expect(card.get_by_role('alert')).to_contain_text('保留等待')
             expect(card.get_by_role('button',name='开始本次采集',exact=True)).to_be_enabled()
             self.assertEqual(jobs.read(self.settings,job['id'])['dispatch_state'],'paused')
+        self.assertEqual(self.errors,[])
+
+    def history_requests(self,count):
+        """准备超过一页的合成暂停申请；参数：数量；返回：按数据库排序的申请。"""
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.infrastructure.tasks.ownership import execution_key
+        from ecommerce.modules.collection import web_collection
+        store=CollectionJobStore(self.settings)
+        key=execution_key(self.settings.for_platform('taobao'))
+        store.pause(key,True,'合成分页暂停')
+        for number in range(count):
+            web_collection.start_configured(self.settings,{'mode':'detail','input':str(500000+number),'modules':['video']})
+        return store.rows(key,limit=count)
+
+    def test_history_pages_show_all_requests_and_preserve_filter_on_reload_and_refresh(self):
+        """45条申请可完整翻页，自动刷新及整页重载保持页码、筛选和原详情输入。"""
+        rows=self.history_requests(45)
+        with patch.object(jobs,'launch') as launch:
+            self.page.goto('http://127.0.0.1/modules/collection?mode=detail&input=123&jobs_page=2&jobs_status=waiting')
+            cards=self.page.locator('#collection-job-list .collection-job')
+            expect(cards).to_have_count(20)
+            expect(self.page.locator('#collection-history-page')).to_have_text('第 2 / 3 页')
+            self.assertEqual(cards.evaluate_all('nodes=>nodes.map(node=>node.dataset.jobId)'),[row['id'] for row in rows[20:40]])
+            self.page.locator('#collection-history-next').click()
+            expect(cards).to_have_count(5)
+            expect(self.page.locator('#collection-history-page')).to_have_text('第 3 / 3 页')
+            expect(self.page.locator('#collection-history-next')).to_be_disabled()
+            self.assertEqual(cards.evaluate_all('nodes=>nodes.map(node=>node.dataset.jobId)'),[row['id'] for row in rows[40:]])
+            self.page.locator('#collection-history-prev').click()
+            expect(cards).to_have_count(20)
+            self.page.reload()
+            expect(self.page.locator('#collection-history-filter')).to_have_value('waiting')
+            expect(self.page.locator('#collection-history-page')).to_have_text('第 2 / 3 页')
+            expect(self.page.locator('#collection-input')).to_have_value('123')
+            self.paused_job('999999')
+            expect(self.page.locator('#collection-history-status')).to_contain_text('共 46 条',timeout=7000)
+            expect(self.page.locator('#collection-history-page')).to_have_text('第 2 / 3 页')
+            self.assertIn('jobs_status=waiting',self.page.url)
+            launch.assert_not_called()
+        self.assertEqual(self.errors,[])
+
+    def test_history_filter_keeps_off_page_active_task_and_stopped_recovery_actions(self):
+        """历史页筛选不隐藏独立运行状态；已停止任务仍可打开恢复入口。"""
+        rows=self.history_requests(25)
+        running=rows[-1];running.update(state='running',recovery_ready=True);self.save(running)
+        self.page.goto('http://127.0.0.1/modules/collection?jobs_page=2&jobs_status=waiting')
+        bar=self.page.locator('#collection-task-bar')
+        expect(bar).to_contain_text(f'商品 {running["product_id"]}')
+        expect(bar).to_contain_text('采集中')
+        expect(self.page.locator('#collection-history-page')).to_have_text('第 2 / 2 页')
+        expect(self.page.locator('#collection-job-list [data-start-job]').first).to_be_disabled()
+        self.page.locator('#collection-history-filter').select_option('stopped')
+        expect(self.page.locator('#collection-history-status')).to_contain_text('该状态下暂无')
+        expect(self.page.locator('#collection-job-list .collection-job')).to_have_count(0)
+        expect(bar).to_contain_text('采集中')
+        running['state']='cancelled';self.save(running)
+        card=self.page.locator(f'[data-job-id="{running["id"]}"]')
+        expect(card).to_contain_text('已停止',timeout=7000)
+        expect(card.get_by_role('button',name='查看恢复计划',exact=True)).to_be_visible()
+        expect(card.locator('[data-start-job]')).to_have_count(0)
+        self.assertEqual(self.errors,[])
+
+    def test_history_last_page_clamps_when_filtered_records_leave_and_mobile_does_not_overflow(self):
+        """最后一页因状态变更消失时回到有效页；移动布局不横向溢出。"""
+        rows=self.history_requests(21)
+        self.page.goto('http://127.0.0.1/modules/collection?jobs_page=2&jobs_status=waiting')
+        expect(self.page.locator('#collection-history-page')).to_have_text('第 2 / 2 页')
+        self.save({**rows[-1],'state':'cancelled'})
+        expect(self.page.locator('#collection-history-page')).to_have_text('第 1 / 1 页',timeout=7000)
+        self.assertIn('jobs_page=1',self.page.url)
+        self.page.set_viewport_size({'width':390,'height':844})
+        controls=self.page.locator('.collection-history-controls')
+        controls.scroll_into_view_if_needed()
+        expect(controls.get_by_label('任务状态')).to_be_visible()
+        self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'))
+        self.assertEqual(self.errors,[])
+
+    def test_history_fast_filter_changes_do_not_render_stale_response(self):
+        """等待请求延迟时切换到已停止，不被旧响应覆盖筛选和任务列表。"""
+        rows=self.history_requests(2)
+        self.save({**rows[-1],'state':'cancelled'})
+        self.page.goto('http://127.0.0.1/modules/collection')
+        expect(self.page.locator('#collection-job-list .collection-job')).to_have_count(2)
+        self.page.evaluate("""() => {
+          const original=window.fetch;
+          window.fetch=async (...args) => {
+            const response=await original(...args);
+            if (String(args[0]).includes('/api/collection-jobs?page=1&status=waiting')) await new Promise(resolve=>setTimeout(resolve,600));
+            return response;
+          };
+        }""")
+        with self.page.expect_request('**/api/collection-jobs?page=1&status=waiting'):
+            self.page.locator('#collection-history-filter').select_option('waiting')
+        self.page.locator('#collection-history-filter').select_option('stopped')
+        expect(self.page.locator('#collection-history-status')).to_contain_text('共 1 条',timeout=7000)
+        expect(self.page.locator('#collection-history-filter')).to_have_value('stopped')
+        cards=self.page.locator('#collection-job-list .collection-job')
+        expect(cards).to_have_count(1)
+        expect(cards.first).to_contain_text('已停止')
+        self.assertIn('jobs_status=stopped',self.page.url)
+        self.assertEqual(self.errors,[])
+
+    def test_history_completed_filter_keeps_unconfirmed_result_warning(self):
+        """执行结束但资料未核实仍保留警告，不因完成筛选显示成正在运行。"""
+        job=self.paused_job()
+        self.save({**jobs.read(self.settings,job['id']),'state':'succeeded'})
+        self.page.goto('http://127.0.0.1/modules/collection?jobs_status=completed')
+        card=self.page.locator(f'[data-job-id="{job["id"]}"]')
+        expect(card).to_contain_text('已结束（结果待核对）')
+        expect(card).to_contain_text('执行已结束，尚未确认完整结果')
+        expect(card.locator('[data-start-job]')).to_have_count(0)
+        expect(self.page.locator('#collection-task-bar')).not_to_be_visible()
         self.assertEqual(self.errors,[])
 
 

@@ -19,12 +19,20 @@
   let stateKnown = false;
   let lastConfirmed = null;
   let queuePaused = false;
+  const historyStatuses = ['all','waiting','running','attention','stopped','completed','failed'];
+  const historyParameters = new URLSearchParams(location.search);
+  let historyPage = /^[1-9][0-9]{0,9}$/.test(historyParameters.get('jobs_page') || '') ? Number(historyParameters.get('jobs_page')) : 1;
+  let historyStatus = historyStatuses.includes(historyParameters.get('jobs_status')) ? historyParameters.get('jobs_status') : 'all';
+  let historyData = null;
+  let historyVersion = 0;
+  let historyLoading = true;
+  let refreshAgain = false;
   const startingJobs = new Set();
   const startFeedback = new Map();
   const pendingSubmissions = new Map();
   const endpoint = job => job.status_url || `/api/collection-jobs/${job.id}`;
   const targetLabel = job => job.mode === 'keyword' ? `关键词“${job.options.keyword}”` : `商品 ${job.product_id}`;
-  const stateLabel = job => job.failures?.length && job.done ? '已结束，存在模块错误' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
+  const stateLabel = job => job.failures?.length && job.done ? '已结束，存在模块错误' : job.done && job.state === 'needs_attention' && (job.task_status === 'succeeded' || job.history_status === 'completed') ? '已结束（结果待核对）' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
 
   async function api(url, body) {
     const submission = body === undefined ? null : `${url}:${JSON.stringify(body)}`;
@@ -205,7 +213,7 @@
       });
       bar.append(stop); showPrompt(current);
     } else if (dialog.open) dialog.close();
-    renderHistory(jobs);
+    renderHistory();
   }
 
   let recoverySelection = null;
@@ -268,12 +276,40 @@
     document.getElementById('collection-queue-status').textContent = `${data.paused ? `队列已暂停：${data.reason || '等待手动继续'}。` : ''}${data.items.length ? `${data.items.length} 项等待执行` : '暂无等待申请'}`;
   }
 
-  function renderHistory(jobs) {
+  function updateHistoryLocation() {
+    if (!workspace) return;
+    const url = new URL(location.href);
+    url.searchParams.set('jobs_page',String(historyPage));
+    url.searchParams.set('jobs_status',historyStatus);
+    window.history.replaceState(null,'',url);
+  }
+
+  function selectHistory(page,status) {
+    historyPage = page; historyStatus = status; historyVersion++; historyLoading = true;
+    updateHistoryLocation(); renderHistory(); refresh();
+  }
+
+  document.getElementById('collection-history-filter')?.addEventListener('change',event => selectHistory(1,event.target.value));
+  document.getElementById('collection-history-prev')?.addEventListener('click',() => selectHistory(historyPage - 1,historyStatus));
+  document.getElementById('collection-history-next')?.addEventListener('click',() => selectHistory(historyPage + 1,historyStatus));
+
+  function renderHistory() {
     const container = document.getElementById('collection-job-list');
     if (!container || !stateKnown) return;
+    container.setAttribute('aria-busy',String(historyLoading));
+    document.getElementById('collection-history-filter').value = historyStatus;
+    document.getElementById('collection-history-prev').disabled = historyLoading || !historyData || historyPage <= 1;
+    document.getElementById('collection-history-next').disabled = historyLoading || !historyData || historyPage >= historyData.pages;
+    if (historyLoading || !historyData) {
+      document.getElementById('collection-history-status').textContent = '正在读取任务…';
+      return;
+    }
     container.replaceChildren();
-    document.getElementById('collection-history-status').textContent = jobs.length ? '最近 20 个采集申请，包含网页和命令行；结果与日志独立保留。' : '暂无采集申请。配置上方参数后即可开始。';
-    jobs.sort((a,b) => `${b.created_at}${b.id}`.localeCompare(`${a.created_at}${a.id}`)).slice(0,20).forEach(job => {
+    document.getElementById('collection-history-page').textContent = `第 ${historyData.page} / ${historyData.pages} 页`;
+    document.getElementById('collection-history-status').textContent = historyData.total
+      ? `共 ${historyData.total} 条采集申请，每页 ${historyData.page_size} 条，按申请时间从新到旧排列；包含网页和命令行，结果与日志独立保留。`
+      : historyStatus === 'all' ? '暂无采集申请。配置上方参数后即可开始。' : '该状态下暂无采集申请，可切换其他状态查看。';
+    historyData.jobs.map(job => tracked.get(job.id) || job).forEach(job => {
       const article = document.createElement('article'); article.className = 'collection-job'; article.dataset.jobId = job.id;
       const title = document.createElement('h3'); title.textContent = `${targetLabel(job)} · ${stateLabel(job)}`;
       const progress = document.createElement('p'); progress.textContent = jobLabel(job);
@@ -341,13 +377,17 @@
   }
 
   async function refresh() {
-    if (busy) return;
+    if (busy) { refreshAgain = true; return; }
     busy = true;
+    const requestedHistoryVersion = historyVersion;
     try {
       const active = await api('/api/collection-jobs/active');
       active.jobs.forEach(job => tracked.set(job.id,job));
       if (workspace) {
-        const history = await api('/api/collection-jobs');
+        const history = await api(`/api/collection-jobs?page=${historyPage}&status=${historyStatus}`);
+        if (requestedHistoryVersion !== historyVersion) { refreshAgain = true; return; }
+        historyData = history; historyPage = history.page;
+        updateHistoryLocation();
         history.jobs.forEach(job => tracked.set(job.id,job));
       }
       const pending = [...tracked.values()].filter(job => !job.done && !active.jobs.some(other => other.id === job.id));
@@ -365,21 +405,32 @@
         }
       }
       await renderQueue();
+      if (requestedHistoryVersion !== historyVersion) { refreshAgain = true; return; }
+      if (workspace) {
+        const visible = new Set([...active.jobs,...historyData.jobs].map(job => job.id));
+        for (const [id,job] of tracked) if (job.done && !visible.has(id)) tracked.delete(id);
+      }
+      historyLoading = false;
       stateKnown = true; lastConfirmed = new Date();
       bar.removeAttribute('data-error'); render();
     } catch (error) {
+      if (requestedHistoryVersion !== historyVersion) { refreshAgain = true; return; }
       stateKnown = false;
       const submit = document.getElementById('collection-submit');
       if (submit) submit.disabled = true;
       document.querySelectorAll('[data-start-job]').forEach(button => button.disabled = true);
       const historyStatus = document.getElementById('collection-history-status');
       if (historyStatus) historyStatus.textContent = `任务状态暂时无法读取：${error.message}`;
+      document.querySelectorAll('#collection-history-prev,#collection-history-next').forEach(button => button.disabled = true);
       bar.hidden = false; bar.textContent = `数据库任务状态暂不可用：${error.message}。${lastConfirmed ? `最后确认时间：${lastConfirmed.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai'})}。` : ''}不会自动重新采集。`; bar.dataset.error = 'true';
       [...tracked.values()].filter(job => !job.done && !['queued','paused'].includes(job.state)).forEach(job => {
         const stop=document.createElement('button'); stop.type='button'; stop.className='button action-button action-danger'; stop.textContent='紧急停止已知采集';
         stop.addEventListener('click',async () => { stop.disabled=true; try { const value=await api(`${endpoint(job)}/control`,{action:'stop'}); stop.textContent=value.message; } catch (failure) { stop.textContent=failure.message; stop.disabled=false; } }); bar.append(stop);
       });
-    } finally { busy = false; }
+    } finally {
+      busy = false;
+      if (refreshAgain) { refreshAgain = false; setTimeout(refresh,0); }
+    }
   }
 
   document.querySelectorAll('.module-collect').forEach(button => button.addEventListener('click',async () => {

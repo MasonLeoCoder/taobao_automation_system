@@ -209,6 +209,7 @@ def public_status(settings, row):
     return {'id':row['id'],'product_id':row['product_id'],'module':row['module'],'state':state,'done':done,
             'mode':row.get('mode','single'),'created_at':row['created_at'],'updated_at':row.get('updated_at'),
             'origin':row.get('origin'),'task_id':row.get('task_id'),'task_status':row.get('task_status'),'options':row.get('options'),'progress':row.get('progress',{}),
+            'history_status':row.get('history_status'),
             'message':message,'prompt':prompt if prompt.get('prompt_id') and not done and not halted else None,
             'storage_pending':storage_pending,'halted':halted,'batch_id':result.get('batch_id'),'valid':bool(result.get('valid')),
             'skipped':bool(result.get('skipped')),'skip_reason':result.get('reason') if result.get('skipped') else None,
@@ -341,15 +342,18 @@ def active(settings):
     return result
 
 
-def history(settings):
-    """恢复配置页最近任务；参数：配置；返回：最近二十个本执行配置的公开状态。"""
+def history(settings, page=1, status='all'):
+    """按当前资源分页读取申请；参数：配置、页码、状态；返回：公开记录和分页信息。"""
+    from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore,HISTORY_STATUSES
+    if type(page) is not int or page<1 or status not in HISTORY_STATUSES:
+        raise ValueError('采集任务页码或状态无效')
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
-        return []
+        return {'jobs':[],'page':1,'page_size':20,'total':0,'pages':1,'status':status}
     from ecommerce.modules.collection.dispatch import reconcile
     reconcile(settings)
-    selected=[row for row in jobs.rows(settings,limit=20)
-              if row['execution_key']==execution_key(settings.for_platform('taobao'))][:20]
-    return [public_status(settings,row) for row in selected]
+    result=CollectionJobStore(settings).history_page(execution_key(settings.for_platform('taobao')),page,status)
+    result['jobs']=[public_status(settings,row) for row in result['jobs']]
+    return result
 
 
 def run_collection(settings, row):
