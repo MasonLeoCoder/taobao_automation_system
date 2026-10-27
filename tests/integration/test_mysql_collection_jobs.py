@@ -320,3 +320,22 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
             payload=c.scalar(sa.select(j.c.payload).where(j.c.id==row['id']))
         self.assertEqual(payload['legacy_queue'],legacy)
         self.assertFalse(payload.get('migration_pending',False))
+
+    def test_start_selected_paused_request_preserves_queue_and_other_requests(self):
+        """单次启动绑定原申请；不改其他暂停申请或解除资源暂停，重复点击不重复派发。"""
+        from types import SimpleNamespace
+        self.store.pause(self.key,True,'合成暂停')
+        first=self.submit();second=self.submit(module='skus',modules=['skus'],
+            options={'mode':'detail','input':'123','modules':['skus'],'all_reviews':False,'all_questions':False})
+        with self.store.connection() as c:
+            queue_before=dict(c.execute(sa.select(self.t['collection_queue_states']).where(self.t['collection_queue_states'].c.execution_key==self.key)).mappings().one())
+        with patch.object(web_jobs,'launch',return_value=SimpleNamespace(pid=os.getpid())) as launch:
+            started=dispatch.start_job(self.settings,second)
+            repeated=dispatch.start_job(self.settings,second)
+        self.assertEqual(started['id'],second);self.assertEqual(repeated['id'],second)
+        self.assertFalse(started['can_start']);launch.assert_called_once()
+        self.assertEqual(self.store.read(first)['dispatch_state'],'paused')
+        with self.store.connection() as c:
+            queue_after=dict(c.execute(sa.select(self.t['collection_queue_states']).where(self.t['collection_queue_states'].c.execution_key==self.key)).mappings().one())
+        self.assertEqual(queue_before,queue_after)
+        self.assertIsNone(self.store.read(second)['task_id'])

@@ -176,6 +176,26 @@ def dispatch_next(settings, *, identifier=None, manual=False):
         return persistence.read(selected['id'])
 
 
+def start_job(settings, identifier):
+    """明确启动选中的待执行申请，不解除队列暂停；参数：配置、申请编号；返回：公开状态。"""
+    from ecommerce.modules.collection.web_collection import get_job, public_status, validate_job
+    row=get_job(settings,identifier)
+    if row['dispatch_state'] in {'claimed','started'} and not row.get('actual_finished'):
+        return public_status(settings,row)
+    if row['dispatch_state'] not in {'waiting','paused'} or row.get('task_id') or row.get('stop_requested'):
+        raise ValueError('该申请已结束或已取消，请查看结果或重新提交')
+    if row.get('migration_pending'):
+        raise ValueError('旧申请配置尚未核对，不能启动，请重新提交采集范围')
+    validate_job(settings,row)
+    selected=dispatch_next(settings,identifier=identifier,manual=True)
+    row=get_job(settings,identifier)
+    if selected is None and row['dispatch_state'] in {'waiting','paused'}:
+        raise TaskBusy('已有采集正在使用浏览器，本次申请保留等待；当前采集完成后可再次点击开始')
+    if selected is None and row['dispatch_state'] not in {'claimed','started'}:
+        raise ValueError('申请状态已经变化，请刷新后查看')
+    return public_status(settings,row)
+
+
 def control_queue(settings, action):
     """明确继续或暂停自动派发；参数：动作；返回：队列。"""
     from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore

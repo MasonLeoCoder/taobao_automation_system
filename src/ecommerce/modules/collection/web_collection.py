@@ -213,6 +213,8 @@ def public_status(settings, row):
             'storage_pending':storage_pending,'halted':halted,'batch_id':result.get('batch_id'),'valid':bool(result.get('valid')),
             'skipped':bool(result.get('skipped')),'skip_reason':result.get('reason') if result.get('skipped') else None,
             'result_label':result.get('label','查看采集结果'),'recovery_ready':bool(row.get('recovery_ready')),
+            'can_start':row.get('dispatch_state') in {'waiting','paused'} and not row.get('task_id')
+                and not row.get('stop_requested') and not row.get('migration_pending'),
             'resume_task_id':row.get('resume_task_id'),'failures':result.get('failures',[]),'counts':result.get('counts',{}),
             **bulk_progress(row,result)}
 

@@ -469,5 +469,69 @@ class WebCollectionTests(unittest.TestCase):
         self.data['history'][0]['visibility']='quarantined'
         self.assertFalse(service.status(self.settings,'123',job['id'])['valid'])
 
+    def paused_requests(self):
+        """准备同资源两条暂停申请；参数：无；返回：存储和两条公开记录。"""
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        store=CollectionJobStore(self.settings)
+        store.pause(execution_key(self.settings.for_platform('taobao')),True,'合成暂停')
+        first=self.start('video');second=self.start('skus')
+        self.launch.assert_not_called()
+        return store,first,second
+
+    def test_start_one_saved_request_keeps_other_requests_paused_and_deduplicates_click(self):
+        store,first,second=self.paused_requests()
+        self.assertTrue(first['can_start'])
+        url=f"/api/collection-jobs/{second['id']}/start"
+        response=self.client.post(url,json={},headers=self.headers)
+        self.assertEqual(response.status_code,202)
+        self.assertEqual(response.get_json()['id'],second['id'])
+        self.assertFalse(response.get_json()['can_start'])
+        self.assertEqual(store.read(first['id'])['dispatch_state'],'paused')
+        self.assertTrue(store.queue_state(execution_key(self.settings.for_platform('taobao')))['paused'])
+        self.assertEqual(self.client.post(url,json={},headers=self.headers).status_code,202)
+        self.launch.assert_called_once()
+        self.assertEqual(self.launch.call_args.args[1],second['id'])
+        self.assertEqual(len(jobs.rows(self.settings)),2)
+
+    def test_start_saved_request_rejects_unprotected_or_changed_scope(self):
+        store,first,second=self.paused_requests()
+        url=f"/api/collection-jobs/{first['id']}/start"
+        self.assertEqual(self.client.get(url).status_code,405)
+        self.assertEqual(self.client.post(url,json={}).status_code,403)
+        self.assertEqual(self.client.post(url,json={'modules':['skus']},headers=self.headers).status_code,409)
+        self.assertEqual(self.client.post(url,json=[],headers=self.headers).status_code,409)
+        self.assertEqual(self.client.post(url,json={},headers={**self.headers,'Origin':'https://foreign.invalid'}).status_code,403)
+        self.launch.assert_not_called()
+
+    def test_start_saved_request_preserves_waiting_when_browser_is_busy(self):
+        store,first,second=self.paused_requests()
+        with patch('ecommerce.modules.collection.dispatch.active_local_tasks',return_value=[{'id':'a'*32}]):
+            response=self.client.post(f"/api/collection-jobs/{first['id']}/start",json={},headers=self.headers)
+        self.assertEqual(response.status_code,409)
+        self.assertIn('保留等待',response.get_json()['error'])
+        self.assertEqual(store.read(first['id'])['dispatch_state'],'paused')
+        self.launch.assert_not_called()
+
+    def test_cancelled_request_cannot_be_started(self):
+        store,first,second=self.paused_requests()
+        store.control(first['id'],'stop')
+        self.assertEqual(self.client.post(f"/api/collection-jobs/{first['id']}/start",json={},headers=self.headers).status_code,409)
+        self.launch.assert_not_called()
+
+    def test_start_request_from_other_resource_is_rejected(self):
+        store,first,second=self.paused_requests()
+        self.app.config['SETTINGS']=replace(self.settings,taobao_profile_path=self.settings.workspace/'storage/another-profile')
+        response=self.client.post(f"/api/collection-jobs/{first['id']}/start",json={},headers=self.headers)
+        self.assertEqual(response.status_code,404)
+        self.launch.assert_not_called()
+
+    def test_start_request_database_failure_does_not_launch(self):
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        store,first,second=self.paused_requests()
+        with patch.object(service,'get_job',side_effect=MySQLStorageError('合成断库')):
+            response=self.client.post(f"/api/collection-jobs/{first['id']}/start",json={},headers=self.headers)
+        self.assertEqual(response.status_code,503)
+        self.launch.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

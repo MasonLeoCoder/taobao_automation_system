@@ -543,5 +543,58 @@ class WebCollectionBrowserTests(unittest.TestCase):
             self.assertEqual(stop.call_args.args[1],row['id'])
         self.assertEqual(self.errors,[])
 
+    def paused_job(self,product='123'):
+        """准备未启动的暂停申请；参数：商品编号；返回：申请。"""
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.infrastructure.tasks.ownership import execution_key
+        from ecommerce.modules.collection import web_collection
+        CollectionJobStore(self.settings).pause(execution_key(self.settings.for_platform('taobao')),True,'合成用户暂停')
+        return web_collection.start_configured(self.settings,{'mode':'detail','input':product,'modules':['video']})
+
+    def test_paused_card_starts_only_selected_request_and_double_click_does_not_duplicate(self):
+        first=self.paused_job();second=self.paused_job('456')
+        with patch.object(jobs,'launch',return_value=SimpleNamespace(pid=9999)) as launch:
+            self.page.goto('http://127.0.0.1/modules/collection')
+            card=self.page.locator(f'[data-job-id="{first["id"]}"]')
+            button=card.get_by_role('button',name='开始本次采集',exact=True)
+            expect(button).to_be_enabled()
+            expect(self.page.locator('#collection-submit')).to_have_text('保存采集申请')
+            button.evaluate('node=>{node.click();node.click();}')
+            expect(card).to_contain_text('启动中',timeout=7000)
+            expect(card.get_by_role('button',name='开始本次采集',exact=True)).to_have_count(0)
+            self.assertEqual(jobs.read(self.settings,second['id'])['dispatch_state'],'paused')
+            self.assertEqual(len(jobs.rows(self.settings)),2)
+            launch.assert_called_once()
+            self.assertEqual(launch.call_args.args[1],first['id'])
+        self.assertEqual(self.errors,[])
+
+    def test_paused_task_bar_exposes_start_without_resuming_queue(self):
+        job=self.paused_job()
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.infrastructure.tasks.ownership import execution_key
+        with patch.object(jobs,'launch',return_value=SimpleNamespace(pid=9999)) as launch:
+            self.page.goto('http://127.0.0.1/modules/collection')
+            bar=self.page.locator('#collection-task-bar')
+            expect(bar.get_by_role('button',name='开始本次采集',exact=True)).to_be_visible()
+            bar.get_by_role('button',name='开始本次采集',exact=True).click()
+            expect(bar).to_contain_text('启动中',timeout=7000)
+            self.assertTrue(CollectionJobStore(self.settings).queue_state(execution_key(self.settings.for_platform('taobao')))['paused'])
+            launch.assert_called_once()
+            self.assertEqual(launch.call_args.args[1],job['id'])
+        self.assertEqual(self.errors,[])
+
+    def test_start_busy_error_is_visible_and_saved_request_remains_available(self):
+        job=self.paused_job()
+        from ecommerce.modules.collection import dispatch
+        from ecommerce.shared.exceptions import TaskBusy
+        with patch.object(dispatch,'start_job',side_effect=TaskBusy('浏览器繁忙，本次申请保留等待')):
+            self.page.goto('http://127.0.0.1/modules/collection')
+            card=self.page.locator(f'[data-job-id="{job["id"]}"]')
+            card.get_by_role('button',name='开始本次采集',exact=True).click()
+            expect(card.get_by_role('alert')).to_contain_text('保留等待')
+            expect(card.get_by_role('button',name='开始本次采集',exact=True)).to_be_enabled()
+            self.assertEqual(jobs.read(self.settings,job['id'])['dispatch_state'],'paused')
+        self.assertEqual(self.errors,[])
+
 
 if __name__=='__main__':unittest.main()

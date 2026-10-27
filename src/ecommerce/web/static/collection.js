@@ -18,6 +18,9 @@
   let submitting = false;
   let stateKnown = false;
   let lastConfirmed = null;
+  let queuePaused = false;
+  const startingJobs = new Set();
+  const startFeedback = new Map();
   const pendingSubmissions = new Map();
   const endpoint = job => job.status_url || `/api/collection-jobs/${job.id}`;
   const targetLabel = job => job.mode === 'keyword' ? `关键词“${job.options.keyword}”` : `商品 ${job.product_id}`;
@@ -39,6 +42,34 @@
     const node = document.createElement('a');
     node.className = `button action-button ${color}`; node.textContent = label; node.href = url;
     return node;
+  }
+
+  function executingJob() {
+    return [...tracked.values()].find(job => !job.done && !['queued','paused'].includes(job.state));
+  }
+
+  function startButton(job) {
+    if (!job.can_start || job.done) return null;
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'button action-button action-primary'; button.dataset.startJob = job.id;
+    button.textContent = startingJobs.has(job.id) ? '正在启动…' : '开始本次采集';
+    button.disabled = !stateKnown || startingJobs.size > 0 || Boolean(executingJob());
+    button.title = executingJob() ? '当前浏览器正在采集，结束后可开始本次申请' : '仅启动此申请，其他暂停申请保持暂停';
+    button.addEventListener('click',() => startSavedJob(job));
+    return button;
+  }
+
+  async function startSavedJob(job) {
+    if (!stateKnown || startingJobs.size || executingJob()) return;
+    startingJobs.add(job.id); startFeedback.delete(job.id); render();
+    try {
+      const updated = await api(`${endpoint(job)}/start`,{});
+      tracked.set(updated.id,updated);
+    } catch (error) {
+      startFeedback.set(job.id,error.message);
+    } finally {
+      startingJobs.delete(job.id); render(); await refresh();
+    }
   }
 
   function renderCard(job) {
@@ -133,10 +164,11 @@
   function render() {
     const jobs = [...tracked.values()];
     const current = jobs.find(job => !job.done && !['queued','paused'].includes(job.state)) || jobs.find(job => !job.done);
+    jobs.filter(job => !job.can_start).forEach(job => startFeedback.delete(job.id));
     const submit = document.getElementById('collection-submit');
     if (submit) {
-      submit.disabled = submitting || !stateKnown || submit.closest('fieldset').disabled;
-      submit.textContent = submitting ? '正在提交…' : current ? '加入采集队列' : '开始采集';
+      submit.disabled = submitting || startingJobs.size > 0 || !stateKnown || submit.closest('fieldset').disabled;
+      submit.textContent = submitting ? '正在提交…' : executingJob() ? '加入采集队列' : queuePaused ? '保存采集申请' : '开始采集';
     }
     document.querySelectorAll('.module-collect').forEach(button => button.disabled = submitting || !stateKnown);
     document.querySelectorAll('.collect-remaining').forEach(button => {
@@ -159,7 +191,10 @@
     if (current) {
       const message = document.createElement('span');
       message.textContent = `${targetLabel(current)} · ${jobLabel(current)} · ${stateLabel(current)}。${current.message}`;
+      if (startFeedback.has(current.id)) message.textContent += `；${startFeedback.get(current.id)}`;
       bar.append(message);
+      const start = startButton(current);
+      if (start) bar.append(start);
       if (current.product_url) bar.append(link('查看商品',current.product_url));
       bar.append(link('查看日志',current.logs_url));
       const stop = document.createElement('button'); stop.type = 'button'; stop.className = 'button action-button action-danger'; stop.textContent = '停止采集';
@@ -224,6 +259,7 @@
     const list = document.getElementById('collection-queue-list');
     if (!list) return;
     const data = await api('/api/collection-queue');
+    queuePaused = Boolean(data.paused);
     list.replaceChildren();
     data.items.forEach(item => {
       const line = document.createElement('p'); line.textContent = `${item.product_id ? `商品 ${item.product_id}` : `关键词“${item.options?.keyword || '未记录'}”`} · ${labels[item.module] || '所选模块'} · ${{waiting:'等待当前采集结束',paused:'已暂停，等待手动继续',claimed:'已派发'}[item.state] || item.state}`;
@@ -248,6 +284,8 @@
       } else message.textContent = job.message;
       const time = document.createElement('small'); time.textContent = new Date(job.created_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false});
       const actions = document.createElement('div'); actions.className = 'module-actions';
+      const start = startButton(job);
+      if (start) actions.append(start);
       actions.append(link('查看日志',job.logs_url));
       if (job.result_url) actions.append(link(job.done && job.valid ? '查看采集结果' : '查看已有资料',job.result_url,'action-primary'));
       if (!job.done) {
@@ -293,7 +331,12 @@
           : `本次设置：${job.modules.map(module => labels[module]).join('、')}${job.modules.includes('reviews') ? ` · 评价${job.options.all_reviews ? '不限数量' : '最多 100 条'}` : ''}${job.modules.includes('questions') ? ` · 问大家${job.options.all_questions ? '不限数量' : '最多 50 题'}` : ''}`;
         article.append(configuration);
       }
-      article.append(message,actions); container.append(article);
+      article.append(message);
+      if (startFeedback.has(job.id)) {
+        const feedback = document.createElement('p'); feedback.className = 'collection-start-feedback'; feedback.setAttribute('role','alert');
+        feedback.textContent = startFeedback.get(job.id); article.append(feedback);
+      }
+      article.append(actions); container.append(article);
     });
   }
 
@@ -328,6 +371,7 @@
       stateKnown = false;
       const submit = document.getElementById('collection-submit');
       if (submit) submit.disabled = true;
+      document.querySelectorAll('[data-start-job]').forEach(button => button.disabled = true);
       const historyStatus = document.getElementById('collection-history-status');
       if (historyStatus) historyStatus.textContent = `任务状态暂时无法读取：${error.message}`;
       bar.hidden = false; bar.textContent = `数据库任务状态暂不可用：${error.message}。${lastConfirmed ? `最后确认时间：${lastConfirmed.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai'})}。` : ''}不会自动重新采集。`; bar.dataset.error = 'true';
@@ -415,7 +459,9 @@
       submitting = true; render(); get('submit-status').textContent = '正在提交采集任务…';
       try {
         const job = await api('/api/collection-jobs',body); tracked.set(job.id,job);
-        get('submit-status').textContent = `申请已保存：${stateLabel(job)}。下方可查看队列、进度和结果。`;
+        get('submit-status').textContent = job.can_start
+          ? `申请已保存：${stateLabel(job)}。点击任务卡或底部状态栏的“开始本次采集”即可执行。`
+          : `申请已保存：${stateLabel(job)}。下方可查看队列、进度和结果。`;
       } catch (error) { get('submit-status').textContent = error.message; }
       finally { submitting = false; render(); await refresh(); }
     });

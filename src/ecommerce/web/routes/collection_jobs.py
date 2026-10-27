@@ -135,6 +135,15 @@ def job_control(identifier):
     return control(None,identifier)
 
 
+@collection_jobs.post('/api/collection-jobs/<identifier>/start')
+def start_job(identifier):
+    """只启动已保存的选定申请，参数不能覆盖原范围；参数：编号及空对象；返回：公开状态。"""
+    if request.get_json()!={}:
+        raise ValueError('开始本次采集只接受已保存的申请，不能修改参数')
+    from ecommerce.modules.collection import dispatch
+    return jsonify(present(dispatch.start_job(current_app.config['SETTINGS'],identifier))),202
+
+
 @collection_jobs.get('/api/collection-jobs/active')
 def active():
     """恢复全站正在进行的网页采集；参数：无；返回：公开任务列表。"""

@@ -186,3 +186,7 @@ img[data-image-preview-ready]{cursor:zoom-in}
 .log-row-error .log-message,.log-row-critical .log-message{background:#fff0f0;border-left:3px solid #c13f3f;color:#942828}
 .collection-module-error{padding:12px 16px;margin:12px 0;background:#fff0f0;border-left:4px solid #c13f3f;color:#942828;border-radius:6px}
 #collection-recovery-dialog{max-width:760px;width:calc(100% - 48px);max-height:80vh;overflow:auto;padding:24px;border:1px solid #dce4df;border-radius:12px}
+
+/* 待执行申请提供单次开始入口，错误信息与队列控制靠近当前任务。 */
+.collection-queue{margin-top:26px}.collection-queue h2{margin-top:0}.collection-queue>p{font-size:13px;line-height:1.8;color:var(--muted)}
+.collection-start-feedback{color:#942828}
