@@ -61,6 +61,7 @@ class MySQLCollectionRecoveryTests(unittest.TestCase):
             for name in PRUNE_ORDER:
                 c.execute(self.t[name].delete().where(self.t[name].c.batch_id.in_(ids)))
             c.execute(self.t['media_references'].delete().where(self.t['media_references'].c.task_id.in_(task_ids)))
+            c.execute(self.t['products'].update().where(self.t['products'].c.title_source_batch_id.in_(ids)).values(title_source_batch_id=None))
             c.execute(self.t['collection_batches'].update().where(self.t['collection_batches'].c.id.in_(ids)).values(step_id=None,run_id=None,derived_from_batch_id=None))
             c.execute(self.t['collection_batches'].delete().where(self.t['collection_batches'].c.id.in_(ids)))
             run_ids=list(c.scalars(sa.select(self.t['collection_runs'].c.id).where(self.t['collection_runs'].c.task_id.in_(task_ids))))
@@ -93,6 +94,126 @@ class MySQLCollectionRecoveryTests(unittest.TestCase):
     def checkpoint(self,task_id,revision=1,parent=None):
         return {'id':self.root,'options':{'mode':'detail','input':self.product,'modules':['skus'],'all_reviews':False,'all_questions':False},
                 'parent_task_id':parent,'revision':revision,'checkpoint':{'pages':{},'products':{},'finished':False}}
+
+    def list_page_source(self,legacy=False):
+        """登记合成列表原件、批次和计划；参数：是否模拟旧缺哈希；返回：范围、页描述、原件。"""
+        from ecommerce.modules.collection.persistence import list_checkpoint
+        options={'mode':'keyword','keyword':'合成手机壳','pages':2,'limit':2,'with_details':False}
+        record={'schema_version':6,'task_id':self.root,'batch_id':self.batch,'keyword':options['keyword'],
+            'search_method':'keyword','page_number':1,'sort_label':'销量','collection_status':'limit_reached',
+            'scope':'search_page_loaded_cards','requested_limit':2,'collected_count':2,
+            'captured_at':'2026-10-27T12:00:00+08:00','items':[
+                {'product_id':self.product,'product_index':i,'slot_index':i,'title':'合成展示位','price_text':'1元','price_value':'1'} for i in (1,2)]}
+        path=self.settings.workspace/'output/raw/taobao_products'/f'{self.batch}.json'
+        path.parent.mkdir(parents=True);atomic_json(path,record)
+        saved=list_checkpoint(record,path)
+        if legacy:saved.pop('json_sha256')
+        with self.store.engine.begin() as c:
+            CollectionWriter(self.settings,c).apply(build_snapshot(self.settings,'batch',record,path,module='list'),{})
+            apply_checkpoint(c,self.t,{'id':self.root,'options':options,'parent_task_id':None,'revision':1,
+                'checkpoint':{'pages':{'1':saved},'products':{},'finished':False}},self.root)
+        return options,saved,path
+
+    def test_legacy_page_hash_is_verified_from_registered_source_without_preview_writes(self):
+        """旧检查点缺哈希时只能从本计划批次登记核验补足；预览和核验不修改数据库。"""
+        from ecommerce.modules.collection.recovery import preview
+        options,saved,path=self.list_page_source(legacy=True)
+        before=self.store.read(self.root)
+        verified=self.store.validate_list_page(self.root,1,saved,options)
+        self.assertEqual(verified['json_sha256'],hashlib.sha256(path.read_bytes()).hexdigest())
+        view=preview(self.settings,self.root)
+        self.assertEqual(view['next']['page'],2)
+        self.assertEqual(view['page_checks'],[{'page_number':1,'collected_count':2,'needs_hash_repair':True}])
+        self.assertEqual(self.store.read(self.root),before)
+
+    def test_missing_modified_and_untrusted_page_sources_are_rejected(self):
+        """真实缺文件、内容变化、跨计划/范围、清单和已提供的错误哈希均不得自动补齐。"""
+        from copy import deepcopy
+        options,saved,path=self.list_page_source(legacy=True)
+        original=path.read_bytes();before=self.store.read(self.root)
+        path.unlink()
+        with self.assertRaisesRegex(ValueError,'文件不存在'):self.store.validate_list_page(self.root,1,saved,options)
+        path.write_bytes(original+b' ')
+        with self.assertRaisesRegex(ValueError,'内容与登记'):self.store.validate_list_page(self.root,1,saved,options)
+        path.write_bytes(original)
+        cases=[(self.child,saved,options),(self.root,{**saved,'json_sha256':'f'*64},options),
+            (self.root,{**saved,'product_ids':['999']},options),(self.root,saved,{**options,'keyword':'其他范围'}),
+            (self.root,saved,{**options,'limit':3}),(self.root,{**saved,'json_path':str(path.parent/'other.json')},options)]
+        for plan,value,scope in cases:
+            with self.subTest(plan=plan,value=value):
+                with self.assertRaises(ValueError):self.store.validate_list_page(plan,1,value,scope)
+        self.assertEqual(self.store.read(self.root),before)
+
+    def run_list_stop_resume(self,legacy):
+        """完整执行保存、停止和续采链；参数：是否模拟旧字段丢失；返回：无。"""
+        from types import SimpleNamespace
+        from copy import deepcopy
+        from ecommerce.modules.collection import service,recovery,persistence
+        from ecommerce.modules.collection.export import save_batch
+        from ecommerce.infrastructure.tasks.events import storage_checkpoint
+        from ecommerce.infrastructure.tasks.runner import run_task,current_task
+        from ecommerce.shared.exceptions import TaskStopped
+        options={'mode':'keyword','keyword':'合成手机壳','pages':2,'limit':2,'with_details':False}
+        with self.store.engine.begin() as c:c.execute(self.t['tasks'].delete().where(self.t['tasks'].c.id.in_([self.root,self.child])))
+        settings=self.settings.for_platform('taobao');page=MagicMock();page.is_closed.return_value=False
+        result=SimpleNamespace(keyword=options['keyword'],page=page,status='results')
+        calls=[];phase={'value':1}
+        def guard_factory():
+            value=MagicMock(task_id=current_task()[1]);value.checkpoint.side_effect=lambda *a,**kw:storage_checkpoint('合成检查点')
+            return value
+        def collect(settings,context,result,**kwargs):
+            number=kwargs['page_number'];calls.append(number)
+            record={'schema_version':6,'task_id':current_task()[1],'batch_id':current_task()[1]+f'-list-{number}',
+                'keyword':options['keyword'],'search_method':'keyword','page_number':number,'sort_label':'销量',
+                'collection_status':'limit_reached','scope':'search_page_loaded_cards','requested_limit':2,'collected_count':2,
+                'captured_at':'2026-10-27T12:00:00+08:00','items':[
+                    {'product_id':self.product,'product_index':i,'slot_index':i,'title':'合成展示位','price_text':'1元','price_value':'1'} for i in (1,2)]}
+            path,_=save_batch(settings.workspace/'output/raw/taobao_products',record)
+            persistence.capture_list(settings,record,path);storage_checkpoint('合成页面确认入库')
+            return persistence.list_checkpoint(record,path)
+        def advance(*args):
+            if phase['value']==1:raise TaskStopped('合成停止：第1页已入库，第2页未采集')
+            return result,{'synthetic':True}
+        with ExitStack() as stack:
+            browser=stack.enter_context(patch.object(service,'browser_session'))
+            browser.return_value.__enter__.return_value=MagicMock(),page
+            stack.enter_context(patch.object(service,'authenticate',return_value=page))
+            stack.enter_context(patch.object(service,'open_search',return_value=result))
+            stack.enter_context(patch.object(service,'active_guard',side_effect=guard_factory))
+            stack.enter_context(patch.object(service,'collect_from_search',side_effect=collect))
+            stack.enter_context(patch('ecommerce.platforms.taobao.pagination.advance_next_page',side_effect=advance))
+            stack.enter_context(patch('ecommerce.platforms.taobao.sorting.sort_by_sales',return_value=result))
+            first=run_task(settings,'synthetic.list_stop',lambda:service.collect_keyword(settings,options['keyword'],
+                pages=2,limit=2,wait=False),task_id=self.root)
+            self.assertEqual(first.status,'cancelled');original=self.store.read(self.root)
+            self.assertIn('json_sha256',original['checkpoint']['pages']['1'])
+            if legacy:
+                checkpoint=deepcopy(original['checkpoint']);checkpoint['pages']['1'].pop('json_sha256')
+                with self.store.engine.begin() as c:c.execute(self.t['collection_plans'].update().where(
+                    self.t['collection_plans'].c.id==self.root).values(checkpoint=checkpoint))
+            phase['value']=2
+            second=run_task(settings,'synthetic.list_resume',lambda:service.collect_keyword(settings,options['keyword'],
+                pages=2,limit=2,wait=False,resume_task_id=self.root),task_id=self.child)
+            self.assertEqual(second.status,'succeeded')
+        latest=self.store.read(self.child)
+        self.assertTrue(latest['checkpoint']['finished']);self.assertEqual(calls,[1,2])
+        self.assertTrue(all(value.get('json_sha256') for value in latest['checkpoint']['pages'].values()))
+        with self.store.connection() as c:
+            b=self.t['collection_batches'];events=self.t['task_events']
+            rows=c.execute(sa.select(b.c.task_id,b.c.page_number).where(b.c.task_id.in_([self.root,self.child])).order_by(b.c.page_number)).all()
+            self.assertEqual(rows,[(self.root,1),(self.child,2)])
+            self.assertEqual(c.scalar(sa.select(self.t['tasks'].c.status).where(self.t['tasks'].c.id==self.root)),'cancelled')
+            repairs=c.scalar(sa.select(sa.func.count()).select_from(events).where(events.c.task_id==self.child,
+                events.c.event_type=='collection_page_checkpoint_repaired'))
+            self.assertEqual(repairs,int(legacy))
+
+    def test_list_stop_resume_preserves_hash_and_reuses_first_page(self):
+        """新计划保存和停止后只采剩余页，不丢校验值、不重复入库原页。"""
+        self.run_list_stop_resume(False)
+
+    def test_legacy_list_stop_resume_repairs_hash_only_in_new_execution(self):
+        """旧计划在新续采执行中按可信登记补齐，原停止任务仍保持原结论。"""
+        self.run_list_stop_resume(True)
 
     def test_plan_claim_is_idempotent_and_old_or_changed_scope_cannot_overwrite(self):
         with self.store.engine.begin() as c:

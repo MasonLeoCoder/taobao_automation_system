@@ -1,6 +1,7 @@
 """原计划内的页、商品、模块恢复；未完成模块一律清理后新建批次重采。"""
 from copy import deepcopy
 import json
+import logging
 from pathlib import Path
 from ecommerce.infrastructure.tasks.events import current_events, emit_event
 from ecommerce.infrastructure.storage.collection_recovery import RecoveryStore, COMPLETE
@@ -139,12 +140,24 @@ class RecoverySession:
         self.changed()
 
     def page(self, number, collected=None):
-        """读取或保存已确认列表清单引用；参数：页码、可选批次；返回：批次或空。"""
-        if collected is not None:
-            self.state['pages'][str(number)] = deepcopy(collected)
-            self.persist('列表批次及本页商品清单已固定')
+        """核验后读取或保存完整列表页；参数：页码、可选批次；返回：含可信校验值的批次或空。"""
+        saved=collected if collected is not None else self.state['pages'].get(str(number))
+        if saved is None:return None
+        try:
+            verified=self.store.validate_list_page(self.id,number,saved,self.options)
+        except ValueError as error:
+            message=f"原计划已保存{len(self.state['pages'])}/{self.options['pages']}页；{error}；已中断，保留现场，请核对后重新续采"
+            logging.getLogger(__name__).error(message)
+            raise NeedsAttention(message) from error
+        repaired=saved.get('json_sha256') is None
+        if collected is not None or repaired:
+            self.state['pages'][str(number)]=verified
+            self.persist('已核验并补齐列表检查点校验值' if repaired else '列表批次及本页商品清单已固定')
             self.session.checkpoint('列表恢复检查点已入库')
-        return self.state['pages'].get(str(number))
+            if repaired:
+                emit_event('collection_page_checkpoint_repaired','原批次、原件登记和实际文件一致，已补齐列表检查点校验值',
+                    level='WARNING',details={'page_number':number,'source_batch_key':verified['source_batch_key']})
+        return deepcopy(verified)
 
     def finish(self):
         """整批结束保留模块错误，不把失败改成完成；参数：无；返回：汇总计数。"""
@@ -188,15 +201,17 @@ def preview(settings, task_id):
     pending=[]
     pages=plan['checkpoint']['pages']
     products=[]
+    page_checks=[]
     if plan['options']['mode']=='detail':
         from ecommerce.platforms.taobao.detail import resolve_detail_input
         products=[(None,resolve_detail_input(plan['options']['input']).item_id)]
     else:
-        from ecommerce.infrastructure.storage.collection_snapshot import owned_path
         for number,collected in sorted(pages.items(),key=lambda pair:int(pair[0])):
-            path=owned_path(settings.workspace,collected['json_path'])
-            if path.is_file():
-                products.extend((int(number),row['product_id']) for row in json.loads(path.read_text(encoding='utf-8'))['items'])
+            # 预览仅核验，缺失校验值由新续采执行持久化补齐，不修改旧计划。
+            verified=store.validate_list_page(plan['id'],int(number),collected,plan['options'])
+            page_checks.append({'page_number':int(number),'collected_count':collected['collected_count'],
+                'needs_hash_repair':collected.get('json_sha256') is None})
+            products.extend((int(number),product_id) for product_id in verified['product_ids'])
     for page,product_id in products:
         for module in selected:
             value=plan['checkpoint']['products'].get(product_id,{}).get(module,{})
@@ -207,4 +222,5 @@ def preview(settings, task_id):
         next_item={'page':max([int(n) for n in pages],default=0)+1,'product_id':None,'module':'list'}
     return {'plan_id':plan['id'],'revision':plan['revision'],'options':plan['options'],'items':items,
             'next':next_item,'pending':pending,
-            'pages':sorted(int(n) for n in plan['checkpoint']['pages']), 'finished':plan['checkpoint'].get('finished',False)}
+            'pages':sorted(int(n) for n in plan['checkpoint']['pages']),'page_checks':page_checks,
+            'finished':plan['checkpoint'].get('finished',False)}

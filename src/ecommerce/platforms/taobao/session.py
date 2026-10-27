@@ -23,6 +23,6 @@ def browser_session(settings, on_attention=None):
             try:
                 yield context, page
             except NeedsAttention as error:
-                if guard.failure is not None and not settings.headless:
+                if not settings.headless:
                     guard.hold_without_input(reason=str(error))
                 raise

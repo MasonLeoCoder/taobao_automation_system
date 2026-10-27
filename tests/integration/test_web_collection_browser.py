@@ -840,5 +840,52 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.assertAlmostEqual(actual['top'],latest['top'],delta=1)
         self.assertEqual(self.errors,[])
 
+    def keyword_recovery_job(self,halted=False):
+        """准备原计划已有一页、本次尚未处理的合成续采；参数：是否保留现场；返回：任务。"""
+        from ecommerce.modules.collection import web_collection
+        from sqlalchemy import update
+        job=web_collection.start_configured(self.settings,{'mode':'keyword','keyword':'合成手机壳','pages':2,'limit':2,'with_details':False})
+        row=jobs.read(self.settings,job['id'])
+        row.update(state='running' if halted else 'needs_attention',recovery_ready=True,
+            message='合成检查点缺少校验值，已保留原页',progress={'completed_page_count':0})
+        self.save(row)
+        table=self.job_db.tables['collection_plans']
+        with self.job_db.engine.begin() as c:
+            c.execute(update(table).where(table.c.id==job['id']).values(checkpoint={
+                'pages':{'1':{'page_number':1,'collected_count':2}},'products':{},'finished':False}))
+        if halted:self.job_db.prompt(job,{'halted':True,'message':'合成数据校验异常，保留现场，请停止后处理','allowed':[]})
+        return job
+
+    def test_keyword_recovery_shows_prior_pages_and_readonly_hash_repair_notice(self):
+        """原计划累计和本次执行分开显示；旧哈希兼容预览不启动采集。"""
+        from ecommerce.modules.collection import dispatch
+        job=self.keyword_recovery_job()
+        view={'revision':1,'finished':False,'options':job['options'],'pages':[1],'items':[],
+            'page_checks':[{'page_number':1,'collected_count':2,'needs_hash_repair':True}],
+            'next':{'page':2,'product_id':None,'module':'list'}}
+        with patch.object(dispatch,'preview',return_value=view),patch.object(dispatch,'resume') as resume:
+            self.page.goto('http://127.0.0.1/modules/collection')
+            card=self.page.locator(f'[data-job-id="{job["id"]}"]')
+            expect(card).to_contain_text('原计划已保存 1/2 页')
+            expect(card).to_contain_text('本次执行已处理 0/2 页')
+            card.get_by_role('button',name='查看恢复计划',exact=True).click()
+            expect(self.page.locator('#collection-recovery-plan')).to_contain_text('已核对原批次及原件一致')
+            expect(self.page.locator('#collection-recovery-status')).to_contain_text('第 2 页')
+            expect(self.page.locator('#collection-recovery-confirm')).to_be_enabled()
+            resume.assert_not_called()
+        self.assertEqual(self.errors,[])
+
+    def test_halted_keyword_job_keeps_explicit_stop_without_unsafe_continue(self):
+        """数据校验中断保留现场时显示原因和停止，不提供绕过校验的继续。"""
+        job=self.keyword_recovery_job(halted=True)
+        self.page.goto('http://127.0.0.1/modules/collection')
+        bar=self.page.locator('#collection-task-bar')
+        expect(bar).to_contain_text('采集已中断（保留现场）')
+        expect(bar).to_contain_text('原计划已保存 1/2 页')
+        expect(bar.get_by_role('button',name='停止采集',exact=True)).to_be_enabled()
+        expect(self.page.get_by_role('button',name='继续',exact=True)).to_have_count(0)
+        expect(self.page.locator('#collection-attention')).not_to_be_visible()
+        self.assertEqual(self.errors,[])
+
 
 if __name__=='__main__':unittest.main()

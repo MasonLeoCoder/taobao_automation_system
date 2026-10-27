@@ -55,6 +55,18 @@ def capture_page(settings,record,path,record_type):
     session.collection(build_snapshot(settings,'page',record,path,module=record_type),{})
 
 
+def list_checkpoint(record,path):
+    """生成完整列表页检查点；参数：已保存结果、原件路径；返回：含校验值的页描述。"""
+    from ecommerce.infrastructure.storage.collection_snapshot import digest_file
+    return {'message':f"原计划第{record['page_number']}页列表已保存，沿用原商品清单",
+        'json_path':str(path),'csv_path':str(Path(path).with_suffix('.csv')),
+        'collected_count':record['collected_count'],'field_gap_count':record.get('field_gap_count',0),
+        'page_number':record['page_number'],'source_batch_key':record['batch_id'],
+        'product_ids':[item.get('product_id') for item in record['items']],
+        'image_downloads':record.get('image_downloads',{}),'empty':not record['items'],
+        'json_sha256':digest_file(path)}
+
+
 def capture_list(settings,record,path):
     """保存列表批次；参数：配置、结果、原件路径；返回：无，不修改导出。"""
     if settings.collection_backend=='mysql':
@@ -63,15 +75,7 @@ def capture_list(settings,record,path):
             raise RuntimeError('列表入库缺少当前任务归属')
         tracker=getattr(session,'recovery',None)
         if tracker:
-            from ecommerce.infrastructure.storage.collection_snapshot import digest_file
-            tracker.state['pages'][str(record['page_number'])]={
-                'message':f"原计划第{record['page_number']}页列表已保存，沿用原商品清单",
-                'json_path':str(path),'csv_path':str(Path(path).with_suffix('.csv')),
-                'collected_count':record['collected_count'],'field_gap_count':record.get('field_gap_count',0),
-                'page_number':record['page_number'],'source_batch_key':record['batch_id'],
-                'product_ids':[item['product_id'] for item in record['items']],
-                'image_downloads':record.get('image_downloads',{}),'empty':not record['items'],
-                'json_sha256':digest_file(path)}
+            tracker.state['pages'][str(record['page_number'])]=list_checkpoint(record,path)
             tracker.changed()
         session.collection(build_snapshot(settings,'batch',record,path,module='list'),{})
 

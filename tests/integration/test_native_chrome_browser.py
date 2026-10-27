@@ -14,6 +14,38 @@ from ecommerce.shared.config import load_settings
 
 @unittest.skipUnless(os.environ.get("TAOBAO_SYSTEM_CHROME_TESTS") == "1", "显式启用系统 Chrome 本地测试")
 class NativeChromeBrowserTests(unittest.TestCase):
+    def test_business_attention_keeps_actual_window_until_explicit_stop(self):
+        """普通业务异常保留本地Chrome现场，收到明确停止才退出；不用真实登录资料。"""
+        import json
+        import threading
+        import time
+        from ecommerce.infrastructure.tasks.ownership import atomic_json
+        from ecommerce.shared.exceptions import NeedsAttention,TaskStopped
+        with tempfile.TemporaryDirectory() as folder:
+            settings=replace(load_settings(root=Path(folder)).for_platform('taobao'),
+                taobao_browser_channel='chrome',taobao_browser_mode='native_cdp')
+            observed=threading.Event();done=threading.Event();worker=None
+            try:
+                with self.assertRaises(TaskStopped),guarded_browser_session(settings) as (context,page):
+                    context.route('**/*',lambda route:route.abort())
+                    guard=active_guard();self.assertIsNone(guard.failure)
+                    def stop_after_hold():
+                        deadline=time.monotonic()+8
+                        while not done.is_set() and time.monotonic()<deadline:
+                            if guard.control_state_path.exists():
+                                try:state=json.loads(guard.control_state_path.read_text(encoding='utf-8'))
+                                except (ValueError,OSError):state={}
+                                if state.get('halted'):
+                                    observed.set();time.sleep(.2)
+                                    atomic_json(guard.control_path,{'action':'stop'});return
+                            time.sleep(.02)
+                    worker=threading.Thread(target=stop_after_hold,daemon=True);worker.start()
+                    raise NeedsAttention('合成文件校验异常，需要保留现场')
+                self.assertTrue(observed.is_set())
+            finally:
+                done.set()
+                if worker:worker.join(timeout=2)
+
     def test_guarded_session_restores_session_cookie_without_rolling_back_profile(self):
         """关闭重开后补回会话 Cookie，同时保留资料中较新的持久 Cookie。"""
         try:

@@ -186,10 +186,8 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
                f"主图下载 {image_downloads['downloaded']}/{image_downloads['total']}，"
                f"失败 {image_downloads['failed']}，无地址 {image_downloads['not_applicable']}；"
                f"JSON：{paths[0]}；CSV：{paths[1]}")
-    return {"message": message, "json_path": str(paths[0]), "csv_path": str(paths[1]),
-            "collected_count": len(items), "field_gap_count": parsed["field_gap_count"],
-            "page_number": page_number, "source_batch_key": batch_id,
-            "product_ids": [item.get('product_id') for item in items], "image_downloads": image_downloads, "empty": not items}
+    from ecommerce.modules.collection.persistence import list_checkpoint
+    return {**list_checkpoint(payload,paths[0]),'message':message}
 
 
 def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_attention=None, with_details=False, on_login_required=None, on_progress=None, resume_task_id=None):
@@ -248,10 +246,6 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
                     on_progress({'current_page':number,'current_product':None,'current_module':None})
                 collected = tracker.page(number) if tracker else None
                 if collected:
-                    from ecommerce.infrastructure.storage.collection_snapshot import owned_path,digest_file
-                    cached=owned_path(settings.workspace,collected['json_path'])
-                    if not cached.is_file() or digest_file(cached)!=collected.get('json_sha256'):
-                        raise NeedsAttention('已保存列表原件缺失或变化，请核对后重新采集，未猜测商品清单')
                     if number==1:
                         from ecommerce.platforms.taobao.sorting import sort_by_sales
                         result=sort_by_sales(result,settings.timeout_ms)

@@ -217,6 +217,7 @@ def public_status(settings, row):
             'can_start':row.get('dispatch_state') in {'waiting','paused'} and not row.get('task_id')
                 and not row.get('stop_requested') and not row.get('migration_pending'),
             'resume_task_id':row.get('resume_task_id'),'failures':result.get('failures',[]),'counts':result.get('counts',{}),
+            'plan_progress':result.get('plan_progress'),
             **bulk_progress(row,result)}
 
 
@@ -247,7 +248,9 @@ def saved_result(settings,row):
             valid=(bool(plan['checkpoint']['pages']) if row.get('mode')=='keyword' else bool(values)) and all(v['state']=='complete' or v.get('resolved_state')=='complete' for v in values)
             return {'batch_id':None,'valid':bool(valid),
                 'satisfied':bool(plan['checkpoint'].get('finished')),'has_errors':bool(failures),
-                'failures':failures,'modules':modules,'counts':plan['checkpoint'].get('counts',{}),'label':'查看采集结果'}
+                'failures':failures,'modules':modules,'counts':plan['checkpoint'].get('counts',{}),'label':'查看采集结果',
+                'plan_progress':{'saved_page_count':len(plan['checkpoint']['pages']),
+                    'saved_item_count':sum(page.get('collected_count',0) for page in plan['checkpoint']['pages'].values())} if row.get('mode')=='keyword' else None}
     if row.get('mode')=='keyword':
         try:
             pages=query(settings,'browse_search',task_id=row['id'])['pages']

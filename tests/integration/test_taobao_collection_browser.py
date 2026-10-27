@@ -145,8 +145,10 @@ class TaobaoCollectionBrowserTests(unittest.TestCase):
             result = open_search(self.context, self.home, "粘毛器", 1000)
             self.assertEqual(result.status, "results")
             self.assertEqual(result.visible_items, 0)
-            service.collect_from_search(self.settings, self.context, result, limit=1)
+            collected=service.collect_from_search(self.settings, self.context, result, limit=1)
         self.assertEqual(self.read_payload()["collected_count"], 1)
+        from ecommerce.infrastructure.storage.collection_snapshot import digest_file
+        self.assertEqual(collected['json_sha256'],digest_file(Path(collected['json_path'])))
 
     def test_default_collect_exports_full_page_over_fifty_products_and_skips_suggestions(self):
         self.body = full_page_html()

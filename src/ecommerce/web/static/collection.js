@@ -127,7 +127,10 @@
   function jobLabel(job) {
     if (job.mode === 'keyword') {
       const progress = job.progress || {};
-      return `列表采集 · 已保存 ${progress.completed_page_count || 0}/${job.options.pages} 页 · ${progress.collected_count || 0} 条商品记录${!job.done && progress.current_page ? ` · 当前第 ${progress.current_page} 页` : ''}${job.options.with_details ? ` · 详情已处理 ${progress.detail_completed_count || 0} 个商品` : ''}${progress.current_product ? ` · 当前商品 ${progress.current_product}` : ''}${progress.current_module ? ` · ${labels[progress.current_module]}` : ''}`;
+      const saved = job.plan_progress
+        ? `原计划已保存 ${job.plan_progress.saved_page_count}/${job.options.pages} 页 · 累计 ${job.plan_progress.saved_item_count} 条商品记录 · 本次执行已处理 ${progress.completed_page_count || 0}/${job.options.pages} 页`
+        : `已保存 ${progress.completed_page_count || 0}/${job.options.pages} 页 · ${progress.collected_count || 0} 条商品记录`;
+      return `列表采集 · ${saved}${!job.done && progress.current_page ? ` · 当前第 ${progress.current_page} 页` : ''}${job.options.with_details ? ` · 详情已处理 ${progress.detail_completed_count || 0} 个商品` : ''}${progress.current_product ? ` · 当前商品 ${progress.current_product}` : ''}${progress.current_module ? ` · ${labels[progress.current_module]}` : ''}`;
     }
     if (job.mode === 'detail') return `详情采集 · 已处理 ${job.processed_count || job.completed_count}/${job.total_count} 项 · 采集成功 ${job.collected_count || 0} 项${job.failures?.length ? ` · 失败待补采 ${job.failures.length} 项` : ''}${job.skipped_count ? ` · 本次跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
     if (job.mode !== 'remaining') return labels[job.module] || job.module;
@@ -239,6 +242,12 @@
         ? `每页${view.options.limit === null ? '不限数量' : `最多 ${view.options.limit} 个商品`}；${view.options.with_details ? '连带九个详情模块，评价100条、问题50题' : '仅采集列表'}`
         : `评价${view.options.all_reviews ? '不限数量' : '最多100条'}；问大家${view.options.all_questions ? '不限数量' : '最多50题'}（仅执行所选模块）`;
       content.append(scope);
+      const repairs = (view.page_checks || []).filter(page => page.needs_hash_repair);
+      if (repairs.length) {
+        const repair = document.createElement('p');
+        repair.textContent = `第 ${repairs.map(page => page.page_number).join('、')} 页检查点缺少校验值，已核对原批次及原件一致；确认续采后补齐并复用，预览未修改原计划。`;
+        content.append(repair);
+      }
       const actions = {reuse:'复用已完成结果',manual_retry:'本轮跳过，等待手动补采',clean_restart:'清理未完成结果，新建批次重采'};
       view.items.forEach(item => {
         const line = document.createElement('p');

@@ -2,12 +2,15 @@
 from copy import deepcopy
 from contextlib import contextmanager
 import json
+import hashlib
 from pathlib import Path
+import re
 import sqlalchemy as sa
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError, safe_error
 from ecommerce.infrastructure.storage.task_store import task_store, fingerprint
 from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.storage.collection_snapshot import owned_path, digest_file
+from ecommerce.shared.exceptions import NeedsAttention
 
 COMPLETE = {'complete', 'downloaded', 'no_video', 'no_images', 'no_parameters', 'no_reviews', 'no_questions'}
 
@@ -15,6 +18,10 @@ COMPLETE = {'complete', 'downloaded', 'no_video', 'no_images', 'no_parameters', 
 class RecoveryDataError(MySQLStorageError):
     """计划范围或归属冲突不可通过数据库重试解决。"""
     retryable=False
+
+
+class RecoveryPageError(ValueError,NeedsAttention):
+    """列表检查点或原件不能复用，预览拒绝确认，执行时转为需要人工处理。"""
 
 
 def apply_checkpoint(connection, tables, payload, task_id):
@@ -114,6 +121,61 @@ class RecoveryStore:
         with self.connection() as connection:
             row = connection.execute(sa.select(p).join(e, e.c.plan_id == p.c.id).where(e.c.task_id == task_id)).mappings().one_or_none()
             return dict(row) if row else None
+
+    def validate_list_page(self, plan_id, number, saved, options):
+        """只读核验原计划列表页，缺哈希时使用原文件登记补足；参数：计划、页、描述、范围；返回：完整描述。"""
+        b,e,r,a,l=(self.tables[n] for n in ('collection_batches','collection_plan_executions','media_references','file_assets','list_observations'))
+        def invalid(reason):
+            """生成定位到页的核验错误；参数：原因；返回：异常。"""
+            return RecoveryPageError(f'第{number}页列表复用校验失败：{reason}')
+        if (not isinstance(saved,dict) or type(number) is not int or number<1 or options.get('mode')!='keyword'
+                or number>options['pages'] or saved.get('page_number')!=number):
+            raise invalid('页码与原计划不一致')
+        with self.connection() as connection:
+            batch=connection.execute(sa.select(b).join(e,e.c.task_id==b.c.task_id).where(
+                e.c.plan_id==plan_id,b.c.source_batch_key==saved.get('source_batch_key'),
+                b.c.platform=='taobao',b.c.module=='list')).mappings().one_or_none()
+            if (not batch or batch['page_number']!=number or batch['search_keyword']!=options['keyword']
+                    or batch['requested_limit']!=options['limit'] or batch['visibility']!='published'
+                    or batch['status'] not in {'limit_reached','loaded_cards_below_limit','all_loaded_cards_collected','empty'}):
+                raise invalid('原批次归属、采集范围或完成状态不一致')
+            files=connection.execute(sa.select(a).join(r,r.c.file_asset_id==a.c.id).where(
+                r.c.batch_id==batch['id'],r.c.task_id==batch['task_id'],r.c.role=='source_json')).mappings().all()
+            count=connection.scalar(sa.select(sa.func.count()).select_from(l).where(l.c.batch_id==batch['id']))
+        if len(files)!=1:
+            raise invalid('缺少唯一的原件登记，无法补足检查点校验值')
+        file=files[0]
+        try:
+            path=owned_path(self.settings.workspace,saved['json_path'])
+            registered=owned_path(self.settings.workspace,file['relative_path'])
+        except (KeyError,TypeError,ValueError):
+            raise invalid('检查点原件路径无效') from None
+        if path!=registered or file['root_key']!='workspace' or file['availability']!='present':
+            raise invalid('检查点路径与原件登记不一致或原件登记已失效')
+        digest=file['sha256']
+        if not isinstance(digest,str) or not re.fullmatch('[a-f0-9]{64}',digest):
+            raise invalid('原件登记缺少可信校验值')
+        if saved.get('json_sha256') is not None and saved['json_sha256']!=digest:
+            raise invalid('检查点校验值与原件登记不一致')
+        try:
+            if not path.is_file():raise invalid('原件文件不存在')
+            raw=path.read_bytes()
+            if len(raw)!=file['size_bytes'] or hashlib.sha256(raw).hexdigest()!=digest:
+                raise invalid('原件文件内容与登记校验值不一致')
+            record=json.loads(raw.decode('utf-8'))
+        except OSError:
+            raise invalid('原件文件无法读取，请检查占用或权限') from None
+        except (TypeError,UnicodeError,json.JSONDecodeError):
+            raise invalid('原件JSON格式无效') from None
+        items=record.get('items') if isinstance(record,dict) else None
+        if (not isinstance(items,list) or any(not isinstance(item,dict) for item in items)
+                or record.get('task_id')!=batch['task_id'] or record.get('batch_id')!=batch['source_batch_key']
+                or record.get('keyword')!=options['keyword'] or record.get('page_number')!=number
+                or record.get('requested_limit')!=options['limit'] or record.get('collected_count')!=len(items)
+                or saved.get('collected_count')!=len(items) or count!=len(items)
+                or saved.get('product_ids')!=[item.get('product_id') for item in items]):
+            raise invalid('原件内容、商品清单或已入库数量与检查点不一致')
+        return {**deepcopy(saved),'json_sha256':digest}
 
     def lineage(self, plan_id):
         """读取本计划全部执行；参数：原计划；返回：任务编号列表。"""
