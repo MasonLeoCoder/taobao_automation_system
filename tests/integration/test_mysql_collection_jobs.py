@@ -381,3 +381,77 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
                 data=self.store.history_page(self.key,1,status)
                 self.assertEqual(data['total'],1)
                 self.assertEqual(data['jobs'][0]['id'],identifier)
+
+    def test_session_save_failure_records_warning_error_and_pauses_queue_without_launch(self):
+        """持续登录文件冲突真实入库失败结论及分级日志，执行器暂停后续申请。"""
+        import logging
+        from unittest.mock import Mock
+        from ecommerce.infrastructure.browser import session
+        from ecommerce.infrastructure.tasks.events import EventLogHandler
+        job=self.submit();row=self.claim(job)
+        pending=self.submit(module='skus',modules=['skus'],options={'mode':'detail','input':'123','modules':['skus']})
+        path=self.platform.session_path;path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(b'{"cookies":[],"origins":[],"synthetic":"old"}')
+        old=path.read_bytes()
+        context=Mock(storage_state=Mock(return_value={'cookies':[],'origins':[],'synthetic':'SYNTHETIC_SECRET_NEVER_LOG'}))
+        error=PermissionError('synthetic sharing conflict');error.winerror=5
+        logger=logging.getLogger(session.__name__);handler=EventLogHandler(self.settings)
+        logger.addHandler(handler)
+        try:
+            def collect(settings,descriptor):
+                return run_task(settings.for_platform('taobao'),'collection.taobao.synthetic',
+                    lambda:session.save_session(context,self.platform),task_id=job,job_claim_token=row['claim_token'])
+            # 仅拦截当前登录文件替换，不影响任务流水和停止凭据的原子写入。
+            original=Path.replace
+            def replace_file(source,destination):
+                if Path(destination)==path:raise error
+                return original(source,destination)
+            with patch.object(Path,'replace',replace_file),patch.object(session.time,'sleep'),patch(
+                    'ecommerce.modules.collection.web_worker.run_collection',side_effect=collect),patch.object(web_jobs,'launch') as launch:
+                execute(self.settings.workspace,job,row['claim_token'],bootstrap=self.settings)
+            launch.assert_not_called()
+        finally:
+            logger.removeHandler(handler);handler.close()
+        actual=self.store.read(job)
+        self.assertEqual(actual['state'],'failed');self.assertTrue(actual['actual_finished'])
+        self.assertIn('登录状态保存失败',actual['message']);self.assertIn('WinError 5',actual['message'])
+        self.assertTrue(self.store.queue_state(self.key)['paused'])
+        self.assertEqual(self.store.read(pending)['dispatch_state'],'paused')
+        self.assertEqual(path.read_bytes(),old);context.storage_state.assert_called_once_with()
+        e=self.t['task_events']
+        with self.store.connection() as c:
+            logs=c.execute(sa.select(e.c.level,e.c.message).where(e.c.task_id==job,e.c.logger_name==session.__name__).order_by(e.c.task_sequence)).all()
+        self.assertEqual([log.level for log in logs],['WARNING','WARNING','ERROR'])
+        self.assertNotIn('SYNTHETIC_SECRET_NEVER_LOG','\n'.join(log.message for log in logs))
+
+    def test_session_save_retry_success_keeps_task_successful_and_does_not_pause_queue(self):
+        """短暂文件冲突恢复后正常完成，警告入库且不误记为采集失败。"""
+        import logging
+        from unittest.mock import Mock
+        from ecommerce.infrastructure.browser import session
+        from ecommerce.infrastructure.tasks.events import EventLogHandler
+        job=self.submit();row=self.claim(job)
+        context=Mock(storage_state=Mock(return_value={'cookies':[],'origins':[]}))
+        path=self.platform.session_path;path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text('{"cookies":[],"origins":[]}',encoding='utf-8')
+        original=Path.replace;attempts=[]
+        def replace_file(source,destination):
+            if Path(destination)==path:
+                attempts.append(source)
+                if len(attempts)==1:
+                    error=PermissionError('synthetic sharing conflict');error.winerror=32;raise error
+            return original(source,destination)
+        logger=logging.getLogger(session.__name__);handler=EventLogHandler(self.settings)
+        logger.addHandler(handler)
+        try:
+            with patch.object(Path,'replace',replace_file),patch.object(session.time,'sleep'):
+                result=run_task(self.platform,'collection.taobao.synthetic',lambda:session.save_session(context,self.platform),
+                    task_id=job,job_claim_token=row['claim_token'])
+        finally:
+            logger.removeHandler(handler);handler.close()
+        self.assertEqual(result.status,'succeeded');self.assertEqual(len(attempts),2)
+        self.assertFalse(self.store.queue_state(self.key)['paused']);context.storage_state.assert_called_once_with()
+        e=self.t['task_events']
+        with self.store.connection() as c:
+            levels=list(c.scalars(sa.select(e.c.level).where(e.c.task_id==job,e.c.logger_name==session.__name__)))
+        self.assertEqual(levels,['WARNING'])

@@ -2,9 +2,12 @@
 
 import json
 import logging
+import os
+import time
 from contextlib import contextmanager
 from uuid import uuid4
 from ecommerce.shared.config import Settings
+from ecommerce.shared.exceptions import AutomationError
 
 
 def _read_session_state(settings: Settings) -> dict | None:
@@ -60,11 +63,59 @@ def restore_missing_session_cookies(context, settings: Settings) -> int:
 
 
 def save_session(context, settings: Settings) -> None:
-    """保存状态文件；参数：上下文、配置；返回：无。"""
-    settings.session_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = settings.session_path.with_suffix(".tmp")
-    context.storage_state(path=str(temporary))
-    temporary.replace(settings.session_path)
+    """单次导出并原子保存登录状态；参数：上下文、配置；返回：无，失败保留原文件并抛错。"""
+    logger=logging.getLogger(__name__)
+    state=context.storage_state()
+    try:
+        if not isinstance(state,dict) or not isinstance(state.get('cookies'),list) or not isinstance(state.get('origins'),list):
+            raise ValueError('登录状态结构不合法')
+        payload=json.dumps(state,ensure_ascii=False,allow_nan=False)
+    except (TypeError,ValueError) as error:
+        message='登录状态格式无效，未替换原登录文件'
+        logger.error(message)
+        raise AutomationError(message) from error
+    destination=settings.session_path
+    temporary=destination.with_name('.'+destination.name+'-'+uuid4().hex+'.tmp')
+    created=False
+    attempts=0
+    stage='创建登录状态目录'
+    try:
+        destination.parent.mkdir(parents=True,exist_ok=True)
+        stage='写入临时登录文件'
+        with temporary.open('x',encoding='utf-8',newline='\n') as handle:
+            created=True
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        stage='替换登录状态文件'
+        for attempts in range(1,4):
+            try:
+                temporary.replace(destination)
+                return
+            except OSError as error:
+                if getattr(error,'winerror',None) not in {5,32,33} or attempts==3:
+                    raise
+                delay=(.2,.5)[attempts-1]
+                logger.warning('登录状态文件暂未替换：目标=%s；临时=%s；尝试=%s/3；系统错误=%s；%.1f秒后重试',
+                    destination,temporary,attempts,_file_error_code(error),delay)
+                time.sleep(delay)
+    except OSError as error:
+        message=(f'登录状态保存失败：{stage}；目标={destination}；临时={temporary}；'
+            f'替换尝试={attempts}/3；系统错误={_file_error_code(error)}；原登录文件未替换，请检查文件占用或写入权限')
+        logger.error(message)
+        raise AutomationError(message) from error
+    finally:
+        if created:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as error:
+                logger.warning('本次登录临时文件未能清理：%s；系统错误=%s',temporary,_file_error_code(error))
+
+
+def _file_error_code(error):
+    """提取系统错误代码，避免输出登录内容；参数：文件异常；返回：错误代码文本。"""
+    code=getattr(error,'winerror',None)
+    return f'WinError {code}' if code is not None else f'errno {error.errno}'
 
 
 @contextmanager
