@@ -27,6 +27,7 @@
   let historyVersion = 0;
   let historyLoading = true;
   let refreshAgain = false;
+  const historyNotes = new Map();
   const startingJobs = new Set();
   const startFeedback = new Map();
   const pendingSubmissions = new Map();
@@ -304,6 +305,11 @@
       document.getElementById('collection-history-status').textContent = '正在读取任务…';
       return;
     }
+    // 刷新重建卡片前按申请编号保留阅读状态，翻页与筛选也不串用其他任务的状态。
+    const focusedNote = document.activeElement?.closest('[data-job-note]')?.dataset.jobNote;
+    container.querySelectorAll('[data-job-note]').forEach(note => historyNotes.set(note.dataset.jobNote,{
+      open:note.open,scrollTop:note.querySelector('p').scrollTop
+    }));
     container.replaceChildren();
     document.getElementById('collection-history-page').textContent = `第 ${historyData.page} / ${historyData.pages} 页`;
     document.getElementById('collection-history-status').textContent = historyData.total
@@ -315,6 +321,8 @@
       const progress = document.createElement('p'); progress.textContent = jobLabel(job);
       const message = document.createElement(job.message.length > 180 ? 'details' : 'p');
       if (job.message.length > 180) {
+        message.dataset.jobNote = job.id;
+        message.open = historyNotes.get(job.id)?.open || false;
         const summary = document.createElement('summary'); summary.textContent = '查看任务说明';
         const text = document.createElement('p'); text.textContent = job.message; message.append(summary,text);
       } else message.textContent = job.message;
@@ -373,6 +381,10 @@
         feedback.textContent = startFeedback.get(job.id); article.append(feedback);
       }
       article.append(actions); container.append(article);
+      if (message.dataset.jobNote) {
+        message.querySelector('p').scrollTop = historyNotes.get(job.id)?.scrollTop || 0;
+        if (focusedNote === job.id) message.querySelector('summary').focus({preventScroll:true});
+      }
     });
   }
 

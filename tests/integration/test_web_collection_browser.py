@@ -708,5 +708,56 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(self.page.locator('#collection-task-bar')).not_to_be_visible()
         self.assertEqual(self.errors,[])
 
+    def test_task_description_stays_open_and_scrolled_across_updates_until_manually_closed(self):
+        """自动刷新更新真实说明文本时保留展开、内部阅读位置及键盘焦点，手动收起同样保留。"""
+        job=self.paused_job()
+        row=jobs.read(self.settings,job['id'])
+        note=('合成任务说明：保留阅读状态与原错误信息。\n'*80)
+        row.update(state='failed',message=note+'初始说明');self.save(row)
+        self.page.goto('http://127.0.0.1/modules/collection?jobs_status=failed')
+        details=self.page.locator(f'[data-job-id="{job["id"]}"] details')
+        summary=details.locator('summary')
+        expect(summary).to_have_text('查看任务说明')
+        summary.click()
+        expect(details).to_have_js_property('open',True)
+        details.locator('p').evaluate('node=>node.scrollTop=120')
+        for update in ('第一次刷新','第二次刷新'):
+            row['message']=note+update;self.save(row)
+            expect(details.locator('p')).to_contain_text(update,timeout=7000)
+            expect(details).to_have_js_property('open',True)
+            self.assertEqual(details.locator('p').evaluate('node=>node.scrollTop'),120)
+            expect(summary).to_be_focused()
+        summary.click()
+        row['message']=note+'手动收起后刷新';self.save(row)
+        expect(details.locator('p')).to_contain_text('手动收起后刷新',timeout=7000)
+        expect(details).to_have_js_property('open',False)
+        self.assertEqual(self.errors,[])
+
+    def test_task_description_state_is_keyed_by_request_when_paging_and_filtering(self):
+        """不同任务的说明互不串用，翻页返回及筛选后保留各自展开或收起。"""
+        rows=self.history_requests(21)
+        note='合成分页任务说明。'*30
+        for row in (rows[0],rows[-1]):
+            self.save({**row,'state':'failed','message':note})
+        self.page.goto('http://127.0.0.1/modules/collection')
+        first=self.page.locator(f'[data-job-id="{rows[0]["id"]}"] details')
+        expect(first.locator('summary')).to_be_attached()
+        first.locator('summary').click()
+        expect(first).to_have_js_property('open',True)
+        self.page.locator('#collection-history-next').click()
+        other=self.page.locator(f'[data-job-id="{rows[-1]["id"]}"] details')
+        expect(other).to_have_js_property('open',False)
+        other.locator('summary').click()
+        expect(other).to_have_js_property('open',True)
+        self.page.locator('#collection-history-prev').click()
+        expect(first).to_have_js_property('open',True)
+        first.locator('summary').click()
+        self.page.locator('#collection-history-filter').select_option('waiting')
+        expect(self.page.locator('#collection-history-status')).to_contain_text('共 19 条')
+        self.page.locator('#collection-history-filter').select_option('failed')
+        expect(first).to_have_js_property('open',False)
+        expect(other).to_have_js_property('open',True)
+        self.assertEqual(self.errors,[])
+
 
 if __name__=='__main__':unittest.main()
