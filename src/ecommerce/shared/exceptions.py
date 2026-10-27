@@ -15,3 +15,11 @@ class TaskBusy(AutomationError):
 
 class TaskStopped(AutomationError):
     """用户明确停止任务；保存已有进度后退出，不视为成功。"""
+
+
+class ModuleBlocked(AutomationError):
+    """单一采集模块无法推进，保存部分结果后跳过，不影响整批。"""
+
+
+class BrowserClosed(TaskStopped):
+    """业务使用的采集页或浏览器被关闭，停止整次执行及补采队列。"""

@@ -377,24 +377,24 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.opener.open.reset_mock()
         return first
 
-    def test_failed_download_persists_each_status_and_resumes_only_unfinished_images(self):
+    def test_failed_download_persists_status_and_new_batch_downloads_every_image(self):
         first=self.fail_third_download()
         progress=json.loads(Path(first['history_record_path']).read_text(encoding='utf-8'))
         self.assertEqual(progress['collected_count'],2)
         self.assertEqual([p['status'] for p in progress['image_results']],['downloaded','downloaded','failed','pending','pending'])
         second=self.collect()
         self.assertEqual(second['status'],'complete')
-        self.assertEqual((second['collected_count'],second['reused_count'],second['downloaded_count']),(5,2,3))
-        self.assertEqual(second['resumed_from_batch_id'],first['batch_id'])
-        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (3,4,5)])
+        self.assertEqual((second['collected_count'],second['reused_count'],second['downloaded_count']),(5,0,5))
+        self.assertIsNone(second['resumed_from_batch_id'])
+        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (1,2,3,4,5)])
         self.assertTrue(all(Path(p['image_path']).is_file() for p in first['images']))
 
     def test_modified_history_image_is_redownloaded_instead_of_reused(self):
         first=self.fail_third_download()
         Path(first['images'][0]['image_path']).write_bytes(b'damaged')
         second=self.collect()
-        self.assertEqual(second['reused_count'],1)
-        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (1,3,4,5)])
+        self.assertEqual(second['reused_count'],0)
+        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (1,2,3,4,5)])
 
     def test_changed_source_address_does_not_reuse_old_batch(self):
         self.fail_third_download()
@@ -423,28 +423,28 @@ class TaobaoDetailImagesBrowserTests(unittest.TestCase):
         self.assertFalse(list(self.settings.workspace.rglob('*.part')))
         self.opener.open.side_effect=original;self.opener.open.reset_mock()
         record=self.collect()
-        self.assertEqual(record['reused_count'],2)
-        self.assertEqual(self.opener.open.call_count,3)
+        self.assertEqual(record['reused_count'],0)
+        self.assertEqual(self.opener.open.call_count,5)
 
-    def test_cancel_during_resume_keeps_access_to_successful_images_from_earlier_batch(self):
+    def test_repeated_cancellation_never_reuses_old_partial_images(self):
         from ecommerce.modules.collection import detail_images
         first=self.fail_third_download()
-        original=detail_images._reuse_image
-        def interrupt(image,previous,directory):
-            if image['index']==2:
-                raise TaskStopped('补采中再次停止')
-            return original(image,previous,directory)
-        with patch.object(detail_images,'_reuse_image',side_effect=interrupt),self.assertRaises(TaskStopped):
+        original=detail_images.download_image
+        def interrupt(image,*args,**kwargs):
+            if image['index']==2:raise TaskStopped('新批次中再次停止')
+            return original(image,*args,**kwargs)
+        with patch.object(detail_images,'download_image',side_effect=interrupt),self.assertRaises(TaskStopped):
             self.collect()
         document=json.loads((product_directory(self.settings,ITEM_ID)/f'{ITEM_ID}.json').read_text(encoding='utf-8'))
         second=document['main_images_last_attempt']
         self.assertEqual(second['collected_count'],1)
-        self.assertEqual(second['resumed_from_batch_id'],first['batch_id'])
-        self.opener.open.assert_not_called()
+        self.assertIsNone(second['resumed_from_batch_id'])
+        self.assertEqual(second['reused_count'],0)
+        self.opener.open.reset_mock()
         third=self.collect()
-        self.assertEqual(third['reused_count'],2)
-        self.assertEqual([p.get('reused_from_batch_id') for p in third['images'][:2]],[second['batch_id'],first['batch_id']])
-        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (3,4,5)])
+        self.assertEqual(third['reused_count'],0)
+        self.assertTrue(all(not p.get('reused_from_batch_id') for p in third['images']))
+        self.assertEqual([call.args[0].full_url for call in self.opener.open.call_args_list],[photo_url(i) for i in (1,2,3,4,5)])
 
     def test_keyboard_interrupt_during_publish_restores_existing_files(self):
         first=self.collect()

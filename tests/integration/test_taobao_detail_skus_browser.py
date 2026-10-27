@@ -358,7 +358,7 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.opener.open.reset_mock()
         return document['sku_details_last_attempt']
 
-    def test_resume_reuses_verified_images_but_refreshes_every_price(self):
+    def test_new_batch_redownloads_all_images_and_refreshes_every_price(self):
         first=self.interrupt_images()
         old_path=Path(first['skus'][0]['image']['image_path'])
         self.config['prices'].update({'0':'8.88','1':'6.60','2':'8.80'})
@@ -369,13 +369,13 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.assertEqual([s['price_value'] for s in second['skus']],['8.88','6.60','8.80'])
         self.assertEqual(second['price_refresh_policy'],'always_current_run')
         self.assertTrue(all(s['price_checked_at'] for s in second['skus']))
-        self.assertEqual(second['summary']['image_reused_count'],1)
-        self.assertEqual(self.opener.open.call_count,2)
-        self.assertEqual(second['skus'][0]['image']['reused_from_batch_id'],first['batch_id'])
+        self.assertEqual(second['summary']['image_reused_count'],0)
+        self.assertEqual(self.opener.open.call_count,3)
+        self.assertNotIn('reused_from_batch_id',second['skus'][0]['image'])
         self.assertEqual(old_path.read_bytes(),png())
         self.assertNotEqual(old_path,Path(second['skus'][0]['image']['image_path']))
 
-    def test_resume_after_cancellation_during_price_refresh_keeps_earlier_images(self):
+    def test_cancelled_price_refresh_does_not_reuse_earlier_images(self):
         first=self.interrupt_images()
         self.config['prices']['1']='价格待确认'
         self.reload();self.settings=replace(self.settings,timeout_ms=300)
@@ -384,16 +384,16 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.config['prices']['1']='7.90'
         self.reload();self.settings=replace(self.settings,timeout_ms=1800)
         record=self.collect()
-        self.assertEqual(record['summary']['image_reused_count'],1)
-        self.assertEqual(record['skus'][0]['image']['reused_from_batch_id'],first['batch_id'])
-        self.assertEqual(self.opener.open.call_count,2)
+        self.assertEqual(record['summary']['image_reused_count'],0)
+        self.assertNotIn('reused_from_batch_id',record['skus'][0]['image'])
+        self.assertEqual(self.opener.open.call_count,3)
 
-    def test_corrupt_history_file_is_redownloaded_and_other_success_is_reused(self):
+    def test_corrupt_history_and_other_partial_images_are_all_redownloaded(self):
         first=self.interrupt_images(index=3)
         Path(first['skus'][0]['image']['image_path']).write_bytes(b'damaged')
         record=self.collect()
-        self.assertEqual(record['summary']['image_reused_count'],1)
-        self.assertEqual(self.opener.open.call_count,2)
+        self.assertEqual(record['summary']['image_reused_count'],0)
+        self.assertEqual(self.opener.open.call_count,3)
         self.assertEqual(record['skus'][0]['image_status'],'downloaded')
 
     def test_changed_inventory_disables_reuse(self):
@@ -410,9 +410,9 @@ class TaobaoDetailSkusBrowserTests(unittest.TestCase):
         self.config['groups'][0]['options'][0]['image']=6
         self.reload()
         record=self.collect()
-        self.assertEqual(record['summary']['image_reused_count'],1)
+        self.assertEqual(record['summary']['image_reused_count'],0)
         self.assertIn('sku6.png',record['skus'][0]['image_url'])
-        self.assertEqual(self.opener.open.call_count,2)
+        self.assertEqual(self.opener.open.call_count,3)
 
     def test_service_names_negative_value_ids_and_disabled_options_are_not_filtered(self):
         options=self.config['groups'][0]['options']

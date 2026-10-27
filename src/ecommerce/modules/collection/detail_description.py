@@ -93,6 +93,8 @@ def collect_detail_images(settings,result,*,stable_ms=700):
         raise RuntimeError('详情图采集必须在淘宝专用守卫中运行')
     item_id=result.target.item_id
     batch_id=guard.task_id+'-'+uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'detail_images',batch_id,guard.task_id)
     directory=product_directory(settings,item_id)/'history'/batch_id
     image_dir=directory/DETAIL_IMAGE_FOLDER
     image_dir.mkdir(parents=True,exist_ok=True)
@@ -124,8 +126,13 @@ def collect_detail_images(settings,result,*,stable_ms=700):
     progress=directory/'detail_images-progress.json'
     raw_path=directory/'detail_images.html'
     raw_path.write_text(links['raw_html'],encoding='utf-8')
+    saved_count=[-1]
     def save_progress():
         guard.perform('保存逐张详情图进度',lambda:atomic_json(progress,record))
+        count=sum(image['status']=='downloaded' for image in record['images'])
+        if count>saved_count[0] and hasattr(guard,'note_module_progress'):
+            guard.note_module_progress(counts={'images':count})
+            saved_count[0]=count
     save_progress()
     cache={}
     for index,image in enumerate(list(record['images'])):
@@ -152,9 +159,9 @@ def collect_detail_images(settings,result,*,stable_ms=700):
         except HTTPError as error:
             error.close()
             record['images'][index]={**image,'status':'download_failed','error':f'HTTP {error.code}；未自动重试'}
-            if error.code in {401,403,429}:
+            if error.code in {401,403,429,503}:
                 save_progress()
-                guard.request_attention(result.page,f'详情图片返回 HTTP {error.code}，请人工检查访问状态后继续；本图不自动重试',step='检查详情图片访问')
+                guard.request_network_attention(result.page,f'详情图片返回 HTTP {error.code}，请人工检查访问状态后继续；本图不自动重试',step='检查详情图片访问',retry_after=error.headers.get('Retry-After') if error.headers else None)
         except (URLError,OSError,ValueError,IncompleteRead) as error:
             reason=str(error) if isinstance(error,ValueError) else type(error).__name__
             record['images'][index]={**image,'status':'download_failed','error':f'{reason}；未自动重试'}

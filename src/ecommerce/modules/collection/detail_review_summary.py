@@ -50,6 +50,8 @@ def collect_review_summary(settings, result, *, stable_ms=500):
         raise RuntimeError('评价概览采集必须在淘宝专用守卫中运行')
     item_id = result.target.item_id
     batch_id = guard.task_id + '-' + uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'review_summary',batch_id,guard.task_id)
     directory = product_directory(settings, item_id) / 'history' / batch_id
     base = {'schema_version': 1, 'product_id': item_id, 'task_id': guard.task_id, 'batch_id': batch_id,
             'source_url': result.target.canonical_url, 'scope': 'detail_page_review_overview',

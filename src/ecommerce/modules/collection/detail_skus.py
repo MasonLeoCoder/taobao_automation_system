@@ -250,8 +250,10 @@ def collect_skus(settings, result, *, settle_ms=1200):
     if not matches_detail_url(result.page,result.target.item_id):
         raise NeedsAttention('SKU采集开始前目标商品发生变化')
     product_dir=product_directory(settings,result.target.item_id)
-    previous_batches=_resume_batches(product_dir,result.target.item_id)
+    previous_batches=[]  # 所有未完成模块统一清理后重采，旧图片不参与本批次。
     batch_id = guard.task_id + '-' + uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'skus',batch_id,guard.task_id)
     directory = product_dir / 'history' / batch_id
     (directory / SKU_IMAGE_FOLDER).mkdir(parents=True, exist_ok=True)
     progress_path = directory / 'sku_progress.json'
@@ -282,6 +284,8 @@ def collect_skus(settings, result, *, settle_ms=1200):
     def save_progress(data):
         if not matches_detail_url(result.page, result.target.item_id):
             raise NeedsAttention('保存 SKU 进度前商品发生变化')
+        if data.get('processed_count',0)>record.get('processed_count',0) and hasattr(guard,'note_module_progress'):
+            guard.note_module_progress(counts={'skus':data.get('processed_count',0)})
         record.update({key:value for key,value in data.items() if key!='product_info'})
         record['inventory_fingerprint']=_inventory_fingerprint(result.target.item_id,record['groups'])
         batches=matching_batches()
@@ -321,8 +325,8 @@ def collect_skus(settings, result, *, settle_ms=1200):
                 except HTTPError as error:
                     sku.update(image_status='download_failed',image_error=f'HTTP {error.code}；未自动重试')
                     persist()
-                    if error.code in {401,403,429}:
-                        guard.request_attention(result.page,f'SKU 图片返回 HTTP {error.code}，请人工检查访问状态后回复继续；本图片不会自动重试',step='检查 SKU 图片访问')
+                    if error.code in {401,403,429,503}:
+                        guard.request_network_attention(result.page,f'SKU 图片返回 HTTP {error.code}，请人工检查访问状态后回复继续；本图片不会自动重试',step='检查 SKU 图片访问',retry_after=error.headers.get('Retry-After') if error.headers else None)
                 except (URLError,OSError,ValueError,IncompleteRead) as error:
                     sku.update(image_status='download_failed',image_error=f'图片下载或校验失败（{type(error).__name__}）；未自动重试')
             persist()

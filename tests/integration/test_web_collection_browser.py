@@ -16,16 +16,82 @@ from tests.unit import test_collection_browser as fixtures
 
 @unittest.skipUnless(os.environ.get('TAOBAO_BROWSER_TESTS')=='1','显式启用隔离浏览器验证')
 class WebCollectionBrowserTests(unittest.TestCase):
+    def recovery_job(self):
+        """准备带错误及未完成模块的网页任务，数据库边界使用明确替身。"""
+        from ecommerce.modules.collection import web_collection as service
+        options={'mode':'detail','input':'123','modules':['video','questions'],'all_reviews':False,'all_questions':True}
+        job=service.start_configured(self.settings,options)
+        row=jobs.read(self.settings,job['id']);row.update(state='cancelled',recovery_ready=True);self.save(row)
+        failure={'product_id':'123','module':'video','state':'failed_skipped','task_id':job['id'],'message':'合成视频下载失败',
+            'progress':{'last_progress_at':'2026-10-26T12:30:00+08:00','counts':{'received_bytes':1024}}}
+        result={'batch_id':None,'valid':False,'satisfied':False,'has_errors':True,'failures':[failure],
+            'modules':[{'module':m,'valid':False,'batch_id':None} for m in options['modules']],
+            'counts':{'complete':0,'no_entry':0,'failed':1,'not_run':1,'reused':0}}
+        mock=patch.object(service,'saved_result',return_value=result);mock.start();self.addCleanup(mock.stop)
+        return job,options
+
+    def test_recovery_preview_requires_confirm_and_preserves_original_scope(self):
+        """查看预览不派发，明确确认后提交版本和原数量范围。"""
+        from ecommerce.modules.collection import dispatch,web_collection as service
+        job,options=self.recovery_job()
+        view={'revision':7,'options':options,'finished':False,'pages':[],
+            'items':[{'product_id':'123','module':'questions','action':'clean_restart','state':'running',
+                      'cleanup':{'batch_count':1,'file_count':2}}],
+            'next':{'page':None,'product_id':'123','module':'questions'}}
+        with patch.object(dispatch,'preview',return_value=view),patch.object(dispatch,'resume',side_effect=lambda s,i,r,**kw:service.start_configured(s,options)) as resume:
+            self.page.goto('http://127.0.0.1/modules/collection')
+            expect(self.page.locator('.collection-module-error')).to_contain_text('合成视频下载失败')
+            expect(self.page.locator('.collection-module-error')).to_contain_text('已接收字节 1024')
+            self.page.get_by_role('button',name='查看恢复计划',exact=True).click()
+            expect(self.page.locator('#collection-recovery-dialog')).to_be_visible()
+            expect(self.page.locator('#collection-recovery-plan')).to_contain_text('清理未完成结果，新建批次重采')
+            expect(self.page.locator('#collection-recovery-plan')).to_contain_text('2 个批次内文件')
+            resume.assert_not_called()
+            self.assertEqual(len(jobs.rows(self.settings)),1)
+            self.page.get_by_role('button',name='按此计划继续',exact=True).click()
+            expect(self.page.locator('#collection-recovery-dialog')).not_to_be_visible()
+            self.assertEqual(resume.call_args.args,(self.settings,job['id'],7))
+            self.assertRegex(resume.call_args.kwargs['submission_key'],'^[a-f0-9]{32}$')
+            newest=jobs.rows(self.settings)[0]
+            self.assertEqual(newest['options']['all_questions'],True)
+            self.assertEqual(newest['options']['modules'],['video','questions'])
+        self.assertEqual(self.errors,[])
+
+    def test_error_retry_queues_without_starting_browser_and_queue_resume_is_explicit(self):
+        """错误可定位并排队，队列按钮有明确操作，点击补采不抢占浏览器。"""
+        from ecommerce.modules.collection import dispatch
+        job,options=self.recovery_job();rows=[]
+        def retry(settings,identifier,product,module):
+            rows.append({'id':'c'*32,'state':'paused','product_id':product,'module':module})
+            return {'id':'c'*32,'message':'补采请求已保存，等待手动继续队列'}
+        def control(settings,action):
+            rows[0]['state']='waiting' if action=='resume' else 'paused'
+            return rows
+        with patch.object(dispatch,'queue',side_effect=lambda settings:list(rows)),patch.object(dispatch,'retry',side_effect=retry) as submit,patch.object(dispatch,'control_queue',side_effect=control) as command:
+            self.page.goto('http://127.0.0.1/modules/collection')
+            self.page.get_by_role('button',name='重新采集此模块',exact=True).click()
+            expect(self.page.locator('#collection-queue-list')).to_contain_text('已暂停')
+            submit.assert_called_once_with(self.settings,job['id'],'123','video')
+            command.assert_not_called()
+            self.assertEqual(len(jobs.rows(self.settings)),1)
+            self.page.get_by_role('button',name='继续队列',exact=True).click()
+            expect(self.page.locator('#collection-queue-list')).to_contain_text('等待当前采集结束')
+            command.assert_called_once_with(self.settings,'resume')
+        self.assertEqual(self.errors,[])
+
     def setUp(self):
         """临时数据和浏览器；参数：无；返回：无，所有采集派发均模拟。"""
         self.fixture=fixtures.CollectionBrowserTests();self.fixture.setUp();self.addCleanup(self.fixture.doCleanups)
         self.settings=replace(self.fixture.settings,task_backend='mysql')
+        from tests.job_store_fixture import JobDatabaseFixture
+        self.job_db=JobDatabaseFixture(self,self.settings)
         self.fixture.app.config['SETTINGS']=self.settings
         for target,kwargs in [
             ('ecommerce.infrastructure.tasks.web_jobs.launch',{'return_value':SimpleNamespace(pid=9999)}),
             ('ecommerce.infrastructure.tasks.web_jobs.alive',{'return_value':True}),
             ('ecommerce.infrastructure.tasks.ownership.active_local_tasks',{'side_effect':self.active}),
-            ('ecommerce.modules.collection.web_collection.active_local_tasks',{'side_effect':self.active})]:
+            ('ecommerce.modules.collection.web_collection.active_local_tasks',{'side_effect':self.active}),
+            ('ecommerce.modules.collection.dispatch.active_local_tasks',{'return_value':[]})]:
             mock=patch(target,**kwargs);mock.start();self.addCleanup(mock.stop)
         self.playwright=sync_playwright().start();self.addCleanup(self.playwright.stop)
         self.browser=self.playwright.chromium.launch(headless=True);self.addCleanup(self.browser.close)
@@ -57,7 +123,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(self.page.locator('[data-collection-module="parameters"]').get_by_role('link',name='查看资料 →')).to_be_visible()
         video.get_by_role('button',name='采集数据',exact=True).click()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('启动中')
-        row=jobs.rows(self.settings)[0];row['state']='running';jobs.save(self.settings,row)
+        row=jobs.rows(self.settings)[0];row['state']='running';self.save(row)
         return row
 
     def test_keyword_form_dispatches_parameters_once_and_restores_progress(self):
@@ -78,13 +144,13 @@ class WebCollectionBrowserTests(unittest.TestCase):
         row=jobs.rows(self.settings)[0]
         self.assertEqual(row['options'],{'mode':'keyword','keyword':'粘毛器','pages':3,'limit':3,'with_details':True})
         row.update(state='running',progress={'current_page':2,'completed_page_count':1,'collected_count':3,'detail_completed_count':2})
-        jobs.save(self.settings,row)
+        self.save(row)
         self.page.reload()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('已保存 1/3 页',timeout=7000)
-        expect(self.page.locator('#collection-job-list')).to_contain_text('详情完成 2 个商品')
-        expect(self.page.locator('#collection-submit')).to_be_disabled()
+        expect(self.page.locator('#collection-job-list')).to_contain_text('详情已处理 2 个商品')
+        expect(self.page.locator('#collection-submit')).to_be_enabled()
         row.update(state='succeeded',message='已保存结果；'+('详细说明；'*40),result={'batch_id':20,'valid':True})
-        jobs.save(self.settings,row)
+        self.save(row)
         expect(self.page.locator('#collection-submit')).to_be_enabled(timeout=7000)
         result=self.page.locator('#collection-job-list').get_by_role('link',name='查看采集结果',exact=True)
         expect(result).to_have_attribute('href','/collections/searches/'+row['id'])
@@ -119,15 +185,15 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.page.get_by_label('搜索关键词',exact=True).fill('测试')
         self.page.get_by_role('button',name='开始采集',exact=True).click()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('关键词“测试”')
-        row=jobs.rows(self.settings)[0];row['state']='running';jobs.save(self.settings,row);self.publish(row)
+        row=jobs.rows(self.settings)[0];row['state']='running';self.save(row);self.publish(row)
         self.page.goto('http://127.0.0.1/tasks')
         modal=self.page.locator('#collection-attention')
         expect(modal).to_be_visible(timeout=7000)
         expect(modal).to_contain_text('关键词“测试”')
         modal.get_by_role('button',name='继续',exact=True).click()
         expect(modal).not_to_be_visible()
-        path=self.settings.workspace/'storage/task_controls'/f"{row['id']}.json"
-        self.assertEqual(json.loads(path.read_text(encoding='utf-8')),{'action':'continue','prompt_id':'b'*32})
+        command=self.command(row)
+        self.assertEqual((command['action'],command['prompt_id']),('continue','b'*32))
         self.assertEqual(self.errors,[])
 
     def test_recollect_link_prefills_product_and_module_and_mobile_layout_fits(self):
@@ -163,7 +229,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.fixture.put('collection_steps',id=90,run_id=90,module='questions',requested=True,status='skipped',
                          continuation_allowed=True,finished_at=self.fixture.now,payload={'record':record})
         row.update(state='succeeded',message='详情采集结束（含跳过项目）',result=service.saved_result(self.settings,row))
-        jobs.save(self.settings,row)
+        self.save(row)
         expect(self.page.locator('#collection-job-list')).to_contain_text('已结束（含跳过项目）',timeout=7000)
         expect(self.page.locator('#collection-submit')).to_be_enabled()
         expect(self.page.locator('#collection-attention')).not_to_be_visible()
@@ -175,10 +241,44 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.assertEqual(self.errors,[])
 
     def publish(self,row,prompt='b'*32,allowed=None):
-        """模拟守卫人工提示；参数：派发、提示编号、允许值；返回：无。"""
-        atomic_json(self.settings.workspace/'storage/task_controls'/f"{row['id']}.state.json",
-                    {'task_id':row['id'],'prompt_id':prompt,'allowed':allowed or ['继续'],
-                     'message':'请手动扫码登录 <script>不能执行</script>','step':'等待人工登录淘宝'})
+        """模拟已经提交数据库的当前人工提示。"""
+        self.job_db.prompt(row,{'task_id':row['id'],'prompt_id':prompt,'allowed':allowed or ['继续'],
+            'message':'请手动扫码登录 <script>不能执行</script>','step':'等待人工登录淘宝'})
+
+    def save(self,row):
+        """准备任务结论及其对应的查询样例，不用结果缓存冒充数据库资料。"""
+        import sqlalchemy as sa
+        result=row.get('result') or {}
+        values=result.get('modules',[dict(result,module=row.get('module'))])
+        for value in values:
+            if not value.get('batch_id'):
+                continue
+            module=value.get('module') or row['module']
+            table=self.fixture.store.tables['collection_batches']
+            with self.fixture.engine.begin() as c:
+                batch=c.execute(sa.select(table).where(table.c.id==value['batch_id'])).mappings().first()
+            if batch:
+                with self.fixture.engine.begin() as c:
+                    c.execute(table.update().where(table.c.id==value['batch_id']).values(task_id=row['id'],module=module,
+                        status='no_video' if value.get('valid') and module=='video' else 'complete' if value.get('valid') else 'partial'))
+            else:
+                self.fixture.batch(value['batch_id'],module,product_id=1,status='complete' if value.get('valid') else 'partial')
+                with self.fixture.engine.begin() as c:
+                    c.execute(table.update().where(table.c.id==value['batch_id']).values(task_id=row['id']))
+            if value.get('valid'):
+                pointer=self.fixture.store.tables['product_current_sections']
+                section={'basic_info':'product_info','skus':'sku_details'}.get(module,module)
+                with self.fixture.engine.begin() as c:
+                    c.execute(pointer.delete().where(pointer.c.product_id==1,pointer.c.section==section))
+                    c.execute(pointer.insert().values(product_id=1,section=section,module=module,batch_id=value['batch_id']))
+        self.job_db.save(row)
+
+    def command(self,row):
+        """读取数据库待接收指令并清空提示。"""
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        result=CollectionJobStore(self.settings).receive_control(row['id'],row['claim_token'])
+        self.job_db.prompt(row,None)
+        return result
 
     def test_batch_counts_and_status_are_consistent_across_pages(self):
         """概况、历史、模块和批次页统一显示真实数量，不把空记录显示为0。"""
@@ -210,12 +310,10 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(modal).to_contain_text('等待人工登录淘宝')
         modal.get_by_role('button',name='继续',exact=True).click()
         expect(modal).not_to_be_visible()
-        control=self.settings.workspace/'storage/task_controls'/f"{row['id']}.json"
-        command=json.loads(control.read_text(encoding='utf-8'))
-        self.assertEqual(command,{'action':'continue','prompt_id':'b'*32})
-        control.unlink();(control.with_suffix('.state.json')).unlink()
+        command=self.command(row)
+        self.assertEqual((command['action'],command['prompt_id']),('continue','b'*32))
         row.update(state='succeeded',message='已确认无视频',result={'batch_id':20,'valid':True,'label':'查看采集结果'})
-        jobs.save(self.settings,row)
+        self.save(row)
         video=self.page.locator('[data-collection-module="video"]')
         expect(video.get_by_role('link',name='查看采集结果 →')).to_be_visible(timeout=7000)
         expect(video.locator('.module-collect')).to_have_count(0)
@@ -231,14 +329,13 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(modal.get_by_role('button',name='继续',exact=True)).to_have_count(0)
         self.page.reload();expect(modal).to_be_visible(timeout=7000)
         modal.get_by_role('button',name='停止',exact=True).click()
-        path=self.settings.workspace/'storage/task_controls'/f"{row['id']}.json"
-        self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['action'],'stop')
+        self.assertEqual(self.command(row)['action'],'stop')
         self.assertEqual(self.errors,[])
 
     def test_partial_keeps_attempt_and_retry(self):
         row=self.launch()
         row.update(state='needs_attention',message='仅保存部分资料',result={'batch_id':21,'valid':False})
-        jobs.save(self.settings,row)
+        self.save(row)
         video=self.page.locator('[data-collection-module="video"]')
         expect(video.get_by_role('link',name='查看本次采集尝试')).to_be_visible(timeout=7000)
         expect(video.get_by_role('button',name='重新采集')).to_be_enabled()
@@ -253,6 +350,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
         journal.append({'op':'event','task_id':row['id'],'database':self.settings.mysql.database,
             'event_type':'session_halted','state':'needs_attention','step':'复核评价',
             'details':{'reason':'采集停止原因字段校验失败'}})
+        self.job_db.prompt(row,{'halted':True,'message':'采集停止原因字段校验失败','allowed':[]})
         original=journal.path.read_bytes()
         self.page.reload()
         bar=self.page.locator('#collection-task-bar')
@@ -275,10 +373,11 @@ class WebCollectionBrowserTests(unittest.TestCase):
         row=jobs.read(self.settings,job['id'])
         row.update(state='running',progress={'current_module':'questions','started_modules':['video','questions'],
             'results':[{'module':'video','valid':True,'batch_id':20,'label':'查看资料'}]})
-        jobs.save(self.settings,row)
+        self.save(row)
         journal=EventJournal(self.settings,row['id'])
         journal.append({'op':'event','task_id':row['id'],'database':self.settings.mysql.database,
             'event_type':'session_halted','state':'needs_attention','details':{'reason':'保存问答失败'}})
+        self.job_db.prompt(row,{'halted':True,'message':'保存问答失败','allowed':[]})
         self.page.goto('http://127.0.0.1/collections/products/123')
         video=self.page.locator('[data-collection-module="video"] .module-job-status')
         questions=self.page.locator('[data-collection-module="questions"] .module-job-status')
@@ -299,7 +398,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
                          title='独立保存的详情标题',shop_name='详情店铺',sales_text='已售 20+',price_text='¥9 起',captured_at=self.fixture.now,field_states={})
         self.fixture.put('product_current_sections',product_id=1,section='product_info',module='basic_info',batch_id=80)
         row.update(state='succeeded',message='基本信息已保存',result={'batch_id':80,'valid':True,'label':'查看资料'})
-        jobs.save(self.settings,row)
+        self.save(row)
         expect(basic.get_by_role('link',name='查看资料 →')).to_be_visible(timeout=7000)
         self.page.reload()
         expect(basic).to_contain_text('独立保存的详情标题')
@@ -321,19 +420,17 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.fixture.put('product_info_observations',id=80,batch_id=80,product_id=1,module='basic_info',title='补采标题',captured_at=self.fixture.now,field_states={})
         self.fixture.put('product_current_sections',product_id=1,section='product_info',module='basic_info',batch_id=80)
         saved={'module':'basic_info','batch_id':80,'valid':True,'label':'查看资料'}
-        row['progress'].update(current_module='skus',started_modules=['basic_info','skus'],results=[saved]);jobs.save(self.settings,row)
+        row['progress'].update(current_module='skus',started_modules=['basic_info','skus'],results=[saved]);self.save(row)
         expect(self.page.locator('#collection-task-bar')).to_contain_text('已完成 1/8 项',timeout=7000)
-        expect(self.page.locator('.collect-remaining')).to_be_disabled()
+        expect(self.page.locator('.collect-remaining')).to_be_enabled()
         self.page.reload()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('当前：SKU',timeout=7000)
         self.publish(row)
         modal=self.page.locator('#collection-attention');expect(modal).to_be_visible(timeout=7000)
         expect(modal).to_contain_text('采集所有')
         modal.get_by_role('button',name='停止',exact=True).click()
-        path=self.settings.workspace/'storage/task_controls'/f"{row['id']}.json"
-        self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['action'],'stop')
-        path.unlink();path.with_suffix('.state.json').unlink()
-        row.update(state='cancelled',message='已停止，基本信息保留',result={'valid':False,'modules':[saved]});jobs.save(self.settings,row)
+        self.assertEqual(self.command(row)['action'],'stop')
+        row.update(state='cancelled',message='已停止，基本信息保留',result={'valid':False,'modules':[saved]});self.save(row)
         expect(self.page.get_by_role('button',name='采集所有（剩余 7 项）',exact=True)).to_be_enabled(timeout=7000)
         self.page.get_by_role('button',name='采集所有（剩余 7 项）',exact=True).click()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('跳过 2 项',timeout=7000)
@@ -346,7 +443,7 @@ class WebCollectionBrowserTests(unittest.TestCase):
         from ecommerce.modules.collection.web_collection import start
         job=start(self.settings,'123','skus');row=jobs.read(self.settings,job['id'])
         row.update(state='needs_attention',message='旧任务未确认有效资料',result={'batch_id':30,'valid':False})
-        jobs.save(self.settings,row)
+        self.save(row)
         self.fixture.batch(30,'skus',product_id=1,status='partial')
         self.fixture.batch(31,'skus',product_id=1,derivation_kind='sku_stock_rule',derived_from_batch_id=30)
         self.fixture.put('product_current_sections',product_id=1,section='sku_details',module='skus',batch_id=31)
@@ -416,6 +513,34 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.page.goto('http://127.0.0.1/collections/products/123')
         expect(self.page.get_by_role('button',name='已全部采集',exact=True)).to_be_disabled()
         self.assertEqual(jobs.rows(self.settings),[])
+        self.assertEqual(self.errors,[])
+
+    def test_running_task_accepts_another_request_into_database_queue(self):
+        """当前任务继续，网页新申请入库排队，不抢占已有浏览器。"""
+        row=self.launch()
+        self.page.goto('http://127.0.0.1/modules/collection')
+        self.page.get_by_label('搜索关键词',exact=True).fill('隔离排队样例')
+        self.page.get_by_role('button',name='加入采集队列',exact=True).click()
+        expect(self.page.locator('#collection-queue-list')).to_contain_text('隔离排队样例',timeout=7000)
+        queued=jobs.rows(self.settings)
+        self.assertEqual(len(queued),2)
+        self.assertEqual(queued[0]['state'],'queued')
+        self.assertEqual(jobs.read(self.settings,row['id'])['state'],'running')
+        self.assertEqual(self.errors,[])
+
+    def test_database_outage_keeps_explicit_emergency_stop_for_known_execution(self):
+        """断库显示最后确认时间，新提交禁用，已知执行仍有紧急停止。"""
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        row=self.launch()
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('采集中',timeout=7000)
+        with patch('ecommerce.modules.collection.web_collection.active',side_effect=MySQLStorageError('合成断库')),patch(
+                'ecommerce.infrastructure.tasks.web_jobs.read',side_effect=MySQLStorageError('合成断库')),patch(
+                'ecommerce.infrastructure.tasks.collection_control.emergency_stop',return_value='合成紧急停止已保存') as stop:
+            bar=self.page.locator('#collection-task-bar')
+            expect(bar).to_contain_text('最后确认时间',timeout=7000)
+            bar.get_by_role('button',name='紧急停止已知采集',exact=True).click()
+            expect(bar).to_contain_text('合成紧急停止已保存')
+            self.assertEqual(stop.call_args.args[1],row['id'])
         self.assertEqual(self.errors,[])
 
 

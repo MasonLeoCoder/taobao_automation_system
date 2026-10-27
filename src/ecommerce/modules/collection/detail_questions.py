@@ -328,6 +328,8 @@ def collect_questions(settings, result, *, all_questions=False, stable_ms=500, m
     item_id, limit = result.target.item_id, None if all_questions else 50
     product_dir = product_directory(settings, item_id)
     batch_id = guard.task_id + '-' + uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'questions',batch_id,guard.task_id)
     directory = product_dir / 'history' / batch_id
     store, pacer = QuestionStore(directory, item_id), QuestionPacer(guard)
     current, expected = {}, None

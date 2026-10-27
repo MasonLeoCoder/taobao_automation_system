@@ -123,3 +123,13 @@ def keep_detail_open(result):
             if result.page.is_closed() and not guard.awaiting_manual:
                 return
             raise
+
+
+def recover_detail_page(result, timeout_ms):
+    """模块失败后重新打开同一商品，清除侧栏和媒体状态；参数：原详情、预算；返回：已核实详情。"""
+    from ecommerce.shared.exceptions import BrowserClosed
+    guard=active_guard()
+    if result.page.is_closed():
+        raise BrowserClosed('采集详情页已关闭，停止本次执行')
+    with guard.collection_module('page_recovery',result.page,timeout_ms):
+        return open_detail(result.page,result.target.canonical_url,timeout_ms)

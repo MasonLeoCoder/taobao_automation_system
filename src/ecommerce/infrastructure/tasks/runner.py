@@ -27,10 +27,10 @@ class TaskResult:
     exit_code: int
 
 
-def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_id=None) -> TaskResult:
+def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_id=None, job_claim_token=None) -> TaskResult:
     """记录并执行任务；参数：配置、任务名、业务回调；返回：TaskResult。"""
     if settings.task_backend=='mysql':
-        return _run_mysql_task(settings,name,action,task_id=task_id) if task_id else _run_mysql_task(settings,name,action)
+        return _run_mysql_task(settings,name,action,task_id=task_id,job_claim_token=job_claim_token) if task_id else _run_mysql_task(settings,name,action)
     if task_id is not None:
         raise ValueError('预分配任务编号仅支持 MySQL 任务')
     database.initialize(settings.task_database)
@@ -60,7 +60,7 @@ def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_i
         return TaskResult(None, "needs_attention", str(error), 3)
 
 
-def _run_mysql_task(settings,name,action,*,task_id=None):
+def _run_mysql_task(settings,name,action,*,task_id=None,job_claim_token=None):
     """执行已确认入库的任务，保留未提交结论；参数：配置、名称、业务；返回：真实任务结果。"""
     from ecommerce.infrastructure.tasks.events import TaskEvents,event_session,replay_events
     from ecommerce.infrastructure.tasks.ownership import execution_key,owner_alive
@@ -73,6 +73,7 @@ def _run_mysql_task(settings,name,action,*,task_id=None):
             replay_events(settings,store)
             store.recover_interrupted(execution_key(settings),owner_alive)
             session=TaskEvents(settings,store,name,task_id=task_id) if task_id else TaskEvents(settings,store,name)
+            session.expected_job_claim=job_claim_token
             token=_CURRENT_TASK.set((store,session.task_id))
             try:
                 with event_session(session):
@@ -94,9 +95,19 @@ def _run_mysql_task(settings,name,action,*,task_id=None):
                     return TaskResult(session.task_id,status,message,code)
             finally:
                 _CURRENT_TASK.reset(token)
+    except TaskStopped as error:
+        if session and getattr(session,'started',False):
+            session.finish('cancelled',str(error))
+        return TaskResult(session.task_id if session and getattr(session,'started',False) else None,'cancelled',str(error),130)
     except (TaskBusy,MySQLStorageError,NeedsAttention) as error:
         logging.getLogger(__name__).error('任务未继续执行：%s',error)
         return TaskResult(session.task_id if session else None,'needs_attention',str(error),3)
     finally:
         if session:
             session.close()
+            if getattr(session,'recovery',None) and getattr(session,'job_origin',None)=='cli':
+                try:
+                    from ecommerce.modules.collection.dispatch import after_execution
+                    after_execution(settings,session.task_id,locals().get('status','needs_attention'))
+                except Exception:
+                    logging.getLogger(__name__).exception('补采队列状态待核对；不会重放采集动作')

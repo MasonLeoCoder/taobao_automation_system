@@ -17,6 +17,7 @@ class RemainingPipelineTests(unittest.TestCase):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.settings=load_settings(root=Path(temp.name))
         page=MagicMock(url='https://item.taobao.com/item.htm?id=123')
+        page.is_closed.return_value=False
         self.detail=SimpleNamespace(page=page,target=resolve_detail_input('123'),document_title='本地详情')
         self.guard=MagicMock(task_id='a'*32)
         self.guard.perform.side_effect=lambda label,action,**kw:action()
@@ -38,6 +39,7 @@ class RemainingPipelineTests(unittest.TestCase):
         with patch('ecommerce.modules.collection.detail_service.active_guard',return_value=self.guard),patch(
                 'ecommerce.modules.collection.detail_service.inspect_detail_entry',return_value=self.detail),patch(
                 'ecommerce.modules.collection.detail_service.save_session'),patch(
+                'ecommerce.platforms.taobao.detail.recover_detail_page',return_value=self.detail),patch(
                 'ecommerce.modules.collection.detail_service.import_module',return_value=self.module):
             return collect_detail_page(self.settings,object(),self.detail,basic_info=False,video=True,main_images=False,
                 skus=True,parameters=False,detail_images=False,review_summary=False,reviews=False,questions=True,
@@ -66,13 +68,14 @@ class RemainingPipelineTests(unittest.TestCase):
         self.assertEqual({item['name'] for item in report['steps'] if item['requested']},{'video','skus','questions'})
         self.assertEqual(result['status'],'complete')
 
-    def test_partial_module_stops_later_module_and_keeps_earlier_progress(self):
+    def test_partial_module_is_red_error_and_later_module_continues(self):
         self.partial=True
-        with self.assertRaises(NeedsAttention):self.run_pipeline()
-        self.assertEqual(self.called,['video','skus'])
+        result=self.run_pipeline()
+        self.assertEqual(result['status'],'complete_with_errors')
+        self.assertEqual(self.called,['video','skus','questions'])
         self.assertIn(('video','finished'),self.events)
         self.assertIn(('skus','finished'),self.events)
-        self.assertNotIn(('questions','running'),self.events)
+        self.assertIn(('questions','running'),self.events)
 
     def test_manual_stop_does_not_replay_module_or_run_later_steps(self):
         self.interrupt='skus'

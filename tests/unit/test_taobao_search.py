@@ -39,7 +39,7 @@ class TaobaoSearchTests(unittest.TestCase):
             with patch.object(collection, "run_task", side_effect=lambda settings, name, action: action()) as runner, \
                     patch("ecommerce.modules.collection.service.search_keyword", return_value="done") as search:
                 self.assertEqual(collection.execute(settings, " 粘毛器 ", wait=False), "done")
-                self.assertIs(runner.call_args.args[0], settings)
+                self.assertEqual(runner.call_args.args[0].profile_path, settings.for_platform("taobao").profile_path)
                 self.assertEqual(runner.call_args.args[1], "collection.taobao.search")
                 self.assertEqual(search.call_args.args[0].profile_path, settings.for_platform("taobao").profile_path)
                 self.assertEqual(search.call_args.args[1], "粘毛器")

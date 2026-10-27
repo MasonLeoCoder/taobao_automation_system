@@ -5,6 +5,7 @@ from ecommerce.platforms.taobao.cards import PAGE_METADATA, page_signature
 from ecommerce.platforms.taobao.detail import matches_detail_url, open_detail, resolve_detail_input
 from ecommerce.platforms.taobao.search import inspect_search
 from ecommerce.platforms.taobao.verification import active_guard
+from ecommerce.shared.exceptions import ModuleBlocked
 
 
 def matches_search_page(result, page_number):
@@ -39,7 +40,12 @@ def open_list_detail(context, url, product_id, timeout_ms):
     guard.checkpoint('准备从列表打开详情')
     with guard.expect_new_page(lambda page: matches_detail_url(page, target.item_id), timeout_ms):
         page = context.new_page()
-        return open_detail(page, target.url, timeout_ms)
+        try:
+            with guard.collection_module('detail_open',page,timeout_ms):
+                return open_detail(page, target.url, timeout_ms)
+        except ModuleBlocked:
+            if not page.is_closed():page.close()
+            raise
 
 
 def return_to_search(result, detail, page_number):

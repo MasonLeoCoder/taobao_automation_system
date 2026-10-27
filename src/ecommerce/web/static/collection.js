@@ -6,8 +6,8 @@
   const workspace = document.querySelector('[data-collection-workspace]');
   const bar = document.getElementById('collection-task-bar');
   const dialog = document.getElementById('collection-attention');
-  const labels = {basic_info:'基本信息',video:'视频',main_images:'主图',skus:'SKU',parameters:'商品参数',detail_images:'详情图片',review_summary:'评价概览',reviews:'评价明细',questions:'问大家'};
-  const states = {queued:'启动中',running:'采集中',waiting:'等待采集',not_run:'本次未执行',skipped:'已跳过',needs_attention:'需要人工处理',storage_pending:'等待入库',succeeded:'采集完成',failed:'采集失败',cancelled:'已停止',interrupted:'进程已退出',unverified:'进程待核实',verification_pending:'结果待核对'};
+  const labels = {list:'列表采集',basic_info:'基本信息',video:'视频',main_images:'主图',skus:'SKU',parameters:'商品参数',detail_images:'详情图片',review_summary:'评价概览',reviews:'评价明细',questions:'问大家'};
+  const states = {queued:'等待执行',paused:'队列已暂停',starting:'启动中',stopping:'正在停止',running:'采集中',waiting:'等待采集',not_run:'本次未执行',skipped:'已跳过',needs_attention:'需要人工处理',storage_pending:'等待入库',succeeded:'采集完成',failed:'采集失败',cancelled:'已停止',interrupted:'进程已退出',unverified:'进程待核实',verification_pending:'结果待核对'};
   const tracked = new Map();
   let plan = null;
   const catalogPlans = new Map();
@@ -17,16 +17,21 @@
   let busy = false;
   let submitting = false;
   let stateKnown = false;
+  let lastConfirmed = null;
+  const pendingSubmissions = new Map();
   const endpoint = job => job.status_url || `/api/collection-jobs/${job.id}`;
   const targetLabel = job => job.mode === 'keyword' ? `关键词“${job.options.keyword}”` : `商品 ${job.product_id}`;
-  const stateLabel = job => job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
+  const stateLabel = job => job.failures?.length && job.done ? '已结束，存在模块错误' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
 
   async function api(url, body) {
+    const submission = body === undefined ? null : `${url}:${JSON.stringify(body)}`;
+    if (submission && !pendingSubmissions.has(submission)) pendingSubmissions.set(submission,crypto.randomUUID().replaceAll('-',''));
     const response = await fetch(url, body === undefined ? {cache:'no-store'} : {
-      method:'POST',headers:{'Content-Type':'application/json','X-Collection-Token':client.dataset.token},body:JSON.stringify(body)
+      method:'POST',headers:{'Content-Type':'application/json','X-Collection-Token':client.dataset.token,'X-Submission-Id':pendingSubmissions.get(submission)},body:JSON.stringify(body)
     });
     const value = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(value.error || (response.status === 403 ? '操作令牌已失效，请刷新页面' : `请求失败（${response.status}），请稍后重试`));
+    if (submission) pendingSubmissions.delete(submission);
     return value;
   }
 
@@ -81,9 +86,9 @@
   function jobLabel(job) {
     if (job.mode === 'keyword') {
       const progress = job.progress || {};
-      return `列表采集 · 已保存 ${progress.completed_page_count || 0}/${job.options.pages} 页 · ${progress.collected_count || 0} 条商品记录${!job.done && progress.current_page ? ` · 当前第 ${progress.current_page} 页` : ''}${job.options.with_details ? ` · 详情完成 ${progress.detail_completed_count || 0} 个商品` : ''}${progress.current_product ? ` · 当前商品 ${progress.current_product}` : ''}${progress.current_module ? ` · ${labels[progress.current_module]}` : ''}`;
+      return `列表采集 · 已保存 ${progress.completed_page_count || 0}/${job.options.pages} 页 · ${progress.collected_count || 0} 条商品记录${!job.done && progress.current_page ? ` · 当前第 ${progress.current_page} 页` : ''}${job.options.with_details ? ` · 详情已处理 ${progress.detail_completed_count || 0} 个商品` : ''}${progress.current_product ? ` · 当前商品 ${progress.current_product}` : ''}${progress.current_module ? ` · ${labels[progress.current_module]}` : ''}`;
     }
-    if (job.mode === 'detail') return `详情采集 · 已完成 ${job.completed_count}/${job.total_count} 项${job.skipped_count ? ` · 本次跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
+    if (job.mode === 'detail') return `详情采集 · 已处理 ${job.processed_count || job.completed_count}/${job.total_count} 项 · 采集成功 ${job.collected_count || 0} 项${job.failures?.length ? ` · 失败待补采 ${job.failures.length} 项` : ''}${job.skipped_count ? ` · 本次跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
     if (job.mode !== 'remaining') return labels[job.module] || job.module;
     return `采集所有 · 已完成 ${job.completed_count}/${job.total_count} 项 · 跳过 ${(job.skipped_modules || []).length} 项${job.skipped_count ? ` · 本次入口缺失跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
   }
@@ -127,19 +132,19 @@
 
   function render() {
     const jobs = [...tracked.values()];
-    const current = jobs.find(job => !job.done);
+    const current = jobs.find(job => !job.done && !['queued','paused'].includes(job.state)) || jobs.find(job => !job.done);
     const submit = document.getElementById('collection-submit');
     if (submit) {
-      submit.disabled = submitting || Boolean(current) || !stateKnown || submit.closest('fieldset').disabled;
-      submit.textContent = submitting ? '正在提交…' : current ? '已有任务进行中' : '开始采集';
+      submit.disabled = submitting || !stateKnown || submit.closest('fieldset').disabled;
+      submit.textContent = submitting ? '正在提交…' : current ? '加入采集队列' : '开始采集';
     }
-    document.querySelectorAll('.module-collect').forEach(button => button.disabled = submitting || Boolean(current));
+    document.querySelectorAll('.module-collect').forEach(button => button.disabled = submitting || !stateKnown);
     document.querySelectorAll('.collect-remaining').forEach(button => {
       const id = button.dataset.product || product;
       const currentPlan = id === product ? plan : catalogPlans.get(id);
       const count = currentPlan ? currentPlan.modules.length : Number(button.dataset.remainingCount);
       button.dataset.remainingCount = String(count);
-      button.disabled = submitting || Boolean(current) || count === 0;
+      button.disabled = submitting || !stateKnown || count === 0;
       button.textContent = current?.mode === 'remaining' && current.product_id === id ? '正在采集所有…' : count ? (button.dataset.product ? `补采未完成模块（${count}）` : `采集所有（剩余 ${count} 项）`) : '已全部采集';
     });
     // 一项模块只展示最新任务，批量结果与旧单模块任务不会互相覆盖。
@@ -168,11 +173,70 @@
     renderHistory(jobs);
   }
 
+  let recoverySelection = null;
+  async function showRecovery(job) {
+    const modal = document.getElementById('collection-recovery-dialog');
+    const content = document.getElementById('collection-recovery-plan');
+    if (!modal || !content) return;
+    const note = document.getElementById('collection-recovery-status');
+    note.textContent = '正在核对原计划…'; content.replaceChildren();
+    modal.showModal();
+    document.getElementById('collection-recovery-confirm').disabled = true;
+    try {
+      const view = await api(`/api/collection-jobs/${job.id}/recovery`);
+      if (view.finished) throw new Error('原计划已结束，请对失败项单独补采。');
+      recoverySelection = {id:job.id,revision:view.revision};
+      const summary = document.createElement('p');
+      summary.textContent = `原计划：${view.options.mode === 'keyword' ? `${view.options.keyword}，${view.options.pages} 页；已保存第 ${view.pages.join('、') || '无'} 页` : `商品 ${job.product_id}，${view.options.modules.map(m => labels[m]).join('、')}`}。未开始的商品和模块将继续采集。`;
+      content.append(summary);
+      const scope = document.createElement('p');
+      scope.textContent = view.options.mode === 'keyword'
+        ? `每页${view.options.limit === null ? '不限数量' : `最多 ${view.options.limit} 个商品`}；${view.options.with_details ? '连带九个详情模块，评价100条、问题50题' : '仅采集列表'}`
+        : `评价${view.options.all_reviews ? '不限数量' : '最多100条'}；问大家${view.options.all_questions ? '不限数量' : '最多50题'}（仅执行所选模块）`;
+      content.append(scope);
+      const actions = {reuse:'复用已完成结果',manual_retry:'本轮跳过，等待手动补采',clean_restart:'清理未完成结果，新建批次重采'};
+      view.items.forEach(item => {
+        const line = document.createElement('p');
+        line.textContent = `${item.product_id} · ${labels[item.module]}：${actions[item.action]}${item.cleanup ? `；涉及 ${item.cleanup.batch_count} 个未完成批次、${item.cleanup.file_count} 个批次内文件（共享文件执行前再次核对）` : ''}`;
+        content.append(line);
+      });
+      note.textContent = view.next ? `接下来处理：第 ${view.next.page || '—'} 页，商品 ${view.next.product_id || '待取得列表清单'}，${labels[view.next.module]}` : '执行前会再次核对进度和删除范围。';
+      document.getElementById('collection-recovery-confirm').disabled = false;
+    } catch (error) { note.textContent = error.message; recoverySelection = null; }
+  }
+  document.getElementById('collection-recovery-cancel')?.addEventListener('click',() => document.getElementById('collection-recovery-dialog').close());
+  document.getElementById('collection-recovery-confirm')?.addEventListener('click',async event => {
+    if (!recoverySelection) return;
+    event.currentTarget.disabled = true;
+    try {
+      const job = await api(`/api/collection-jobs/${recoverySelection.id}/resume`,{revision:recoverySelection.revision});
+      tracked.set(job.id,job); document.getElementById('collection-recovery-dialog').close(); await refresh();
+    } catch (error) { document.getElementById('collection-recovery-status').textContent = error.message; }
+    finally { event.currentTarget.disabled = false; }
+  });
+  document.querySelectorAll('[data-queue-action]').forEach(button => button.addEventListener('click',async () => {
+    button.disabled = true;
+    try { await api('/api/collection-queue',{action:button.dataset.queueAction}); await refresh(); }
+    catch (error) { document.getElementById('collection-queue-status').textContent = error.message; }
+    finally { button.disabled = false; }
+  }));
+  async function renderQueue() {
+    const list = document.getElementById('collection-queue-list');
+    if (!list) return;
+    const data = await api('/api/collection-queue');
+    list.replaceChildren();
+    data.items.forEach(item => {
+      const line = document.createElement('p'); line.textContent = `${item.product_id ? `商品 ${item.product_id}` : `关键词“${item.options?.keyword || '未记录'}”`} · ${labels[item.module] || '所选模块'} · ${{waiting:'等待当前采集结束',paused:'已暂停，等待手动继续',claimed:'已派发'}[item.state] || item.state}`;
+      list.append(line);
+    });
+    document.getElementById('collection-queue-status').textContent = `${data.paused ? `队列已暂停：${data.reason || '等待手动继续'}。` : ''}${data.items.length ? `${data.items.length} 项等待执行` : '暂无等待申请'}`;
+  }
+
   function renderHistory(jobs) {
     const container = document.getElementById('collection-job-list');
     if (!container || !stateKnown) return;
     container.replaceChildren();
-    document.getElementById('collection-history-status').textContent = jobs.length ? '最近 20 个网页采集任务；每次采集的结果与日志独立保留。' : '暂无网页采集任务。配置上方参数后即可开始。';
+    document.getElementById('collection-history-status').textContent = jobs.length ? '最近 20 个采集申请，包含网页和命令行；结果与日志独立保留。' : '暂无采集申请。配置上方参数后即可开始。';
     jobs.sort((a,b) => `${b.created_at}${b.id}`.localeCompare(`${a.created_at}${a.id}`)).slice(0,20).forEach(job => {
       const article = document.createElement('article'); article.className = 'collection-job'; article.dataset.jobId = job.id;
       const title = document.createElement('h3'); title.textContent = `${targetLabel(job)} · ${stateLabel(job)}`;
@@ -193,7 +257,35 @@
           try { await sendControl(job,'stop'); } catch (error) { message.textContent = error.message; stop.disabled = false; }
         }); actions.append(stop);
       }
+      if (job.done && job.recovery_ready && document.getElementById('collection-recovery-dialog')) {
+        const resume = document.createElement('button'); resume.type = 'button'; resume.className = 'button action-button action-primary'; resume.textContent = '查看恢复计划';
+        resume.addEventListener('click',() => showRecovery(job)); actions.append(resume);
+      }
       article.append(title,time,progress);
+      if (job.counts && Object.keys(job.counts).length) {
+        const counts = document.createElement('p');
+        counts.textContent = `模块汇总：成功 ${job.counts.complete || 0} · 无需采集 ${job.counts.no_entry || 0} · 失败 ${job.counts.failed || 0} · 未执行 ${job.counts.not_run || 0} · 已补采解决 ${job.counts.resolved || 0} · 本次复用 ${job.counts.reused || 0}`;
+        article.append(counts);
+      }
+      (job.failures || []).forEach(item => {
+        const failure = document.createElement('div'); failure.className = 'collection-module-error';
+        const reason = document.createElement('p'); reason.textContent = `${item.product_id} · ${labels[item.module]}：${item.message || '失败，已跳过'}`; failure.append(reason);
+        if (item.progress?.last_progress_at) {
+          const progress = document.createElement('p');
+          const units = {images:'已保存图片',skus:'已处理规格',reviews:'已保存评价',questions:'已保存问题',answers:'已保存回答',received_bytes:'已接收字节',collected:'已采集记录'};
+          const counts = Object.entries(item.progress.counts || {}).map(([key,value]) => `${units[key] || key} ${value}`).join(' · ');
+          progress.textContent = `最后进展：${new Date(item.progress.last_progress_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})}${counts ? ` · ${counts}` : ''}`;
+          failure.append(progress);
+        }
+        failure.append(link('查看错误日志',item.logs_url));
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'button action-button action-danger'; retry.textContent = '重新采集此模块';
+        retry.addEventListener('click',async () => {
+          retry.disabled = true;
+          try { const queued = await api(`/api/collection-jobs/${job.id}/retry`,{product_id:item.product_id,module:item.module}); reason.textContent = queued.message; await renderQueue(); }
+          catch (error) { reason.textContent = error.message; }
+          finally { retry.disabled = false; }
+        }); failure.append(retry); article.append(failure);
+      });
       if (job.options) {
         const configuration = document.createElement('p'); configuration.className = 'collection-job-configuration';
         configuration.textContent = job.mode === 'keyword'
@@ -229,7 +321,8 @@
           refreshedCatalogJobs.add(job.id);
         }
       }
-      stateKnown = true;
+      await renderQueue();
+      stateKnown = true; lastConfirmed = new Date();
       bar.removeAttribute('data-error'); render();
     } catch (error) {
       stateKnown = false;
@@ -237,7 +330,11 @@
       if (submit) submit.disabled = true;
       const historyStatus = document.getElementById('collection-history-status');
       if (historyStatus) historyStatus.textContent = `任务状态暂时无法读取：${error.message}`;
-      bar.hidden = false; bar.textContent = `采集状态暂时无法读取：${error.message}。不会自动重新采集，请恢复连接后查看任务状态。`; bar.dataset.error = 'true';
+      bar.hidden = false; bar.textContent = `数据库任务状态暂不可用：${error.message}。${lastConfirmed ? `最后确认时间：${lastConfirmed.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai'})}。` : ''}不会自动重新采集。`; bar.dataset.error = 'true';
+      [...tracked.values()].filter(job => !job.done && !['queued','paused'].includes(job.state)).forEach(job => {
+        const stop=document.createElement('button'); stop.type='button'; stop.className='button action-button action-danger'; stop.textContent='紧急停止已知采集';
+        stop.addEventListener('click',async () => { stop.disabled=true; try { const value=await api(`${endpoint(job)}/control`,{action:'stop'}); stop.textContent=value.message; } catch (failure) { stop.textContent=failure.message; stop.disabled=false; } }); bar.append(stop);
+      });
     } finally { busy = false; }
   }
 
@@ -310,7 +407,7 @@
     }
     form.addEventListener('submit',async event => {
       event.preventDefault();
-      if (submitting || !stateKnown || [...tracked.values()].some(job => !job.done)) return;
+      if (submitting || !stateKnown) return;
       const selected = modules.filter(node => node.checked).map(node => node.value);
       if (mode === 'detail' && !selected.length) { get('submit-status').textContent = '请至少选择一个采集模块。'; return; }
       const body = mode === 'keyword' ? {mode,keyword:get('keyword').value,pages:Number(get('pages').value),limit:get('unlimited').checked ? null : Number(get('limit').value),with_details:get('with-details').checked}
@@ -318,7 +415,7 @@
       submitting = true; render(); get('submit-status').textContent = '正在提交采集任务…';
       try {
         const job = await api('/api/collection-jobs',body); tracked.set(job.id,job);
-        get('submit-status').textContent = '任务已提交，后台开始运行。下方可查看进度和结果。';
+        get('submit-status').textContent = `申请已保存：${stateLabel(job)}。下方可查看队列、进度和结果。`;
       } catch (error) { get('submit-status').textContent = error.message; }
       finally { submitting = false; render(); await refresh(); }
     });

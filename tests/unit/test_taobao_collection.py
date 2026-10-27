@@ -59,7 +59,7 @@ class TaobaoCollectionTests(unittest.TestCase):
             with patch.object(collection, "run_task", side_effect=lambda settings, name, action: action()) as runner, \
                     patch("ecommerce.modules.collection.service.collect_keyword", return_value="done") as collect:
                 self.assertEqual(collection.execute_collect(settings, " 粘毛器 ", limit=10, wait=False), "done")
-                self.assertIs(runner.call_args.args[0], settings)
+                self.assertEqual(runner.call_args.args[0].profile_path, settings.for_platform("taobao").profile_path)
                 self.assertEqual(runner.call_args.args[1], "collection.taobao.collect")
                 self.assertEqual(collect.call_args.args[0].profile_path, settings.for_platform("taobao").profile_path)
                 self.assertEqual(collect.call_args.kwargs["limit"], 10)

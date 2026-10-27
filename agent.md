@@ -99,3 +99,9 @@
 - 2026-10-24用户确认移除历史导入：0005_remove_history_import删除import_issues/import_row_mappings/import_sources/import_runs及tasks/task_events/search_records/collection_runs/collection_batches的import_run_id和外键；预检非空导入表或非空归属必须拒绝，不能自动清空。实时任务、采集、历史查询、原件及本地流水补写保留；历史导入命令和专用代码退役。0001～0004及冻结模型不得重写；本轮不启动真实淘宝采集。
 
 - 2026-10-25用户确认并实施基本信息与SKU拆分：当前结构0007_basic_info，运行时schema_v7；0001～0007及其版本模型/转换规则冻结。新增product_info_observations，module=basic_info、section=product_info，SKU只保留规格。默认详情及--with-details九模块，--basic-info独立。旧SKU基本信息按原来源和时间提取，不改原SKU批次/日志/文件；真实平台采集另行确认。此前当前版本和八模块描述为历史口径，以本条为准。
+
+- 2026-10-26用户确认并授权完整实施采集恢复、模块异常跳过及手动补采：模块失败红色ERROR跳过并继续整批，无入口黄色WARNING按无需采集完成；停止/关窗整次停止并暂停队列。未完成模块统一清理后新批次重采，不更新或复用旧半成品；完整资料、其他模块和任务审计保留。当前新增0008_collection_recovery/schema_v8，新增四张恢复/清理/队列表；0001～0007冻结。获批范围为代码、数据库迁移、网页、文档、本地模拟及独立验证库；真实淘宝采集另行确认。
+
+- 2026-10-27用户确认并授权执行统一采集申请方案：当前0009_collection_jobs/schema_v9，0001～0008冻结；collection_retry_queue升级为collection_jobs，新增collection_queue_states和collection_job_controls。网页与CLI采集统一数据库申请，正常查询及派发不读取旧任务JSON；本地保留可靠事件缓冲和断库紧急停止，恢复优先补写停止/暂停，不重放浏览器。当前正式派发记录仅经归属和SHA256核对迁移，不恢复退役历史导入，不启动真实淘宝采集。
+
+- 0009已在两库执行并核对，0001～0009及其版本模型/转换规则均冻结，后续结构变更新增迁移。正常Web任务列表、队列、配置和反馈不读取旧派发JSON；只读运维核对及显式当前派发迁移除外。

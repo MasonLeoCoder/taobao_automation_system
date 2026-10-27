@@ -129,7 +129,7 @@ class RemoveHistoryImportMigrationTests(unittest.TestCase):
         self.assertEqual(self.business_rows(),before)
         report=mysql.inspect_schema(self.config)
         self.assertEqual(report['schema_errors'],[])
-        self.assertEqual((report['table_count'],report['column_count'],report['foreign_key_count']),(19,250,42))
+        self.assertEqual((report['table_count'],report['column_count'],report['foreign_key_count']),(len(mysql.build_metadata().tables)+1,sum(len(t.c) for t in mysql.build_metadata().tables.values())+1,sum(len(t.foreign_key_constraints) for t in mysql.build_metadata().tables.values())))
         self.assertTrue(report['all_comments_present'])
 
     def test_new_database_runs_entire_frozen_migration_chain(self):

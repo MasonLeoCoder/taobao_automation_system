@@ -2,7 +2,7 @@
 import sqlalchemy as sa
 
 DETAIL_MODULES = {'basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions'}
-RUN_LABELS = {'running':'执行中','complete':'所选模块完成','complete_with_warnings':'所选模块完成（含警告）',
+RUN_LABELS = {'complete_with_errors':'已结束，存在模块错误','running':'执行中','complete':'所选模块完成','complete_with_warnings':'所选模块完成（含警告）',
     'partial':'部分完成','failed':'失败','needs_attention':'待人工处理','interrupted':'已中断','cancelled':'已取消'}
 
 

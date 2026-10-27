@@ -64,7 +64,7 @@ class TaobaoDetailTests(unittest.TestCase):
             with patch.object(collection, "run_task", side_effect=lambda settings, name, action: action()) as runner, \
                     patch("ecommerce.modules.collection.detail_service.open_detail_input", return_value="done") as opened:
                 self.assertEqual(collection.execute_detail(settings, args.input, wait=False), "done")
-                self.assertIs(runner.call_args.args[0], settings)
+                self.assertEqual(runner.call_args.args[0].profile_path, settings.for_platform("taobao").profile_path)
                 self.assertEqual(runner.call_args.args[1], "collection.taobao.detail.open")
                 self.assertEqual(opened.call_args.args[0].profile_path, settings.for_platform("taobao").profile_path)
                 self.assertFalse(opened.call_args.kwargs["wait"])

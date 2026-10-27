@@ -40,7 +40,7 @@ def missing(error):
 def present(state):
     """补充站内结果和日志链接；参数：公开状态；返回：页面所需状态。"""
     state['product_url']=url_for('pages.collection_product',product_id=state['product_id']) if state['product_id'] else None
-    if state.get('mode')=='detail' and not any(item.get('batch_id') for item in state.get('results',[])):
+    if state.get('mode')=='detail' and not any(item.get('batch_id') or item.get('valid') for item in state.get('results',[])):
         state['product_url']=None
     state['result_url']=url_for('pages.collection_product',product_id=state['product_id'],batch=state['batch_id']) if state['batch_id'] and state['product_id'] else None
     state['logs_url']=url_for('pages.logs',task_id=state['id'])
@@ -51,7 +51,57 @@ def present(state):
         state['result_url']=url_for('pages.collection_search',task_id=state['id'])
     for item in state.get('results',[]):
         item['result_url']=url_for('pages.collection_product',product_id=state['product_id'],batch=item['batch_id']) if item['batch_id'] else None
+    for item in state.get('failures',[]):
+        item['product_url']=url_for('pages.collection_product',product_id=item['product_id'])
+        item['logs_url']=url_for('pages.logs',task_id=item.get('task_id') or state['id'])
     return state
+
+
+@collection_jobs.get('/api/collection-jobs/<identifier>/recovery')
+def recovery_preview(identifier):
+    """只读恢复位置和清理范围；参数：原任务；返回：带版本的预览。"""
+    from ecommerce.modules.collection import dispatch
+    configured_job(identifier)
+    return jsonify(dispatch.preview(current_app.config['SETTINGS'],identifier))
+
+
+@collection_jobs.post('/api/collection-jobs/<identifier>/resume')
+def resume_job(identifier):
+    """按用户看到的版本恢复，执行时再次核对；参数：原任务及版本；返回：新执行。"""
+    from ecommerce.modules.collection import dispatch
+    body=request.get_json()
+    if not isinstance(body,dict) or set(body)!={'revision'} or type(body['revision']) is not int:
+        raise ValueError('请先查看恢复计划并提交对应版本')
+    arguments={'submission_key':request.headers['X-Submission-Id']} if request.headers.get('X-Submission-Id') else {}
+    return jsonify(present(dispatch.resume(current_app.config['SETTINGS'],identifier,body['revision'],**arguments))),202
+
+
+@collection_jobs.post('/api/collection-jobs/<identifier>/retry')
+def retry_module(identifier):
+    """手动排队补采失败模块；参数：来源任务、商品和模块；返回：队列编号。"""
+    from ecommerce.modules.collection import dispatch
+    body=request.get_json()
+    if not isinstance(body,dict) or set(body)!={'product_id','module'}:
+        raise ValueError('请指定原任务对应的商品和模块')
+    return jsonify(dispatch.retry(current_app.config['SETTINGS'],identifier,body['product_id'],body['module'])),202
+
+
+@collection_jobs.route('/api/collection-queue',methods=['GET','POST'])
+def retry_queue():
+    """查看或明确暂停/恢复队列；参数：可选动作；返回：队列。"""
+    from ecommerce.modules.collection import dispatch
+    settings=current_app.config['SETTINGS']
+    if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
+        if request.method=='GET':return jsonify(items=[])
+        raise ValueError('补采队列需要启用MySQL任务和采集存储')
+    if request.method=='GET':
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.infrastructure.tasks.ownership import execution_key
+        return jsonify(items=dispatch.queue(settings),**CollectionJobStore(settings).queue_state(execution_key(settings.for_platform('taobao'))))
+    body=request.get_json()
+    if not isinstance(body,dict) or set(body)!={'action'}:
+        raise ValueError('请指定队列动作')
+    return jsonify(items=dispatch.control_queue(settings,body['action']))
 
 
 def configured_job(identifier):
@@ -69,7 +119,8 @@ def history():
 @collection_jobs.post('/api/collection-jobs')
 def create():
     """派发关键词或任意商品采集；参数：JSON配置；返回：202任务描述。"""
-    return jsonify(present(service.start_configured(current_app.config['SETTINGS'],request.get_json()))),202
+    return jsonify(present(service.start_configured(current_app.config['SETTINGS'],request.get_json(),
+        submission_key=request.headers.get('X-Submission-Id')))),202
 
 
 @collection_jobs.get('/api/collection-jobs/<identifier>')
@@ -81,8 +132,7 @@ def job_status(identifier):
 @collection_jobs.post('/api/collection-jobs/<identifier>/control')
 def job_control(identifier):
     """将人工反馈送至指定任务；参数：编号、指令；返回：接收说明。"""
-    row=configured_job(identifier)
-    return control(row['product_id'],identifier)
+    return control(None,identifier)
 
 
 @collection_jobs.get('/api/collection-jobs/active')
@@ -103,9 +153,9 @@ def start(product_id):
     """派发单模块或补齐剩余模块；参数：商品及 JSON 请求；返回：202任务描述。"""
     body=request.get_json()
     if isinstance(body,dict) and body=={'mode':'remaining'}:
-        state=service.start_remaining(current_app.config['SETTINGS'],product_id)
+        state=service.start_remaining(current_app.config['SETTINGS'],product_id,submission_key=request.headers.get('X-Submission-Id'))
     elif isinstance(body,dict) and set(body)=={'module'} and isinstance(body['module'],str):
-        state=service.start(current_app.config['SETTINGS'],product_id,body['module'])
+        state=service.start(current_app.config['SETTINGS'],product_id,body['module'],submission_key=request.headers.get('X-Submission-Id'))
     else:
         raise ValueError('请指定唯一采集模块或补齐剩余模块模式')
     return jsonify(present(state)),202

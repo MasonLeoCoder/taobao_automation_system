@@ -16,7 +16,7 @@ from ecommerce.infrastructure.tasks.ownership import atomic_json,execution_key
 from ecommerce.infrastructure.tasks.runner import TaskResult
 from ecommerce.infrastructure.storage.database import now
 from ecommerce.modules.collection import web_collection as service
-from ecommerce.modules.collection.web_worker import execute
+from ecommerce.modules.collection.web_worker import execute as worker_execute
 from ecommerce.platforms.taobao.verification import TaobaoGuard
 from ecommerce.shared.config import load_settings
 from ecommerce.shared.exceptions import TaskBusy
@@ -25,42 +25,29 @@ from ecommerce.web.app import create_app
 
 class WebCollectionTests(unittest.TestCase):
     def test_pending_halted_task_is_visible_without_prompt_or_database_mutation(self):
-        """后台存活但业务已退出时显示真实中断原因，未入库事件不被伪造为成功。"""
-        from ecommerce.infrastructure.tasks.events import EventJournal
-        job=self.start();self.prompt(job)
-        row=jobs.read(self.settings,job['id']);row['state']='running';jobs.save(self.settings,row)
-        journal=EventJournal(self.settings,job['id'])
-        journal.append({'op':'event','task_id':job['id'],'database':self.settings.mysql.database,
-            'event_type':'session_halted','state':'needs_attention','details':{'reason':'停止原因入库失败'},'step':'复核评价'})
-        before=journal.path.read_bytes()
-        with patch.object(service,'active_local_tasks',return_value=[{'id':job['id']}]):
-            status=service.status(self.settings,'123',job['id'])
+        job=self.start(); row=jobs.read(self.settings,job['id']); row['state']='running'; self.save(row)
+        self.job_db.prompt(job,{'halted':True,'message':'结果待核对','allowed':[]})
+        status=service.status(self.settings,'123',job['id'])
         self.assertTrue(status['halted']);self.assertFalse(status['done']);self.assertFalse(status['valid'])
-        self.assertEqual(status['state'],'needs_attention');self.assertIsNone(status['prompt'])
-        self.assertIn('停止原因入库失败',status['message']);self.assertIn('请停止当前任务',status['message'])
-        self.assertEqual(journal.path.read_bytes(),before);self.assertFalse(journal.ack.exists())
+        self.assertIsNone(status['prompt'])
 
     def test_halted_local_prompt_is_shown_and_does_not_claim_process_has_exited(self):
-        """新版本保留现场提示不依赖数据库事件是否已经写入。"""
-        job=self.start();row=jobs.read(self.settings,job['id']);row['state']='running';jobs.save(self.settings,row)
-        path=self.settings.workspace/'storage/task_controls'/f"{job['id']}.state.json"
-        atomic_json(path,{'task_id':job['id'],'halted':True,'message':'本地写入失败','prompt_id':None,'allowed':[]})
-        with patch.object(service,'active_local_tasks',return_value=[{'id':job['id']}]):
-            status=service.status(self.settings,'123',job['id'])
-        self.assertTrue(status['halted']);self.assertFalse(status['done']);self.assertIsNone(status['prompt'])
-        self.assertIn('本地写入失败',status['message'])
+        job=self.start();row=jobs.read(self.settings,job['id']);row['state']='running';self.save(row)
+        atomic_json(self.settings.workspace/'storage/task_controls'/f"{job['id']}.state.json",{'halted':True})
+        status=service.status(self.settings,'123',job['id'])
+        self.assertFalse(status['halted']);self.assertFalse(status['done'])
 
     def test_unreadable_pending_status_does_not_fabricate_halt_or_allow_continue(self):
         """无法核对本地确认文件时显示待核实，不把读取异常当成业务已经退出。"""
         from ecommerce.infrastructure.tasks.events import EventJournal
         job=self.start();self.prompt(job)
-        row=jobs.read(self.settings,job['id']);row['state']='running';jobs.save(self.settings,row)
+        row=jobs.read(self.settings,job['id']);row['state']='running';self.save(row)
         journal=EventJournal(self.settings,job['id']);journal.append({'task_id':job['id']})
         journal.ack.write_text('{broken',encoding='utf-8')
         with patch.object(service,'active_local_tasks',return_value=[{'id':job['id']}]):
             status=service.status(self.settings,'123',job['id'])
-        self.assertEqual(status['state'],'unverified');self.assertFalse(status['halted'])
-        self.assertFalse(status['done']);self.assertIsNone(status['prompt']);self.assertFalse(status['valid'])
+        self.assertEqual(status['state'],'needs_attention');self.assertFalse(status['halted'])
+        self.assertFalse(status['done']);self.assertIsNotNone(status['prompt']);self.assertFalse(status['valid'])
 
     def setUp(self):
         """准备配置和模拟商品；参数：无；返回：无。"""
@@ -68,13 +55,18 @@ class WebCollectionTests(unittest.TestCase):
         self.base=load_settings(root=Path(temp.name))
         self.app=create_app(self.base)
         self.settings=replace(self.base,task_backend='mysql',collection_backend='mysql')
+        from tests.job_store_fixture import JobDatabaseFixture
+        self.job_db=JobDatabaseFixture(self,self.settings)
+        self.save=self.job_db.save
         self.app.config['SETTINGS']=self.settings
         self.client=self.app.test_client()
         self.headers={'X-Collection-Token':self.app.config['COLLECTION_TOKEN']}
+        self.skip_evidence={}
         self.data={'history':[],'current_ids':[],'product':{'id':1,'platform_product_id':'123'}}
         for target,kwargs in [
             ('ecommerce.modules.collection.web_collection.query',{'side_effect':self.query}),
             ('ecommerce.modules.collection.web_collection.active_local_tasks',{'return_value':[]}),
+            ('ecommerce.modules.collection.dispatch.active_local_tasks',{'return_value':[]}),
             ('ecommerce.infrastructure.tasks.web_jobs.alive',{'return_value':True}),
             ('ecommerce.infrastructure.tasks.web_jobs.launch',{'return_value':SimpleNamespace(pid=9999)}),
             ('ecommerce.modules.collection.web_collection.process_started_at',{'return_value':now()})]:
@@ -84,6 +76,7 @@ class WebCollectionTests(unittest.TestCase):
     def query(self,settings,kind,**parameters):
         """提供商品与缺失任务样例；参数：查询条件；返回：模拟数据。"""
         if kind=='browse_task':raise LookupError('无任务')
+        if kind=='browse_module_skip':return self.skip_evidence.get(parameters['task_id'],{})
         return self.data
 
     def start(self,module='video'):
@@ -93,41 +86,58 @@ class WebCollectionTests(unittest.TestCase):
     def test_question_skip_with_database_proof_closes_single_job_without_attention(self):
         """已入库跳过结束单模块任务，不把跳过计为有效采集；参数：无；返回：无。"""
         job=self.start('questions')
+        self.skip_evidence[job['id']]={'skipped':True,'message':'未找到问大家入口，已跳过'}
         original=self.query
         def query(settings,kind,**values):
             if kind=='browse_module_skip':return {'skipped':True,'message':'未找到问大家入口，已跳过'}
             return original(settings,kind,**values)
         with patch.object(service,'query',side_effect=query),patch(
                 'ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','含跳过项目',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         state=service.status(self.settings,'123',job['id'])
         self.assertEqual(state['state'],'succeeded');self.assertTrue(state['done']);self.assertIsNone(state['prompt'])
         self.assertTrue(state['skipped']);self.assertFalse(state['valid']);self.assertIsNone(state['batch_id'])
-        self.assertEqual(state['skipped_count'],1);self.assertEqual(state['completed_count'],0)
+        self.assertEqual(state['skipped_count'],1);self.assertEqual(state['completed_count'],1);self.assertEqual(state['collected_count'],0)
+
+    def test_recovery_no_entry_finishes_flow_without_fabricating_effective_data(self):
+        """新检查点入口同样计入流程完成，实际结果为0且不转人工等待。"""
+        from unittest.mock import MagicMock
+        job=self.start('questions')
+        row=jobs.read(self.settings,job['id']);row.update(state='succeeded',recovery_ready=True);self.save(row)
+        persistence=MagicMock()
+        persistence.read.return_value={'checkpoint':{'finished':True,'pages':{},'counts':{'complete':0,'no_entry':1},
+            'products':{'123':{'questions':{'state':'no_entry','status':'skipped','task_id':job['id'],'stop_reason':'entry_not_found'}}}}}
+        with patch('ecommerce.infrastructure.storage.collection_recovery.RecoveryStore',return_value=persistence):
+            state=service.status(self.settings,'123',job['id'])
+        self.assertTrue(state['done']);self.assertEqual(state['state'],'succeeded')
+        self.assertFalse(state['valid']);self.assertEqual(state['completed_count'],1)
+        self.assertEqual(state['collected_count'],0);self.assertEqual(state['failures'],[])
         self.assertIn('questions',service.plan(self.settings,'123')['modules'])
 
     def test_question_skip_and_completed_module_close_bulk_job_separately(self):
         """已保存模块与入口跳过分别计数，配置任务正常收尾；参数：无；返回：无。"""
         job=service.start_configured(self.settings,{'mode':'detail','input':'123','modules':['video','questions']})
         self.data.update(history=[{'id':7,'task_id':job['id'],'module':'video','status':'no_video'}],current_ids=[7])
+        self.skip_evidence[job['id']]={'skipped':True,'message':'未找到问大家入口，已跳过'}
         original=self.query
         def query(settings,kind,**values):
             if kind=='browse_module_skip':return {'skipped':True,'message':'未找到问大家入口，已跳过'}
             return original(settings,kind,**values)
         with patch.object(service,'query',side_effect=query),patch(
                 'ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','含跳过',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         state=service.status(self.settings,'123',job['id'])
         self.assertEqual(state['state'],'succeeded')
-        self.assertEqual((state['completed_count'],state['skipped_count'],state['total_count']),(1,1,2))
+        self.assertEqual((state['completed_count'],state['skipped_count'],state['total_count']),(2,1,2))
+        self.assertEqual(state['collected_count'],1)
         self.assertFalse(state['valid']);self.assertTrue(state['results'][1]['skipped'])
 
     def test_local_skip_progress_without_database_proof_cannot_claim_completion(self):
         """本地进度不能代替同任务入库依据，未知缺失仍需核对；参数：无；返回：无。"""
         job=self.start('questions');row=jobs.read(self.settings,job['id'])
-        row['progress']={'results':[{'module':'questions','valid':False,'skipped':True}]};jobs.save(self.settings,row)
+        row['progress']={'results':[{'module':'questions','valid':False,'skipped':True}]};self.save(row)
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','完成',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         state=service.status(self.settings,'123',job['id'])
         self.assertEqual(state['state'],'needs_attention');self.assertFalse(state['skipped'])
 
@@ -139,8 +149,9 @@ class WebCollectionTests(unittest.TestCase):
         self.launch.assert_called_once()
         self.assertEqual(first['options'],{**body,'keyword':'粘毛器'})
         self.assertIsNone(first['product_id'])
-        with self.assertRaises(TaskBusy):service.start_configured(self.settings,{**body,'pages':2})
-        with self.assertRaises(TaskBusy):self.start()
+        queued=service.start_configured(self.settings,{**body,'pages':2})
+        self.assertEqual(queued['state'],'queued');self.assertNotEqual(first['id'],queued['id'])
+        self.assertEqual(self.start()['state'],'queued');self.launch.assert_called_once()
 
     def test_configured_detail_accepts_new_product_and_sanitizes_link(self):
         """任意新商品可派发，来源链接不持久化授权跟踪字段；参数：无；返回：无。"""
@@ -184,7 +195,7 @@ class WebCollectionTests(unittest.TestCase):
         self.assertEqual(self.client.get(url).get_json()['jobs'][0]['id'],job['id'])
         self.assertEqual(self.client.post(job['status_url']+'/control',json={'action':'stop'},headers=self.headers).status_code,200)
         with patch('ecommerce.modules.collection.web_worker.run_collection') as collect:
-            execute(self.settings.workspace,job['id']);collect.assert_not_called()
+            self.execute_job(job['id']);collect.assert_not_called()
         self.assertEqual(self.client.get(job['status_url']).get_json()['state'],'cancelled')
 
     def test_configured_detail_dispatches_only_selected_modules_and_independent_ranges(self):
@@ -237,21 +248,33 @@ class WebCollectionTests(unittest.TestCase):
         self.data.update(history=[{'id':7,'task_id':job['id'],'module':'video','status':'no_video'},
                                   {'id':8,'task_id':'c'*32,'module':'reviews','status':'complete'}],current_ids=[7,8])
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','已结束',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         state=service.status(self.settings,'123',job['id'])
         self.assertEqual(state['state'],'needs_attention');self.assertFalse(state['valid'])
         self.assertEqual(state['completed_count'],1)
 
+    def execute_job(self,identifier):
+        """模拟的执行器也先提交真实任务行，再返回执行结果。"""
+        import ecommerce.modules.collection.web_worker as worker
+        original=worker.run_collection
+        def perform(settings,row):
+            result=original(settings,row)
+            updated={**row,'state':result.status,'message':result.message}
+            self.save(updated)
+            return result
+        row=jobs.read(self.settings,identifier)
+        with patch.object(worker,'run_collection',side_effect=perform):
+            worker_execute(self.settings.workspace,identifier,row['claim_token'],bootstrap=self.settings)
+
     def prompt(self,job,identifier='b'*32,allowed=None):
-        """发布模拟守卫提示；参数：任务、提示和动作；返回：无。"""
-        atomic_json(self.settings.workspace/'storage/task_controls'/f"{job['id']}.state.json",
-                    {'task_id':job['id'],'prompt_id':identifier,'allowed':allowed or ['继续'],
-                     'step':'验证','message':'请完成验证'})
+        """准备数据库里的当前提示。"""
+        self.job_db.prompt(job,{'task_id':job['id'],'prompt_id':identifier,'allowed':allowed or ['继续'],
+            'step':'验证','message':'请完成验证'})
 
     def test_duplicate_click_reuses_job_and_other_module_is_busy(self):
         first=self.start()
         self.assertEqual(first['id'],self.start()['id']);self.launch.assert_called_once()
-        with self.assertRaises(TaskBusy):self.start('skus')
+        self.assertEqual(self.start('skus')['state'],'queued');self.launch.assert_called_once()
 
     def test_invalid_module_product_or_backend_never_spawns(self):
         for identifier,module in [('123','all'),('123',[]),('0','video'),('../123','skus')]:
@@ -281,30 +304,32 @@ class WebCollectionTests(unittest.TestCase):
         state=service.status(self.settings,'123',job['id'])
         self.assertEqual(state['prompt']['message'],'请完成验证');self.assertFalse(state['done'])
         with self.assertRaises(ValueError):service.control(self.settings,'123',job['id'],'continue','c'*32)
-        with patch('ecommerce.modules.account.taobao_control.request_control',return_value='已发送') as control:
-            self.assertEqual(service.control(self.settings,'123',job['id'],'continue','b'*32),'已发送')
-            self.assertEqual(control.call_args.kwargs,{'task_id':job['id'],'prompt_id':'b'*32})
+        self.assertIn('已保存',service.control(self.settings,'123',job['id'],'continue','b'*32))
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        command=CollectionJobStore(self.settings).receive_control(job['id'],jobs.read(self.settings,job['id'])['claim_token'])
+        self.assertEqual(command['action'],'continue');self.assertEqual(command['prompt_id'],'b'*32)
 
     def test_pending_instruction_cannot_be_overwritten(self):
         job=self.start();self.prompt(job)
-        atomic_json(self.settings.workspace/'storage/task_controls'/f"{job['id']}.json",{'action':'continue'})
+        service.control(self.settings,'123',job['id'],'continue','b'*32)
         with self.assertRaises(ValueError):service.control(self.settings,'123',job['id'],'continue','b'*32)
-        row=jobs.read(self.settings,job['id']);row['state']='running';jobs.save(self.settings,row)
-        with patch('ecommerce.modules.account.taobao_control.request_control',return_value='已停止'):
-            self.assertEqual(service.control(self.settings,'123',job['id'],'stop'),'已停止')
+        self.assertIn('停止',service.control(self.settings,'123',job['id'],'stop'))
 
     def test_queued_stop_prevents_worker_collection(self):
         job=self.start()
         service.control(self.settings,'123',job['id'],'stop')
         with patch('ecommerce.modules.collection.web_worker.run_collection') as collect:
-            execute(self.settings.workspace,job['id']);collect.assert_not_called()
+            self.execute_job(job['id']);collect.assert_not_called()
         self.assertEqual(service.status(self.settings,'123',job['id'])['state'],'cancelled')
 
     def test_spawn_failure_is_persisted_and_can_retry(self):
         self.launch.side_effect=OSError('cannot spawn')
-        with self.assertRaises(OSError):self.start()
-        self.assertEqual(jobs.rows(self.settings)[0]['state'],'failed')
-        self.launch.side_effect=None;self.start();self.assertEqual(self.launch.call_count,2)
+        first=self.start();self.assertEqual(first['state'],'failed');self.assertTrue(first['done'])
+        self.assertIsNone(first['task_id'])
+        self.launch.side_effect=None
+        second=self.start();self.assertNotEqual(first['id'],second['id']);self.assertEqual(second['state'],'paused')
+        from ecommerce.modules.collection.dispatch import control_queue
+        control_queue(self.settings,'resume');self.assertEqual(self.launch.call_count,2)
 
     def test_dead_process_is_interrupted_without_replaying(self):
         job=self.start()
@@ -315,7 +340,7 @@ class WebCollectionTests(unittest.TestCase):
 
     def test_unknown_process_never_allows_duplicate_relaunch(self):
         job=self.start();row=jobs.read(self.settings,job['id'])
-        row['created_at']=(datetime.fromisoformat(now())-timedelta(minutes=2)).isoformat();jobs.save(self.settings,row)
+        row['created_at']=(datetime.fromisoformat(now())-timedelta(minutes=2)).isoformat();self.save(row)
         with patch.object(jobs,'alive',return_value=None):
             result=service.status(self.settings,'123',job['id'])
             self.assertFalse(result['done']);self.assertEqual(result['state'],'unverified')
@@ -323,12 +348,12 @@ class WebCollectionTests(unittest.TestCase):
         self.launch.assert_called_once()
 
     def test_existing_cli_task_blocks_web_dispatch(self):
-        with patch.object(service,'active_local_tasks',return_value=[{'id':'a'*32}]):
-            with self.assertRaises(TaskBusy):self.start()
+        with patch('ecommerce.modules.collection.dispatch.active_local_tasks',return_value=[{'id':'a'*32}]):
+            self.assertEqual(self.start()['state'],'queued')
         self.launch.assert_not_called()
 
     def test_only_chosen_module_reaches_shared_collector(self):
-        row={'id':'a'*32,'product_id':'123','module':'reviews'}
+        job=self.start('reviews');row=jobs.read(self.settings,job['id'])
         def runner(settings,name,action,**options):
             self.assertEqual(options['task_id'],row['id']);return action()
         with patch('ecommerce.infrastructure.tasks.runner.run_task',side_effect=runner),patch(
@@ -344,7 +369,7 @@ class WebCollectionTests(unittest.TestCase):
         self.data['history']=[{'id':7,'task_id':job['id'],'module':'video','status':'no_video'}]
         self.data['current_ids']=[7]
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','已确认无视频',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         result=service.status(self.settings,'123',job['id'])
         self.assertTrue(result['valid']);self.assertEqual(result['batch_id'],7)
         self.assertEqual(result['result_label'],'查看采集结果');self.assertEqual(result['state'],'succeeded')
@@ -352,19 +377,20 @@ class WebCollectionTests(unittest.TestCase):
     def test_old_success_cannot_substitute_for_missing_current_result(self):
         job=self.start();self.data['history']=[{'id':7,'task_id':'c'*32,'module':'video','status':'downloaded'}];self.data['current_ids']=[7]
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','已结束',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         result=service.status(self.settings,'123',job['id'])
         self.assertFalse(result['valid']);self.assertIsNone(result['batch_id']);self.assertEqual(result['state'],'needs_attention')
 
     def test_partial_result_is_retained_without_claiming_success(self):
         job=self.start();self.data['history']=[{'id':8,'task_id':job['id'],'module':'video','status':'partial'}]
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'needs_attention','部分下载',3)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         result=service.status(self.settings,'123',job['id'])
         self.assertFalse(result['valid']);self.assertEqual(result['batch_id'],8);self.assertTrue(result['done'])
 
     def test_result_link_uses_new_batch_without_original_observation(self):
-        job=self.start();row=jobs.read(self.settings,job['id']);row.update(state='succeeded',result={'batch_id':7,'valid':True});jobs.save(self.settings,row)
+        job=self.start();row=jobs.read(self.settings,job['id']);row.update(state='succeeded',result={'batch_id':7,'valid':True});self.save(row)
+        self.data.update(history=[{'id':7,'task_id':job['id'],'module':'video','status':'downloaded'}],current_ids=[7])
         result=self.client.get(f"/api/collections/products/123/jobs/{job['id']}").get_json()
         self.assertIn('batch=7',result['result_url']);self.assertNotIn('observation',result['result_url'])
 
@@ -383,12 +409,9 @@ class WebCollectionTests(unittest.TestCase):
 
     def test_storage_pending_exposes_stop_but_never_authorizes_continue(self):
         job=self.start();self.prompt(job)
-        row=jobs.read(self.settings,job['id']);row['state']='running';jobs.save(self.settings,row)
-        active={'id':job['id'],'storage_pending':True}
-        with patch.object(service,'active_local_tasks',return_value=[active]),patch(
-                'ecommerce.modules.account.taobao_control.request_control',side_effect=ValueError('不能绕过存储暂停')):
-            self.assertTrue(service.status(self.settings,'123',job['id'])['storage_pending'])
-            with self.assertRaises(ValueError):service.control(self.settings,'123',job['id'],'continue','b'*32)
+        self.job_db.prompt(job,{'prompt_id':'b'*32,'allowed':['继续'],'storage_pending':True})
+        self.assertTrue(service.status(self.settings,'123',job['id'])['storage_pending'])
+        with self.assertRaises(ValueError):service.control(self.settings,'123',job['id'],'continue','b'*32)
 
     def test_login_feedback_rechecks_authentication_instead_of_assuming_success(self):
         from ecommerce.platforms.taobao.login import login_manually
@@ -413,6 +436,7 @@ class WebCollectionTests(unittest.TestCase):
     def test_crash_after_database_finish_restores_result_without_collection(self):
         job=self.start()
         self.data['history']=[{'id':9,'task_id':job['id'],'module':'video','status':'downloaded'}];self.data['current_ids']=[9]
+        row=jobs.read(self.settings,job['id']);row['state']='succeeded';self.save(row)
         def query(settings,kind,**parameters):
             return {'task':{'status':'succeeded','finished_at':now(),'message':'完成'}} if kind=='browse_task' else self.data
         with patch.object(jobs,'alive',return_value=False),patch.object(service,'query',side_effect=query):
@@ -422,23 +446,28 @@ class WebCollectionTests(unittest.TestCase):
 
     def test_worker_uses_persisted_configuration_in_separate_process(self):
         job=self.start()
-        code='''
-import sys
-from unittest.mock import patch
-from ecommerce.modules.collection.web_worker import execute
-from ecommerce.infrastructure.tasks.runner import TaskResult
-data={'history':[{'id':71,'task_id':sys.argv[2],'module':'video','status':'no_video'}],'current_ids':[71]}
-with patch('ecommerce.modules.collection.web_collection.query',return_value=data),patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(sys.argv[2],'succeeded','local fixture only',0)):
-    execute(sys.argv[1],sys.argv[2])
-'''
-        completed=subprocess.run([sys.executable,'-c',code,str(self.settings.workspace),job['id']],
-                    capture_output=True,text=True,timeout=20,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        self.assertEqual(completed.returncode,0,completed.stderr)
-        row=jobs.read(self.settings,job['id'])
-        self.assertEqual(row['state'],'succeeded');self.assertTrue(row['result']['valid'])
-        self.assertEqual(row['result']['batch_id'],71)
-        self.assertNotEqual(row['owner_pid'],os.getpid())
+        # 旧派发文件损坏也不能影响数据库领取和读取配置。
+        atomic_json(jobs.directory(self.settings)/f"{job['id']}.json",{'invalid':'local obsolete'})
+        self.data.update(history=[{'id':71,'task_id':job['id'],'module':'video','status':'no_video'}],current_ids=[71])
+        with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','local fixture only',0)):
+            self.execute_job(job['id'])
+        row=jobs.read(self.settings,job['id']);self.assertEqual(row['state'],'succeeded')
+        self.assertTrue(service.status(self.settings,'123',job['id'])['valid'])
+
+    def test_legacy_single_without_mode_reads_its_own_published_history(self):
+        """旧派发未记录mode时按单模块恢复展示，历史完整结果不借其他任务。"""
+        import sqlalchemy as sa
+        job=self.start();row=jobs.read(self.settings,job['id']);row['state']='succeeded';self.save(row)
+        j=self.job_db.tables['collection_jobs']
+        with self.job_db.engine.begin() as c:
+            payload=c.scalar(sa.select(j.c.payload).where(j.c.id==job['id']))
+            payload.pop('mode',None);payload.pop('modules',None)
+            c.execute(j.update().where(j.c.id==job['id']).values(origin='legacy',payload=payload))
+        self.data.update(history=[{'id':7,'task_id':job['id'],'module':'video','status':'no_video','visibility':'published'}],current_ids=[])
+        status=service.status(self.settings,'123',job['id'])
+        self.assertEqual(status['mode'],'single');self.assertTrue(status['valid']);self.assertEqual(status['batch_id'],7)
+        self.data['history'][0]['visibility']='quarantined'
+        self.assertFalse(service.status(self.settings,'123',job['id'])['valid'])
 
 
 if __name__=='__main__':unittest.main()

@@ -19,6 +19,8 @@ STATUS_LABELS = {
     'pending':'未执行','not_run':'未执行（前序模块未通过）','not_requested':'未启用',
     'running':'尚未完成','interrupted':'已中断','needs_attention':'需要人工处理',
     'skipped':'已跳过（未找到入口）',
+    'failed_skipped':'失败，已跳过', 'not_run_skipped':'页面无法恢复，未执行',
+    'resolved':'已补采解决',
 }
 
 
@@ -74,8 +76,32 @@ class DetailCollectionReport:
         for step in self.record['steps']:
             if step['status']=='pending':
                 step.update(status='not_run',reason='前序模块未通过，未执行本项目')
-        self.record.update(status='partial' if error else 'complete_with_warnings' if self.record['warnings'] else 'complete',
+        self.record['counts']={
+            'complete':sum(step['requested'] and step['status'] in {'complete','downloaded','no_video','no_parameters','no_images','no_reviews','no_questions'} for step in self.record['steps']),
+            'no_entry':sum(step['status']=='skipped' for step in self.record['steps']),
+            'failed':sum(step['status']=='failed_skipped' for step in self.record['steps']),
+            'not_run':sum(step['requested'] and step['status'] in {'not_run','not_run_skipped','pending'} for step in self.record['steps'])}
+        self.record.update(status='partial' if error else 'complete_with_errors' if self.record['counts']['failed'] or self.record['counts']['not_run'] else 'complete_with_warnings' if self.record['warnings'] else 'complete',
                            finished_at=now(),error=error)
+        self.save()
+
+    def fail(self,name,error,progress=None):
+        """模块失败只影响本模块，保留错误及部分结果位置；参数：模块、异常；返回：无。"""
+        from ecommerce.infrastructure.tasks.events import sanitize
+        step=self._step(name)
+        step.update(status='failed_skipped',continuation_allowed=True,finished_at=now(),
+                    message=sanitize(str(error)),error_type=type(error).__name__,progress=progress or {})
+        if name=='skus': self._attach_sku_progress(step)
+        self.save()
+
+    def reuse(self,name,value):
+        """沿用原计划处理结果，保留原执行及时间；参数：模块、旧检查点；返回：无。"""
+        step=self._step(name)
+        step.update(status=value.get('status','complete'),continuation_allowed=True,reused=True,source_task_id=value.get('task_id'),
+                    message=value.get('message','复用原计划结果'))
+        if value.get('state') in {'failed_skipped','not_run_skipped'}: step['status']=value['state']
+        if value.get('resolved_by_task_id'):
+            step.update(status='resolved',resolved_by_task_id=value['resolved_by_task_id'],message='历史错误已由后续补采解决')
         self.save()
 
     def interrupt(self,error):
@@ -96,7 +122,7 @@ class DetailCollectionReport:
     def display(self):
         """打印各模块状态、待核对项及本次部分结果的真实目录，并返回简短任务结语。"""
         status={'complete':'详情采集完成','complete_with_warnings':'详情采集完成（含警告，部分数据待核对）',
-                'partial':'详情采集部分完成','interrupted':'详情采集已中断',
+                'complete_with_errors':'已结束，存在模块错误','partial':'详情采集部分完成','interrupted':'详情采集已中断',
                 'needs_attention':'详情采集需要人工处理','failed':'详情采集失败'}.get(self.record['status'],'详情采集尚未完成')
         if self.record['status']=='complete_with_warnings' and any(step['status']=='skipped' for step in self.record['steps']):
             status='详情采集结束（含跳过项目，详见日志）'
@@ -109,7 +135,7 @@ class DetailCollectionReport:
                 print(prefix+warning.get('sku_name','')+'；'+warning['message'],flush=True)
             for issue in step.get('blocking_issues',[]):
                 print('  阻断项：'+issue.get('sku_name','')+'；'+issue['message'],flush=True)
-            if step['status'] in {'partial','interrupted','needs_attention','failed'}:
+            if step['status'] in {'partial','interrupted','needs_attention','failed','failed_skipped'}:
                 if step.get('history_record_path'):
                     print('  本次部分结果：'+step['history_record_path'],flush=True)
                 if step.get('progress_record_path'):

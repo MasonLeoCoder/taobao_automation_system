@@ -21,7 +21,7 @@ from playwright.sync_api import Error as PlaywrightError
 from ecommerce.infrastructure.storage.database import now, update_task_progress
 from ecommerce.infrastructure.tasks.runner import current_task
 from ecommerce.shared.config import DEFAULT_TAOBAO_TIMING
-from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
+from ecommerce.shared.exceptions import NeedsAttention, TaskStopped, ModuleBlocked, BrowserClosed
 
 _ACTIVE = ContextVar("taobao_verification_guard", default=None)
 LOGIN_HOSTS = {"login.taobao.com", "www.taobao.com", "taobao.com"}
@@ -131,6 +131,48 @@ class TaobaoGuard:
         self._file_replies = {}
         self._stdin_unavailable = False
         self.event_path = self.log_dir / "taobao" / f"{self.task_id}.jsonl"
+        self._collection_module = None
+        self._module_progress_at = 0.0
+        self._module_paused_at = 0.0
+        self._module_timeout = 120.0
+        self._module_page = None
+        self._module_pacing = False
+        self._module_diagnostics={}
+        self.last_module_diagnostics={}
+
+    @contextmanager
+    def collection_module(self, name, page, timeout_ms=120000):
+        """隔离单模块业务阻塞，验证码和全局阻断仍等待明确反馈；参数：模块、页面、无进展预算；返回：作用域。"""
+        previous = self._collection_module, self._module_page, self._module_timeout
+        previous_check = self.resume_check
+        previous_watched=list(self.watched_responses)
+        self._collection_module, self._module_page, self._module_timeout = name, page, timeout_ms / 1000
+        self._module_diagnostics={'started_at':now(),'counts':{}}
+        self.note_module_progress()
+        try:
+            yield
+        finally:
+            self.last_module_diagnostics={**self._module_diagnostics,'counts':dict(self._module_diagnostics.get('counts',{}))}
+            self._pending = [b for b in self._pending if b.kind not in {'business','operation','module_network'}]
+            self.resume_check = previous_check
+            self.watched_responses=previous_watched
+            self._collection_module, self._module_page, self._module_timeout = previous
+
+    def note_module_progress(self,*,counts=None):
+        """仅在实际数量或下载内容推进时刷新无进展时钟；参数：无；返回：无。"""
+        self._module_progress_at = time.monotonic()
+        self._module_paused_at = self.paused_seconds
+        self._module_diagnostics['last_progress_at']=now()
+        if counts:self._module_diagnostics.setdefault('counts',{}).update(counts)
+
+    def _check_module_deadline(self):
+        """模块预算不包含全局人工暂停；关闭业务标签意味着整次执行停止。"""
+        if self._collection_module:
+            if self._module_page.is_closed():
+                raise BrowserClosed('采集页面已关闭，本次执行停止，等待手动续采')
+            elapsed = time.monotonic() - self._module_progress_at - (self.paused_seconds - self._module_paused_at)
+            if not self._module_pacing and elapsed >= self._module_timeout:
+                raise ModuleBlocked(f'{self._collection_module} 持续无有效进展超过 {self._module_timeout:g} 秒，已跳过')
 
     def __enter__(self):
         self._token = _ACTIVE.set(self)
@@ -187,6 +229,8 @@ class TaobaoGuard:
 
     def update_progress(self, *, keyword=None, page_number=None, collected=None, target=None):
         """只记录明确的业务进度字段，不记录页面输入框或登录凭证。"""
+        if collected is not None and collected != self.progress.get('collected'):
+            self.note_module_progress(counts={'collected':int(collected)})
         for key, value in {"keyword": keyword, "page_number": page_number, "collected": collected, "target": target}.items():
             if value is not None:
                 self.progress[key] = re.sub(r"(?<!\d)1[3-9]\d{9}(?!\d)", "[手机号]", str(value)) if key == "keyword" else int(value)
@@ -284,7 +328,8 @@ class TaobaoGuard:
 
     def _failed_signal(self, request):
         if self._relevant(request):
-            self._queue(Blockage("network", request.frame.page, "页面或已登记商品请求加载失败", key="request_failed:" + safe_location(request.url)))
+            kind='module_network' if self._collection_module and not request.is_navigation_request() else 'network'
+            self._queue(Blockage(kind, request.frame.page, "页面或已登记商品请求加载失败", key="request_failed:" + safe_location(request.url)))
 
     def _flush_network(self):
         for request in list(self._pending_documents):
@@ -387,13 +432,18 @@ class TaobaoGuard:
             message = title + "\n未收到有效指令，保持暂停。"
 
     def _check_control(self, page):
-        if not self.control_path.exists():
+        from ecommerce.infrastructure.tasks.collection_control import receive
+        managed,request=receive()
+        if not managed:
+            if not self.control_path.exists():
+                return
+            try:
+                request = json.loads(self.control_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError) as error:
+                raise NeedsAttention("任务控制文件无法读取，已暂停后续操作") from error
+            self.control_path.unlink()
+        if request is None:
             return
-        try:
-            request = json.loads(self.control_path.read_text(encoding="utf-8"))
-        except (ValueError, OSError) as error:
-            raise NeedsAttention("任务控制文件无法读取，已暂停后续操作") from error
-        self.control_path.unlink()
         if request.get("action") == "stop":
             self._transition("stopped")
             raise TaskStopped("用户已停止淘宝任务，未继续后续操作")
@@ -407,6 +457,10 @@ class TaobaoGuard:
                 self._record("stale_feedback_ignored")
 
     def _publish_prompt(self, *, halted=False):
+        from ecommerce.infrastructure.tasks.collection_control import publish
+        if publish({'task_id':self.task_id,'state':self.state,'step':self.step,'prompt_id':self._prompt_id,
+                    'allowed':sorted(self._prompt_allowed),'message':self._prompt_message,'halted':halted}):
+            return
         self.control_state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.control_state_path.with_suffix(".tmp")
         temporary.write_text(json.dumps({"task_id": self.task_id, "state": self.state, "step": self.step,
@@ -526,6 +580,11 @@ class TaobaoGuard:
                 if started is None:
                     started = time.monotonic()
                 self._transition("needs_attention", blockage)
+                if self._collection_module and blockage.kind in {'business','operation','module_network'}:
+                    self._capture(blockage)
+                    self._pending = [b for b in self._pending if b is not blockage]
+                    self._transition('running')
+                    raise ModuleBlocked(blockage.source)
                 incident = (blockage.kind, blockage.page, blockage.source)
                 evidence = self._capture(blockage) if incident not in captured and blockage.kind != "native_done" else str(self.event_path)
                 captured.add(incident)
@@ -565,6 +624,7 @@ class TaobaoGuard:
                             blockage = Blockage("resume_check", pages[-1], "登录状态或当前业务页面未通过复核")
             if not first:
                 self._transition("running")
+            self._check_module_deadline()
         except (TaskStopped, KeyboardInterrupt):
             self._transition("stopped")
             raise
@@ -598,11 +658,27 @@ class TaobaoGuard:
         low, high = self.timing[action]
         seconds = random.uniform(low, high)
         self._record("paced", action=action, seconds=round(seconds, 3))
-        self.wait(seconds * 1000)
+        started,paused=time.monotonic(),self.paused_seconds
+        previous=self._module_pacing
+        self._module_pacing=True
+        try:
+            self.wait(seconds * 1000)
+        finally:
+            self._module_progress_at+=max(0,time.monotonic()-started-(self.paused_seconds-paused))
+            self._module_pacing=previous
 
     def request_attention(self, page, reason, *, step=None,check_details=None):
         """页面结构或业务结果无法确认时交给人工，不自动刷新或重放。"""
+        # 先识别验证码/登录/未知弹窗，不能用模块跳过绕过全局阻断。
+        if self._collection_module:
+            self.checkpoint(step)
         self._queue(Blockage("business", page, reason, key="business:" + uuid4().hex,check_details=check_details))
+        self.checkpoint(step)
+
+    def request_network_attention(self,page,reason,*,step=None,retry_after=None):
+        """下载器发现限流/拒绝访问时整体暂停，不用业务跳过绕过访问限制。"""
+        delay=retry_after_seconds(retry_after) or 0
+        self._queue(Blockage('network',page,reason,time.monotonic()+delay,'download_access:'+uuid4().hex))
         self.checkpoint(step)
 
     def perform(self, step, action, *, completed=None):

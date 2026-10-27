@@ -10,6 +10,29 @@ def request_control(settings, action, *, task_id=None, prompt_id=None):
     replies = {"continue": "继续", "confirm": "确认", "cancel": "取消"}
     if action not in {"pause", "stop", *replies}:
         raise ValueError("不支持的淘宝控制指令")
+    if settings.task_backend=='mysql' and settings.collection_backend=='mysql':
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        from ecommerce.infrastructure.tasks.ownership import execution_key
+        persistence=CollectionJobStore(settings)
+        try:
+            matches=persistence.rows(execution_key(settings),pending=True)
+            matches=[row for row in matches if row['id']==task_id] if task_id else [row for row in matches if row['dispatch_state'] in {'claimed','started'}]
+            if len(matches)>1:
+                raise ValueError('发现多个采集申请，请指定任务编号')
+            if matches:
+                row=matches[0]
+                if action=='stop':
+                    from ecommerce.modules.collection.dispatch import pause_queue
+                    pause_queue(settings)
+                prompt_id=prompt_id or (row.get('prompt') or {}).get('prompt_id')
+                persistence.control(row['id'],action,prompt_id)
+                return '采集控制指令已保存到数据库，等待当前执行器接收'
+        except MySQLStorageError:
+            if action!='stop' or not task_id:
+                raise
+            from ecommerce.infrastructure.tasks.collection_control import emergency_stop
+            return emergency_stop(settings,task_id)
     if settings.task_backend=='mysql':
         from ecommerce.infrastructure.tasks.ownership import active_local_tasks
         tasks=[task for task in active_local_tasks(settings) if task['name'].startswith(('account.taobao.','collection.taobao.'))]

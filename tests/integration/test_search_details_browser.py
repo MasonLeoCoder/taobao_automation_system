@@ -122,6 +122,25 @@ class SearchDetailsBrowserTests(unittest.TestCase):
         self.assertEqual(page.evaluate('nextClicks'),0)
         self.assertEqual(summary['detail_attempts'][0]['status'],'interrupted')
 
+    def test_failed_product_entry_does_not_block_later_products_or_next_page(self):
+        """单商品入口业务超时标红跳过，后续商品和翻页继续；关闭浏览器仍由停止用例覆盖。"""
+        from ecommerce.modules.collection import search_details
+        from ecommerce.shared.exceptions import ModuleBlocked
+        original=search_details.open_list_detail
+        attempts=[]
+        def open_entry(*args,**kwargs):
+            attempts.append(args[2])
+            if len(attempts)==1:raise ModuleBlocked('合成详情入口无进展')
+            return original(*args,**kwargs)
+        with patch.object(search_details,'open_list_detail',side_effect=open_entry):
+            self.run_collection()
+        summary=self.summary()
+        self.assertEqual(summary['status'],'complete_with_errors')
+        self.assertEqual(summary['completed_page_count'],2)
+        self.assertEqual(summary['detail_success_count'],2)
+        self.assertEqual(summary['detail_attempts'][0]['status'],'failed_skipped')
+        self.assertEqual(len(self.calls),18)
+
     def test_changed_search_conditions_preserve_saved_detail_success_but_stop_workflow(self):
         """返回时搜索词变化导致暂停，已成功详情仍计入保存数量，流程不继续翻页。"""
         self.change_list=True

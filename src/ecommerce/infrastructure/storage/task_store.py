@@ -7,7 +7,7 @@ import json
 import sqlalchemy as sa
 
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,create_mysql_engine,current_revision,connection_status,safe_error
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import REVISION,build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v9 import REVISION,build_metadata
 from ecommerce.infrastructure.storage.time_values import BEIJING,database_time,database_now,iso_value
 
 
@@ -71,7 +71,7 @@ class MySQLTaskStore:
         tasks,events=self.tables['tasks'],self.tables['task_events']
         if operation.get('database',self.settings.database)!=self.settings.database:
             raise MySQLStorageError('本地流水属于另一数据库，未跨库补写')
-        if operation['op'] not in {'create','event','progress','finish'}:
+        if operation['op'] not in {'create','event','progress','finish','recovery','job_runtime','job_prompt'}:
             raise MySQLStorageError('流水操作类型无效，未执行写入')
         task_id=operation.get('task_id')
         digest=fingerprint(operation)
@@ -81,10 +81,15 @@ class MySQLTaskStore:
                 if task_id:
                     task=connection.execute(sa.select(tasks).where(tasks.c.id==task_id).with_for_update()).mappings().one_or_none()
                 if operation['op']=='create' and task is None:
+                    from ecommerce.infrastructure.storage.collection_jobs import attach_execution
+                    if not attach_execution(connection,self.tables,operation):
+                        return None
                     values=dict(operation['task'])
                     for key in ('started_at','owner_process_started_at'):
                         values[key]=database_time(values.get(key))
                     connection.execute(tasks.insert(),values)
+                    from ecommerce.infrastructure.storage.collection_jobs import complete_attachment
+                    complete_attachment(connection,self.tables,operation)
                     task=connection.execute(sa.select(tasks).where(tasks.c.id==task_id).with_for_update()).mappings().one()
                 if task_id and task is None:
                     raise MySQLStorageError('补写事件的任务不存在，未制造任务结果')
@@ -98,6 +103,14 @@ class MySQLTaskStore:
                 if task and task['finished_at'] is not None and operation['op'] in {'progress','finish','create'}:
                     raise MySQLStorageError('任务已经结束，未覆盖已提交的结论')
                 sequence=task['last_event_sequence']+1 if task else None
+                if operation['op']=='recovery':
+                    if task is None or task['finished_at'] is not None:
+                        raise MySQLStorageError('已结束任务不能推进采集恢复检查点')
+                    from ecommerce.infrastructure.storage.collection_recovery import apply_checkpoint
+                    apply_checkpoint(connection,self.tables,operation['recovery'],task_id)
+                if operation['op'] in {'job_runtime','job_prompt'}:
+                    from ecommerce.infrastructure.storage.collection_jobs import apply_runtime
+                    apply_runtime(connection,self.tables,operation)
                 details=dict(operation.get('details') or {})
                 details['operation_fingerprint']=digest
                 connection.execute(events.insert(),{'task_id':task_id,'task_sequence':sequence,'event_type':operation['event_type'],
@@ -109,6 +122,8 @@ class MySQLTaskStore:
                     change={'last_event_sequence':sequence}
                     if operation['op']=='finish':
                         change.update(status=operation['state'],finished_at=database_time(operation['time']),message=operation.get('message'))
+                        from ecommerce.infrastructure.storage.collection_jobs import finish_execution
+                        finish_execution(connection,self.tables,task_id,operation['state'])
                     elif operation['op']=='progress' and task['finished_at'] is None:
                         change.update(status=operation['state'],message=operation.get('message'))
                     connection.execute(tasks.update().where(tasks.c.id==task_id).values(**change))

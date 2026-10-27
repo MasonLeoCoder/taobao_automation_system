@@ -29,7 +29,7 @@ def local_task_alerts(settings: Settings, task_id=None, *, active_tasks=None):
             pass
         if status:
             alerts.append({'task_id':identifier,**status})
-    if active_tasks is None:
+    if active_tasks is None and settings.collection_backend=='mysql':
         # 已停止的网页任务也可能有未入库的真实结束事件，不能又回退成最后一条等待日志。
         from ecommerce.infrastructure.tasks import web_jobs
         from ecommerce.infrastructure.tasks.ownership import execution_key,owner_alive

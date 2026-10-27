@@ -2,7 +2,7 @@
 {% from "question_cards.html" import question_cards with context %}
 {% set labels={'basic':'基本信息','basic_info':'基本信息采集记录','list':'列表商品','video':'视频','main_images':'主图','skus':'SKU','parameters':'商品参数','detail_images':'详情图片','review_summary':'评价概览','reviews':'评价明细','questions':'问大家','history':'采集历史','sources':'关联搜索列表'} %}
 {% macro batch_status(status) -%}
-{% set names={'complete':'完成','partial':'部分完成','downloaded':'下载完成','no_video':'已确认无视频','no_images':'已确认无图片','no_parameters':'已确认无参数','no_reviews':'已确认无评价','no_questions':'已确认无问答','failed':'失败','succeeded':'成功','running':'运行中','cancelled':'已取消','needs_attention':'待人工处理','limit_reached':'已达到本次上限','all_loaded_cards_collected':'已读取当前页已加载商品','empty':'已确认无商品','unknown':'状态未记录'} %}
+{% set names={'complete_with_errors':'已结束，存在模块错误','complete_with_warnings':'已结束，含警告','failed_skipped':'失败，已跳过','not_run_skipped':'页面无法恢复，未执行','skipped':'无需采集（入口未找到）','discarded':'未完成明细已清理','resolved':'已补采解决','complete':'完成','partial':'部分完成','downloaded':'下载完成','no_video':'已确认无视频','no_images':'已确认无图片','no_parameters':'已确认无参数','no_reviews':'已确认无评价','no_questions':'已确认无问答','failed':'失败','succeeded':'成功','running':'运行中','cancelled':'已取消','needs_attention':'待人工处理','limit_reached':'已达到本次上限','all_loaded_cards_collected':'已读取当前页已加载商品','empty':'已确认无商品','unknown':'状态未记录'} %}
 <span class="badge {{ status }}">{{ names.get(status,status) }}</span>
 {%- endmacro %}
 {% macro scope(batch) -%}

@@ -189,6 +189,7 @@ class TaskEvents:
         self.waiting=False
         self.worker=None
         self.collection_barrier=0
+        self.recovery_exported_revision=0
         self.active_path=settings.workspace/'storage/task_controls'/f'{self.task_id}.active.json'
         self.owner={'id':self.task_id,'name':name,'execution_key':execution_key(settings),'owner_pid':os.getpid(),
                     'owner_process_started_at':process_started_at(os.getpid()),'database':store.settings.database}
@@ -201,11 +202,32 @@ class TaskEvents:
     def start(self):
         """先持久保存创建记录，再确认数据库后启动业务；参数：无；返回：无。"""
         operation=self.operation('create','task_started','任务开始：'+self.name,state='running')
+        if self.name.startswith('collection.taobao.') and self.settings.collection_backend=='mysql':
+            from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+            try:
+                row=CollectionJobStore(self.settings).read(self.task_id)
+                if getattr(self,'expected_job_claim',None) and self.expected_job_claim!=row['claim_token']:
+                    raise NeedsAttention('采集领取已失效，旧进程未启动浏览器')
+                if row['dispatch_state']!='claimed' or row.get('stop_requested'):
+                    raise TaskStopped('采集申请已取消或启动已中断，未打开浏览器')
+                self.job_claim_token=row['claim_token']
+                self.job_origin=row.get('origin')
+                self.job_modules=row.get('modules')
+                operation['job_claim_token']=self.job_claim_token
+            except LookupError:
+                pass
         operation['task']={k:v for k,v in self.owner.items() if k not in {'database'}}
         operation['task'].update(status='running',started_at=operation['time'],origin='live')
         self.journal.append(operation)
         atomic_json(self.active_path,self.owner)
         self.journal.drain(self.store)
+        if getattr(self,'job_claim_token',None):
+            row=CollectionJobStore(self.settings).read(self.task_id)
+            if row.get('task_id')!=self.task_id or row.get('claim_token')!=self.job_claim_token:
+                raise TaskStopped('创建入库前申请已取消，未打开浏览器')
+            self.started=True
+            if row.get('stop_requested'):
+                raise TaskStopped('采集开始前收到停止请求，未打开浏览器')
         self.worker=threading.Thread(target=self._work,daemon=True,name='mysql-events-'+self.task_id[:8])
         self.worker.start()
 
@@ -224,6 +246,10 @@ class TaskEvents:
             except (MySQLStorageError,OSError,ValueError,NeedsAttention) as error:
                 self.error=error
                 self.stopping.wait(.5)
+            except Exception as error:
+                self.error=NeedsAttention('持久化处理遇到不可重试问题：'+type(error).__name__+'；流水已保留，请核对日志')
+                logging.getLogger(__name__).exception('持久化线程已停止后续处理')
+                self.stopping.set()
 
     def append(self,operation):
         """追加并唤醒写入线程；参数：持久操作；返回：无。"""
@@ -237,8 +263,13 @@ class TaskEvents:
     def collection(self,snapshot,context):
         """排入不可变采集快照；参数：引用、发布依据；返回：无，下个页面屏障前确认。"""
         operation=self.operation('collection','collection_saved','采集结果等待入库')
+        recovery=getattr(self,'recovery',None)
+        if recovery and recovery.revision>self.recovery_exported_revision:
+            context={**context,'recovery':recovery.snapshot()}
         operation.update(snapshot=snapshot,context=context)
         self.collection_barrier=self.append(operation)
+        if recovery:
+            self.recovery_exported_revision=recovery.revision
 
     def emit(self,event_type,message=None,*,level='INFO',step=None,state=None,details=None,logger_name=None):
         """记录普通事件；参数：提示与上下文；返回：无。"""
@@ -269,6 +300,11 @@ class TaskEvents:
         atomic_json(self.active_path,dict(self.owner,storage_pending=True))
         try:
             while self.error is not None or self.journal.pending():
+                if getattr(self,'job_claim_token',None):
+                    from ecommerce.infrastructure.tasks.collection_control import receive
+                    _,request=receive(stop_only=True)
+                    if request and request.get('action')=='stop':
+                        raise TaskStopped('用户已停止任务；已采结果和待入库记录保留')
                 if isinstance(self.error,(NeedsAttention,ValueError)) or getattr(self.error,'retryable',True) is False:
                     raise NeedsAttention(str(self.error))
                 if self.error is not None and not reported:

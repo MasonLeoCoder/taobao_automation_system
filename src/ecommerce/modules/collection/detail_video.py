@@ -78,6 +78,7 @@ def download_video(url, destination, result, guard):
                         raise ValueError("视频文件超过下载保护上限")
                     output.write(chunk)
                     digest.update(chunk)
+                    if hasattr(guard,'note_module_progress'): guard.note_module_progress(counts={'received_bytes':size})
                     chunk = response.read(1024 * 1024)
             if expected is not None and size != expected:
                 raise ValueError("视频文件未完整接收")
@@ -118,6 +119,9 @@ def save_video_result(directory, record):
     else:
         latest["video_file"] = None
     latest["history_record_file"] = destination.relative_to(product_dir).as_posix()
+    if record['video_status'] not in {'downloaded','no_video'}:
+        record_path=save_detail_section(product_dir,item_id,'video_last_attempt',latest)
+        return {'record_path':str(record_path.resolve()),'history_record_path':str(destination.resolve()),**latest}
     replaced_video = False
     try:
         if record["video_path"]:
@@ -147,6 +151,8 @@ def collect_main_video(settings, result):
         raise RuntimeError("视频采集必须在淘宝专用守卫中运行")
     value = detect_main_video(result, settings.timeout_ms)
     batch_id = guard.task_id + "-" + uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'video',batch_id,guard.task_id)
     directory = product_directory(settings, result.target.item_id) / "history" / batch_id
     record = {"schema_version": 1, "batch_id": batch_id, "task_id": guard.task_id,
               "product_id": result.target.item_id, "source_url": resolve_detail_input(result.page.url).canonical_url,
@@ -155,6 +161,7 @@ def collect_main_video(settings, result):
               "video_url": value.get("url"), "duration_seconds": value.get("duration_seconds"),
               "video_path": None, "video_file": None, "video_size_bytes": 0, "video_sha256": None,
               "selector": VIDEO_SELECTOR, "skipped": value["status"] == "no_video", "error": None}
+    saved_early=None
     if not record["skipped"]:
         try:
             validate_media_url(record["video_url"])
@@ -167,9 +174,12 @@ def collect_main_video(settings, result):
                 record["video_status"] = "downloaded"
             except HTTPError as error:
                 record.update(video_status="download_failed", error=f"视频服务器返回 HTTP {error.code}；未自动重试")
+                if error.code in {401,403,429,503}:
+                    saved_early=guard.perform('保存视频访问失败记录',lambda:save_video_result(directory,record))
+                    guard.request_network_attention(result.page,record['error'],step='检查视频访问限制',retry_after=error.headers.get('Retry-After') if error.headers else None)
             except (URLError, TimeoutError, OSError, ValueError, IncompleteRead) as error:
                 record.update(video_status="download_failed", error=f"视频下载或完整性检查失败（{type(error).__name__}）；未自动重试")
-    saved = guard.perform("保存主图视频结果", lambda: save_video_result(directory, record))
+    saved = saved_early or guard.perform("保存主图视频结果", lambda: save_video_result(directory, record))
     if saved["video_status"] == "no_video":
         message = "无视频，已跳过主图视频采集"
     elif saved["video_status"] == "downloaded":

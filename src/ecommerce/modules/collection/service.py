@@ -1,6 +1,7 @@
 """关键词搜索和逐页列表采集，复用淘宝独立登录和任务级守卫。"""
 from ecommerce.infrastructure.tasks.events import notify as print
 import json
+from pathlib import Path
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
@@ -191,7 +192,7 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
             "product_ids": [item.get('product_id') for item in items], "image_downloads": image_downloads, "empty": not items}
 
 
-def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_attention=None, with_details=False, on_login_required=None, on_progress=None):
+def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_attention=None, with_details=False, on_login_required=None, on_progress=None, resume_task_id=None):
     """逐页采集并保留每页结果；参数：配置、词、每页上限、页数、保留窗口及人工回调；返回：汇总。"""
     from ecommerce.platforms.taobao.cards import validate_limit
     from ecommerce.platforms.taobao.pagination import validate_pages, advance_next_page
@@ -201,6 +202,8 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
     keyword = validate_keyword(keyword)
     validate_limit(limit)
     validate_pages(pages)
+    from ecommerce.modules.collection import recovery
+    tracker=recovery.begin(settings,{'mode':'keyword','keyword':keyword,'pages':pages,'limit':limit,'with_details':with_details},resume_task_id=resume_task_id)
     completed = []
     detail_attempts, detail_seen = [], {}
     guard = None
@@ -218,10 +221,12 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
         destination = settings.workspace / 'output/reports/taobao_list' / (guard.task_id + '.json')
         if with_details:
             value.update(schema_version=2,with_details=True,detail_attempts=detail_attempts,
-                         detail_success_count=len(detail_seen),
+                         detail_success_count=sum(item['detail_status'] in {'complete','complete_with_warnings'} for item in detail_seen.values()),
+                         detail_processed_count=len(detail_seen),
                          detail_reused_count=sum(item['status']=='reused_in_task' for item in detail_attempts),
-                         detail_status=('interrupted' if status=='interrupted' else 'complete_with_warnings' if
-                             any(item['status']=='complete_with_warnings' for item in detail_attempts) else 'complete'))
+                         detail_status=('interrupted' if status=='interrupted' else 'complete_with_errors' if
+                             any(item['status'] in {'complete_with_errors','failed_skipped','not_run_skipped'} for item in detail_attempts) else 'complete_with_warnings' if
+                             any(item['status'] in {'complete_with_warnings','complete_with_errors'} for item in detail_attempts) else 'complete'))
         if destination.exists():
             raise FileExistsError('本轮采集汇总已存在，未覆盖')
         atomic_json(destination, value)
@@ -241,8 +246,21 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
             for number in range(1, pages + 1):
                 if on_progress:
                     on_progress({'current_page':number,'current_product':None,'current_module':None})
-                collected = collect_from_search(settings, context, result, limit=limit, page_number=number,
-                                                requested_pages=pages, pagination_evidence=arrival)
+                collected = tracker.page(number) if tracker else None
+                if collected:
+                    from ecommerce.infrastructure.storage.collection_snapshot import owned_path,digest_file
+                    cached=owned_path(settings.workspace,collected['json_path'])
+                    if not cached.is_file() or digest_file(cached)!=collected.get('json_sha256'):
+                        raise NeedsAttention('已保存列表原件缺失或变化，请核对后重新采集，未猜测商品清单')
+                    if number==1:
+                        from ecommerce.platforms.taobao.sorting import sort_by_sales
+                        result=sort_by_sales(result,settings.timeout_ms)
+                    emit_event('collection_page_reused','沿用原计划本页商品清单；当前排名可能变化',level='WARNING',details={'page_number':number,'source_batch_key':collected['source_batch_key']})
+                else:
+                    collected = collect_from_search(settings, context, result, limit=limit, page_number=number,
+                                                    requested_pages=pages, pagination_evidence=arrival)
+                    if tracker:
+                        tracker.page(number,collected)
                 completed.append(collected)
                 if on_progress:
                     on_progress({'completed_page_count':len(completed),'collected_count':sum(item['collected_count'] for item in completed)})
@@ -265,14 +283,19 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
         except BaseException:
             summary('interrupted', 'interrupted')
             raise
-        destination = summary(reason, 'complete')
+        if tracker:
+            counts=tracker.finish()
+        has_errors=any(item['status'] in {'complete_with_errors','failed_skipped','not_run_skipped'} for item in detail_attempts)
+        destination = summary(reason, 'complete_with_errors' if has_errors or (tracker and (counts['failed'] or counts['not_run'])) else 'complete')
         guard.checkpoint('逐页采集汇总已保存')
         message = f'请求{pages}页，已保存{len(completed)}页，共{sum(item["collected_count"] for item in completed)} 条商品展示记录；结束原因：{reason}；汇总：{destination}'
         image_totals = {key: sum(item.get('image_downloads', {}).get(key, 0) for item in completed)
                         for key in ('total', 'downloaded', 'failed', 'not_applicable')}
         message += f'；主图下载 {image_totals["downloaded"]}/{image_totals["total"]}，失败 {image_totals["failed"]}，无地址 {image_totals["not_applicable"]}'
+        if tracker and (counts['failed'] or counts['not_run']):
+            message+='；已结束，存在模块错误：'+str(counts)
         if with_details:
-            message+=f'；详情成功采集{len(detail_seen)}个商品，同任务复用{sum(item["status"]=="reused_in_task" for item in detail_attempts)}处展示'
+            message+=f'；详情已处理{len(detail_seen)}个商品，同任务复用{sum(item["status"]=="reused_in_task" for item in detail_attempts)}处展示'
         print(message, flush=True)
         if wait and not settings.headless:
             keep_search_open(context, result)

@@ -10,7 +10,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,create_mysql_engine,inspect_schema,safe_error
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v9 import build_metadata
 from ecommerce.infrastructure.storage.time_values import BEIJING,database_now
 
 log=logging.getLogger(__name__)

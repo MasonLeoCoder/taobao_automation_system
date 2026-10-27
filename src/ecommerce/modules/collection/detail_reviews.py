@@ -241,6 +241,8 @@ def collect_reviews(settings, result, *, all_reviews=False, stable_ms=500, max_s
     item_id, limit = result.target.item_id, None if all_reviews else 100
     product_dir = product_directory(settings, item_id)
     batch_id = guard.task_id + '-' + uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'reviews',batch_id,guard.task_id)
     directory = product_dir / 'history' / batch_id
     store = ReviewStore(directory, item_id, limit)
     base = {'schema_version': 1, 'product_id': item_id, 'task_id': guard.task_id, 'batch_id': batch_id,

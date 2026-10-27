@@ -77,6 +77,7 @@ def download_image(image, directory, result, guard, *, file_stem=None, image_fol
                     size+=len(chunk)
                     if size>MAX_IMAGE_BYTES: raise ValueError(f"{label}超过下载保护上限")
                     output.write(chunk);digest.update(chunk)
+                    if hasattr(guard,'note_module_progress'): guard.note_module_progress()
                     chunk=response.read(1024*1024)
             if expected is not None and size!=expected: raise ValueError(f"{label}未完整接收")
         guard.checkpoint(f"核对{label}文件")
@@ -283,8 +284,10 @@ def collect_main_images(settings,result):
     links=collect_main_image_links(result,settings.timeout_ms)
     product_dir=product_directory(settings,result.target.item_id)
     fingerprint=_manifest_fingerprint(result.target.item_id,links)
-    previous_batches=_previous_progress(product_dir,result.target.item_id,fingerprint)
+    previous_batches=[]  # 未完成模块清理后新批次全量重采，不复用旧部分文件。
     batch_id=guard.task_id+'-'+uuid4().hex[:8]
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'main_images',batch_id,guard.task_id)
     directory=product_dir/'history'/batch_id
     record={'schema_version':3 if links['collection_method']=='dom_thumbnails' else 2,
             'batch_id':batch_id,'task_id':guard.task_id,'product_id':result.target.item_id,
@@ -306,6 +309,7 @@ def collect_main_images(settings,result):
         record['images'].sort(key=lambda p:p['index'])
         entry.update(status='reused' if image.get('reused_from_batch_id') else 'downloaded',error=None)
         save_images_progress(directory,record)
+        if hasattr(guard,'note_module_progress'):guard.note_module_progress(counts={'images':record['collected_count']})
         print(f"主图进度：已保存{record['collected_count']}/{record['expected_count']}张，复用{record['reused_count']}张",flush=True)
 
     try:
@@ -325,10 +329,12 @@ def collect_main_images(settings,result):
             confirm_main_image_links(result,links)
             entry['status']='downloading'
             save_images_progress(directory,record)
+            access_error=None
             try:
                 downloaded=download_image(image,directory/IMAGE_FOLDER,result,guard)
             except HTTPError as error:
                 message=f"第{image['index']}张主图返回 HTTP {error.code}；已保存进度，未自动重试"
+                access_error=(error.code,error.headers.get('Retry-After') if error.headers else None)
             except (URLError,OSError,ValueError,IncompleteRead) as error:
                 message=f"第{image['index']}张主图下载或校验失败（{type(error).__name__}）；已保存进度，未自动重试"
             else:
@@ -337,6 +343,8 @@ def collect_main_images(settings,result):
             entry.update(status='failed',error=message)
             record.update(status='download_failed',error=message)
             save_images_progress(directory,record)
+            if access_error and access_error[0] in {401,403,429,503}:
+                guard.request_network_attention(result.page,message,step='检查主图访问限制',retry_after=access_error[1])
             break
         else:
             confirm_main_image_links(result,links)
@@ -346,7 +354,7 @@ def collect_main_images(settings,result):
                 record.update(status='download_failed',error='主图保存数量与本次确认的图集数量不一致，未发布为完整结果')
         saved=guard.perform('保存主图及详情记录',lambda:save_images_result(directory,record))
     except (Exception,KeyboardInterrupt):
-        record.update(status='interrupted',error='主图任务中断；已完成的图片保留，下次相同来源可复用')
+        record.update(status='interrupted',error='主图任务中断；本次部分结果保留，下次恢复清理后整模块重采')
         for entry in record['image_results']:
             if entry['status']=='downloading':
                 entry.update(status='interrupted',error='本张下载中断，未记为成功')

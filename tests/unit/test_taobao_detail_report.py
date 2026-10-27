@@ -58,6 +58,7 @@ class DetailReportTests(unittest.TestCase):
         self.settings=replace(load_settings(root=Path(self.temp.name)).for_platform('taobao'),headless=True)
         self.folder=self.settings.workspace/'output/raw/taobao_details'/ITEM_ID
         self.page=MagicMock();self.page.url=resolve_detail_input(ITEM_ID).url
+        self.page.is_closed.return_value=False
         self.result=DetailPage(self.page,resolve_detail_input(ITEM_ID),'测试详情')
         self.guard=MagicMock();self.guard.task_id='test-report-task'
         self.guard.perform.side_effect=lambda step,action,**kwargs:action()
@@ -71,6 +72,7 @@ class DetailReportTests(unittest.TestCase):
         stack.enter_context(patch.object(detail_service,'inspect_detail_entry',return_value=self.result))
         stack.enter_context(patch.object(detail_service,'save_session'))
         stack.enter_context(patch.object(detail_service,'active_guard',return_value=self.guard))
+        stack.enter_context(patch('ecommerce.platforms.taobao.detail.recover_detail_page',return_value=self.result))
         stack.enter_context(redirect_stdout(self.output))
 
     def report(self):
@@ -92,12 +94,12 @@ class DetailReportTests(unittest.TestCase):
             message=detail_service.open_detail_input(self.settings,ITEM_ID,wait=False,**{s[2]:True for s in specs})
         self.assertEqual(calls,[s[2] for s in specs])
         report=self.report()
-        self.assertEqual(report['status'],'complete_with_warnings')
+        self.assertEqual(report['status'],'complete_with_errors')
         sku=next(s for s in report['steps'] if s['name']=='skus')
-        self.assertEqual(sku['status'],'partial')
+        self.assertEqual(sku['status'],'failed_skipped')
         self.assertTrue(sku['continuation_allowed'])
         self.assertEqual(sku['image_directory'],str(self.folder/'history/sku-batch/sku图'))
-        self.assertIn('含警告',message)
+        self.assertIn('存在模块错误',message)
         self.assertIn('赠退货宝',self.output.getvalue())
         self.assertIn('本次图片目录',self.output.getvalue())
         history=json.loads((self.folder/report['history_record_file']).read_text(encoding='utf-8'))
@@ -107,13 +109,13 @@ class DetailReportTests(unittest.TestCase):
         with ExitStack() as stack:
             self.setup_service(stack)
             stack.enter_context(patch('ecommerce.modules.collection.detail_skus.collect_skus',return_value=sku_result(self.folder,bad={'image_status':'download_failed'})))
-            later=stack.enter_context(patch('ecommerce.modules.collection.detail_parameters.collect_parameters'))
-            with self.assertRaises(NeedsAttention):
-                detail_service.open_detail_input(self.settings,ITEM_ID,wait=False,skus=True,parameters=True)
-        later.assert_not_called()
+            later=stack.enter_context(patch('ecommerce.modules.collection.detail_parameters.collect_parameters',return_value={'status':'complete','message':'参数完成'}))
+            detail_service.open_detail_input(self.settings,ITEM_ID,wait=False,skus=True,parameters=True)
+        later.assert_called_once()
         report=self.report()
-        self.assertEqual(report['status'],'partial')
-        self.assertEqual(next(s for s in report['steps'] if s['name']=='parameters')['status'],'not_run')
+        self.assertEqual(report['status'],'complete_with_errors')
+        self.assertEqual(next(s for s in report['steps'] if s['name']=='skus')['status'],'failed_skipped')
+        self.assertEqual(next(s for s in report['steps'] if s['name']=='parameters')['status'],'complete')
 
     def test_unconfirmed_selected_price_and_combination_still_block_continuation(self):
         for bad in ({'price_status':'not_read'},{'price_value':None},{'combination_confirmed':False}):
@@ -146,7 +148,7 @@ class DetailReportTests(unittest.TestCase):
             self.setup_service(stack)
             stack.enter_context(patch('ecommerce.modules.collection.detail_skus.collect_skus',return_value=sku_result(self.folder)))
             def hold(_):
-                self.assertEqual(self.report()['status'],'complete_with_warnings')
+                self.assertEqual(self.report()['status'],'complete_with_errors')
             held=stack.enter_context(patch.object(detail_service,'keep_detail_open',side_effect=hold))
             detail_service.open_detail_input(self.settings,ITEM_ID,skus=True)
         held.assert_called_once()

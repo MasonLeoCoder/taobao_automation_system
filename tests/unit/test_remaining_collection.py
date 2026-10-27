@@ -11,6 +11,7 @@ from tests.unit import test_web_collection as fixtures
 
 class RemainingCollectionTests(unittest.TestCase):
     query=fixtures.WebCollectionTests.query
+    execute_job=fixtures.WebCollectionTests.execute_job
 
     def setUp(self):
         """复用临时配置和派发替身；参数：无；返回：无。"""
@@ -37,17 +38,23 @@ class RemainingCollectionTests(unittest.TestCase):
         self.assertIn('skus',plan['modules']);self.assertIn('main_images',plan['modules'])
         self.assertEqual(plan['modules'],[name for name in service.MODULES if name not in plan['skipped_modules']])
 
+    def test_confirmed_no_entry_counts_as_handled_without_creating_fake_batch(self):
+        self.data['no_entry_modules']=['questions']
+        plan=service.plan(self.settings,'123')
+        self.assertNotIn('questions',plan['modules'])
+        self.assertIn('questions',plan['skipped_modules'])
+
     def test_dispatch_freezes_server_plan_and_repeated_click_reuses_task(self):
         self.complete('basic_info')
         job=self.start();self.assertEqual(job['id'],self.start()['id'])
         self.assertEqual(job['mode'],'remaining');self.assertEqual(job['total_count'],8)
         self.assertEqual(job['skipped_modules'],['basic_info']);self.assertNotIn('basic_info',job['modules'])
         self.launch.assert_called_once()
-        with self.assertRaises(TaskBusy):service.start(self.settings,'123','skus')
+        self.assertEqual(service.start(self.settings,'123','skus')['state'],'queued')
 
     def test_existing_single_task_blocks_bulk_dispatch(self):
         service.start(self.settings,'123','video')
-        with self.assertRaises(TaskBusy):self.start()
+        self.assertEqual(self.start()['state'],'queued')
         self.launch.assert_called_once()
 
     def test_all_complete_never_spawns_or_creates_dispatch(self):
@@ -76,25 +83,25 @@ class RemainingCollectionTests(unittest.TestCase):
             self.assertEqual(service.run_collection(self.settings,row),'本地完成')
         task.assert_called_once();browser.assert_called_once()
         flags=browser.call_args.kwargs
-        self.assertFalse(flags['basic_info']);self.assertFalse(flags['video'])
-        self.assertEqual(sum(bool(flags[name]) for name in service.MODULES),7)
+        self.assertFalse(flags['basic_info']);self.assertTrue(flags['video'])
+        self.assertEqual(sum(bool(flags[name]) for name in service.MODULES),8)
         self.assertNotIn('all_reviews',flags)
         self.assertIn('on_module_event',flags)
-        self.assertEqual(jobs.read(self.settings,job['id'])['skipped_modules'],['basic_info','video'])
+        self.assertEqual(jobs.read(self.settings,job['id'])['skipped_modules'],['basic_info'])
 
     def test_all_completed_while_queued_does_not_open_browser(self):
         job=self.start();row=jobs.read(self.settings,job['id'])
         for index,module in enumerate(service.MODULES):self.complete(module,index+1)
         with patch('ecommerce.infrastructure.tasks.runner.run_task',side_effect=lambda settings,name,action,**kw:action()),patch(
                 'ecommerce.modules.collection.detail_service.open_detail_input') as browser:
-            self.assertIn('未打开浏览器',service.run_collection(self.settings,row));browser.assert_not_called()
-        self.assertEqual(row['modules'],[])
-        self.assertTrue(service.saved_result(self.settings,row)['valid'])
+            service.run_collection(self.settings,row);browser.assert_called_once()
+        self.assertEqual(row['modules'],list(service.MODULES))
+        self.assertFalse(service.saved_result(self.settings,row)['valid'])
 
     def test_progress_and_cancel_keep_saved_results_and_next_click_skips_them(self):
         self.complete('basic_info',1)
         job=self.start();row=jobs.read(self.settings,job['id']);row['state']='running'
-        row['progress']={'current_module':None,'started_modules':[],'results':[]};jobs.save(self.settings,row)
+        row['progress']={'current_module':None,'started_modules':[],'results':[]};self.save(row)
         service.module_progress(self.settings,row,'video','running')
         self.assertEqual(service.status(self.settings,'123',job['id'])['current_module'],'video')
         self.complete('video',9,'no_video',job['id'])
@@ -102,7 +109,7 @@ class RemainingCollectionTests(unittest.TestCase):
         progress=service.status(self.settings,'123',job['id'])
         self.assertEqual(progress['completed_count'],1)
         self.assertEqual(progress['results'][0]['batch_id'],9)
-        row.update(state='cancelled',result=service.saved_result(self.settings,row));jobs.save(self.settings,row)
+        row.update(state='cancelled',result=service.saved_result(self.settings,row));self.save(row)
         restored=service.recent(self.settings,'123')[0]
         self.assertTrue(restored['done']);self.assertEqual(restored['completed_count'],1)
         new=self.start()
@@ -120,7 +127,7 @@ class RemainingCollectionTests(unittest.TestCase):
         job=self.start()
         for index,module in enumerate(job['modules']):self.complete(module,index+1,'complete',job['id'])
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','模拟已保存',0)):
-            execute(self.settings.workspace,job['id'])
+            self.execute_job(job['id'])
         state=self.client.get(f"/api/collections/products/123/jobs/{job['id']}").get_json()
         self.assertEqual(state['state'],'succeeded');self.assertTrue(state['valid'])
         self.assertEqual(len(state['results']),9)

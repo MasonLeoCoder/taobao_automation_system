@@ -74,6 +74,11 @@ class Settings:
     mysql: MySQLSettings = field(default_factory=MySQLSettings)
     task_backend: str = "sqlite"
     collection_backend: str = "files"
+    collection_module_timeouts: dict = field(default_factory=lambda: {name:120000 for name in
+        ('basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions')})
+    active_platform: str = 'qianniu'
+    qianniu_session_path: Path | None = None
+    qianniu_profile_path: Path | None = None
 
     @property
     def task_database(self):
@@ -85,8 +90,10 @@ class Settings:
 
     def for_platform(self, platform: str) -> "Settings":
         """选择平台的独立登录资料；千牛继续兼容原有路径。"""
-        if platform == "qianniu":
+        if platform == self.active_platform:
             return self
+        if platform == 'qianniu' and self.active_platform=='taobao':
+            return replace(self,session_path=self.qianniu_session_path,profile_path=self.qianniu_profile_path,active_platform='qianniu')
         if platform != "taobao":
             raise ValueError(f"不支持的登录平台：{platform}")
         session = (self.taobao_session_path or self.workspace / "storage/sessions/taobao.json").resolve()
@@ -100,7 +107,8 @@ class Settings:
             self.session_path.resolve() == profile or profile in self.session_path.resolve().parents
         ):
             raise ValueError("一个平台的登录状态文件不能位于另一个平台的浏览器资料目录内")
-        return replace(self, session_path=session, profile_path=profile)
+        return replace(self, session_path=session, profile_path=profile,active_platform='taobao',
+                       qianniu_session_path=self.session_path,qianniu_profile_path=self.profile_path)
 
     @property
     def database(self) -> Path:
@@ -180,6 +188,11 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
                         resolve(taobao["session_path"]) if "session_path" in taobao else None,
                         resolve(taobao["profile_path"]) if "profile_path" in taobao else None, timing, taobao_channel, taobao_mode,
                         load_mysql_settings(values.get("mysql", {})),storage.get('task_backend','sqlite'),storage.get('collection_backend','files'))
+    module_timeouts=taobao.get('module_timeouts',{})
+    if (not isinstance(module_timeouts,dict) or set(module_timeouts)-set(settings.collection_module_timeouts)
+            or any(type(v) is not int or v<1000 for v in module_timeouts.values())):
+        raise ValueError('taobao.module_timeouts 仅支持九个模块，无进展超时须为至少1000的整数毫秒')
+    settings=replace(settings,collection_module_timeouts={**settings.collection_module_timeouts,**module_timeouts})
     settings.for_platform("taobao")  # 配置冲突在启动前报错，避免混用会话。
     return settings
 

@@ -24,6 +24,8 @@ def collect_basic_info(settings,result):
             'captured_at':captured,'source_url':source,'scope':'product_basic_info','product_info':info,
             **assessment(info,source,captured)}
     directory=product_directory(settings,result.target.item_id)/'history'/record['batch_id']
+    from ecommerce.modules.collection.recovery import register_attempt
+    register_attempt(settings,result.target.item_id,'basic_info',record['batch_id'],guard.task_id)
     path=directory/'basic_info.json'
     record['history_record_file']=path.relative_to(directory.parent.parent).as_posix()
     def save():

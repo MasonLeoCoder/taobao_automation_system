@@ -14,24 +14,34 @@ from ecommerce.modules.collection.detail_report import DetailCollectionReport
 from ecommerce.platforms.taobao.detail import inspect_detail_entry, keep_detail_open, open_detail, resolve_detail_input
 from ecommerce.platforms.taobao.session import browser_session
 from ecommerce.platforms.taobao.verification import active_guard
-from ecommerce.shared.exceptions import NeedsAttention
+from ecommerce.shared.exceptions import NeedsAttention, TaskStopped, ModuleBlocked, BrowserClosed
+from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+from ecommerce.infrastructure.tasks.events import emit_event
+from ecommerce.modules.collection import recovery
 
 
-def open_detail_input(settings, value, *, wait=True, on_attention=None, on_login_required=None, basic_info=False, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False, all_questions=None, on_module_event=None):
+def open_detail_input(settings, value, *, wait=True, on_attention=None, on_login_required=None, basic_info=False, video=False, main_images=False, skus=False, parameters=False, detail_images=False, review_summary=False, reviews=False, all_reviews=False, questions=False, all_questions=None, on_module_event=None, resume_task_id=None, cleanup_tasks=None):
     """独立入口建立会话；参数：目标与模块开关；返回：实际采集说明。"""
     if all_reviews and not (reviews or questions):
         raise ValueError('--all 必须与 --reviews 或 --questions 一起使用')
     if all_questions is not None and type(all_questions) is not bool:
         raise ValueError('全部问题参数必须是布尔值')
     target = resolve_detail_input(value)
+    requested={name:enabled for name,enabled in dict(basic_info=basic_info,video=video,main_images=main_images,skus=skus,
+        parameters=parameters,detail_images=detail_images,review_summary=review_summary,reviews=reviews,questions=questions).items() if enabled}
+    tracker=recovery.begin(settings,{'mode':'detail','input':target.canonical_url,'modules':list(requested),
+        'all_reviews':all_reviews,'all_questions':all_reviews if all_questions is None else all_questions},
+        resume_task_id=resume_task_id,cleanup_tasks=cleanup_tasks)
     with browser_session(settings, on_attention=on_attention) as (context, page):
         page = authenticate(context, page, settings,on_login_required=on_login_required) if on_login_required else authenticate(context,page,settings)
         result = open_detail(page, target.url if target.input_type == "url" else target.item_id, settings.timeout_ms)
-        return collect_detail_page(settings,context,result,wait=wait,basic_info=basic_info,video=video,main_images=main_images,skus=skus,
+        outcome=collect_detail_page(settings,context,result,wait=wait,basic_info=basic_info,video=video,main_images=main_images,skus=skus,
             parameters=parameters,detail_images=detail_images,review_summary=review_summary,reviews=reviews,
             all_reviews=all_reviews,questions=questions,
             **({'all_questions':all_questions} if all_questions is not None else {}),
-            **({'on_module_event':on_module_event} if on_module_event else {}))['message']
+            **({'on_module_event':on_module_event} if on_module_event else {}))
+        if tracker: tracker.finish()
+        return outcome['message']
 
 
 def collect_detail_page(settings,context,result,*,wait=False,source=None,basic_info=True,video=True,main_images=True,skus=True,
@@ -111,29 +121,76 @@ def collect_detail_page(settings,context,result,*,wait=False,source=None,basic_i
                ('questions','detail_questions','collect_questions',{'complete','no_questions','skipped'})]
         report=DetailCollectionReport(settings,target.item_id,guard.task_id,requested,entry_key=entry_key,source=source) if any(requested.values()) else None
         try:
+            tracker=recovery.current()
+            page_usable=True
             for name,module_name,function_name,accepted in steps:
-                if not requested[name] or step_error is not None:
+                if not requested[name]:
+                    continue
+                if tracker and tracker.should_skip(target.item_id,name):
+                    report.reuse(name,tracker.module(target.item_id,name))
+                    continue
+                if not page_usable:
+                    value={'status':'not_run_skipped','message':'当前商品页面无法恢复，本模块未执行'}
+                    if tracker:
+                        tracker.finish_module(target.item_id,name,value,failed=True)
+                        tracker.state['products'][target.item_id][name]['state']='not_run_skipped'
+                    report._step(name).update(status='not_run_skipped',message=value['message'])
+                    report.save()
                     continue
                 report.start(name)
                 if on_module_event:
                     on_module_event(name,'running')
-                module=import_module('ecommerce.modules.collection.'+module_name)
-                kwargs={'all_reviews':all_reviews} if name=='reviews' else {'all_questions':all_reviews if all_questions is None else all_questions} if name=='questions' else {}
-                value=getattr(module,function_name)(settings,result,**kwargs)
-                status=value.get('video_status') if name=='video' else value.get('status')
-                allowed=module.sku_continuation_allowed(value) if name=='skus' else status in accepted
-                if status=='skipped':
-                    allowed=name=='questions' and value.get('stop_reason')=='entry_not_found'
-                report.finish(name,value,allowed)
+                try:
+                    with guard.collection_module(name,result.page,settings.collection_module_timeouts[name]):
+                        if tracker:
+                            tracker.prepare(target.item_id,name)
+                            tracker.persist('模块清理完成，开始新批次采集')
+                            guard.checkpoint('模块开始检查点已确认')
+                        module=import_module('ecommerce.modules.collection.'+module_name)
+                        kwargs={'all_reviews':all_reviews} if name=='reviews' else {'all_questions':all_reviews if all_questions is None else all_questions} if name=='questions' else {}
+                        value=getattr(module,function_name)(settings,result,**kwargs)
+                        status=value.get('video_status') if name=='video' else value.get('status')
+                        complete=status in accepted and status!='partial'
+                        if status=='skipped':
+                            complete=value.get('stop_reason')=='entry_not_found'
+                        if not complete:
+                            report.finish(name,value,True)
+                            raise ModuleBlocked(value.get('message') or '模块结果未完成，已跳过')
+                        if tracker: tracker.finish_module(target.item_id,name,value)
+                        report.finish(name,value,True)
+                        if status=='skipped':
+                            emit_event('collection_module_no_entry',f'商品 {target.item_id} {name}：未找到入口，按无需采集完成，请核查是否无信息',
+                                level='WARNING',details={'product_id':target.item_id,'module':name,'reason':'entry_not_found'})
+                except (TaskStopped,KeyboardInterrupt,MySQLStorageError,NeedsAttention):
+                    raise
+                except Exception as error:
+                    # 数据库/持久流水问题及平台全局验证不能降级成模块错误。
+                    if isinstance(error,NeedsAttention) and (getattr(guard,'failure',None) is error or (session and session.error)):
+                        raise
+                    if result.page.is_closed():
+                        raise BrowserClosed('采集页面已关闭，本次执行停止') from error
+                    guard.checkpoint('模块失败后复核全局状态')
+                    diagnostics=getattr(guard,'last_module_diagnostics',{})
+                    if not isinstance(diagnostics,dict):diagnostics={}
+                    value={'status':'failed_skipped','message':str(error),'progress':diagnostics}
+                    if tracker: tracker.finish_module(target.item_id,name,value,failed=True)
+                    report.fail(name,error,diagnostics)
+                    emit_event('collection_module_failed',f'商品 {target.item_id} {name} 失败，已跳过：{error}',level='ERROR',
+                        details={'product_id':target.item_id,'module':name,'error_type':type(error).__name__,'message':str(error),'progress':diagnostics})
+                    try:
+                        from ecommerce.platforms.taobao.detail import recover_detail_page
+                        result=recover_detail_page(result,settings.timeout_ms)
+                    except (TaskStopped,KeyboardInterrupt,MySQLStorageError,NeedsAttention):
+                        raise
+                    except Exception as recovery_error:
+                        page_usable=False
+                        emit_event('collection_page_unrecoverable','当前商品页面无法恢复，剩余模块未执行，将处理下一商品',level='ERROR',
+                            details={'product_id':target.item_id,'message':str(recovery_error)})
+                guard.checkpoint('本模块资料及汇总已确认入库')
                 if on_module_event:
-                    guard.checkpoint('本模块资料及汇总已确认入库')
                     on_module_event(name,'finished')
-                print(value['message'],flush=True)
-                if value.get('record_path'):
-                    print(('视频采集记录：' if name=='video' else '商品详情记录：')+value['record_path'],flush=True)
-                message+='；'+value['message']
-                if not allowed:
-                    step_error=value['message']+'；请核对本次汇总和部分结果，后续模块未执行'
+                print(value.get('message',''),flush=True)
+                message+='；'+value.get('message','')
             if report:
                 report.finalize(step_error)
                 message+='；'+report.display()

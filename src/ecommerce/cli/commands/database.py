@@ -18,11 +18,26 @@ def execute(settings,args):
         return (settings.root/path).resolve() if not path.is_absolute() else path.resolve()
     try:
         if args.action=='replay-events':
+            from ecommerce.infrastructure.tasks.collection_control import replay_emergency
             from ecommerce.infrastructure.tasks.events import replay_events
             from ecommerce.infrastructure.storage.task_store import task_store
             store=task_store(settings.mysql)
             store.initialize()
+            replay_emergency(settings)
             print('本次确认补写事件：'+str(replay_events(settings,store))+'；未重放任何业务动作')
+            return 0
+        if args.action=='migrate-collection-jobs':
+            from ecommerce.infrastructure.tasks.lock import all_browser_resources
+            from ecommerce.infrastructure.storage.collection_job_migration import migrate_dispatch_files
+            from ecommerce.infrastructure.storage.task_store import task_store
+            task_store(settings.mysql).initialize()
+            with all_browser_resources(settings):
+                report=migrate_dispatch_files(settings)
+            path=settings.workspace/'output/reports'/('collection_jobs_migration_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid4().hex[:8]+'.json')
+            path.parent.mkdir(parents=True,exist_ok=True)
+            with path.open('x',encoding='utf-8') as handle:
+                json.dump(report,handle,ensure_ascii=False,indent=2)
+            print('派发申请迁移完成，未启动采集；报告：'+str(path))
             return 0
         if args.action=='upgrade':
             from ecommerce.infrastructure.tasks.lock import all_browser_resources

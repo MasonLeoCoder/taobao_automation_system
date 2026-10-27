@@ -34,6 +34,24 @@ class MemoryStore:
 
 
 class TaskEventsTests(unittest.TestCase):
+    def test_unexpected_persistence_worker_error_pauses_instead_of_waiting_forever(self):
+        """未知处理错误保留流水并终止等待，不能让写入线程悄悄退出。"""
+        import time
+        session=TaskEvents(self.settings,self.store,'collection.taobao.detail.open')
+        session.start();self.addCleanup(session.close)
+        original=self.store.apply_operation
+        def fail(operation):
+            if operation.get('event_type')=='synthetic_unknown':
+                raise KeyError('合成非重试错误')
+            return original(operation)
+        with patch.object(self.store,'apply_operation',side_effect=fail):
+            session.emit('synthetic_unknown','合成错误保留流水')
+            deadline=time.monotonic()+2
+            while not session.stopping.is_set() and time.monotonic()<deadline:
+                time.sleep(.01)
+            self.assertIsInstance(session.error,NeedsAttention)
+            self.assertTrue(session.journal.pending())
+            with self.assertRaises(NeedsAttention):session.checkpoint('不能继续页面动作')
     def test_pending_halt_is_read_only_sanitized_and_scoped_to_task_and_database(self):
         """未入库中断可显示，但不补写、不挪确认位置，不采用其他任务或库的提示。"""
         session=TaskEvents(self.settings,self.store,'collection.taobao.detail.open')
@@ -87,7 +105,7 @@ class TaskEventsTests(unittest.TestCase):
         from ecommerce.infrastructure.tasks import web_jobs
         from ecommerce.infrastructure.tasks.ownership import execution_key
         from ecommerce.modules.monitoring.service import local_task_alerts
-        settings=replace(self.settings,task_backend='mysql')
+        settings=replace(self.settings,task_backend='mysql',collection_backend='mysql')
         session=TaskEvents(settings,self.store,'collection.taobao.detail.open')
         session.append(session.operation('finish','task_finished','用户已停止任务',state='cancelled'))
         row={**session.owner,'state':'needs_attention','execution_key':execution_key(settings.for_platform('taobao'))}

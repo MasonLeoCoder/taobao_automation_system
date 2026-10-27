@@ -11,6 +11,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
     prepare_workspace(settings)
     initialize(settings.task_database)
+    if settings.task_backend=='mysql' and settings.collection_backend=='mysql':
+        from ecommerce.modules.collection.dispatch import on_web_start
+        on_web_start(settings)
     app = Flask(__name__)
     app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024)
     from ecommerce.web.routes.pages import pages

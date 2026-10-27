@@ -1,5 +1,6 @@
 """网页日志的中文展示，原始任务名称和步骤代码保留在查询结果中。"""
 TASK_NAMES = {
+    'collection.taobao.resume': '淘宝采集续采',
     'maintenance.list_images.once': '历史列表图片补充（一次性）',
     'collection.taobao.search': '淘宝关键词搜索',
     'collection.taobao.collect': '淘宝列表采集',
@@ -43,6 +44,16 @@ LEVELS = {
     'CRITICAL': ('严重错误', 'critical'),
 }
 EVENT_TYPES = {
+    'collection_progress':'采集展示进度已确认',
+    'collection_prompt':'采集人工提示更新',
+    'control_storage_wait':'控制数据等待入库',
+    'collection_checkpoint':'采集检查点已保存',
+    'collection_cleanup':'未完成模块清理',
+    'collection_module_failed':'模块失败，已跳过',
+    'collection_module_no_entry':'未找到入口，按无需采集完成',
+    'collection_module_reused':'复用原计划结果',
+    'collection_page_reused':'沿用原计划商品清单',
+    'collection_page_unrecoverable':'当前商品页面无法恢复',
     'list_images_processed': '列表主图处理完成',
     'task_started': '任务开始',
     'task_finished': '任务结束',

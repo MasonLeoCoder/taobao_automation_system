@@ -26,7 +26,7 @@
 </form>
 <div class="section-heading"><h2>日志记录</h2><p>每页 20 条 · 时间均为北京时间</p></div>
 {% if events %}<div class="table-wrap"><table><thead><tr>{{ sort_header('occurred_at','发生时间',sort_spec,{'since':time_filters.since or '', 'until':time_filters.until or ''}) }}{{ sort_header('task_name','任务 / 步骤',sort_spec,{'since':time_filters.since or '', 'until':time_filters.until or ''}) }}{{ sort_header('level','级别 / 类型',sort_spec,{'since':time_filters.since or '', 'until':time_filters.until or ''}) }}{{ sort_header('message','提示',sort_spec,{'since':time_filters.since or '', 'until':time_filters.until or ''}) }}</tr></thead><tbody>
-{% for event in events %}<tr>
+{% for event in events %}<tr class="log-row-{{ event.level_class }}">
 <td class="event-time">{% if event.occurred_at %}{{ event.occurred_at | full_local_time }}{% else %}{{ event.time_raw or '时间未知' }}<small>原时间，时区未知</small>{% endif %}</td>
 <td class="event-task"><strong title="{{ event.task_name or '' }}">{{ event.task_label }}</strong>{% if event.task_id %}<small class="event-task-id">{{ event.task_id }}</small>{% endif %}<div class="event-step" title="{{ event.step or '' }}">{{ event.step_label }}</div></td>
 <td><span class="event-level event-level-{{ event.level_class }}">{{ event.level_label }}</span><small class="event-type-label" tabindex="0" aria-describedby="event-code-{{ loop.index }}"><span>{{ event.event_type_label }}</span><span class="event-code-tooltip" role="tooltip" id="event-code-{{ loop.index }}">{{ event.event_type or '类型未记录' }}</span></small></td>

@@ -304,7 +304,13 @@ def _browse(c, tables, view, **o):
             info=dict(observed or {})
             if observed:
                 info={**(observed['payload'] or {}),**info}
-        return {'product': dict(product), 'history': history, 'current_ids': pointers, 'listing': dict(listing or {}),
+        runs,steps=tables['collection_runs'],tables['collection_steps']
+        last_steps={}
+        for step in c.execute(sa.select(steps).join(runs,runs.c.id==steps.c.run_id).where(
+                runs.c.product_id==product['id'],steps.c.requested.is_(True)).order_by(runs.c.started_at.desc(),runs.c.id.desc(),steps.c.id.desc())).mappings():
+            last_steps.setdefault(step['module'],step)
+        no_entry=[module for module,step in last_steps.items() if step['status']=='skipped' and (step['payload'] or {}).get('stop_reason')=='entry_not_found']
+        return {'product': dict(product), 'history': history, 'current_ids': pointers, 'no_entry_modules':no_entry,'listing': dict(listing or {}),
             'detail_summary':summary,'source_context':context,'product_info':info,'info_captured_at':info.get('captured_at'), 'info_batch_id':sku['id'] if sku else None}
     if view=='sources':
         product=c.execute(sa.select(p).where(p.c.platform_product_id==o['product_id'],p.c.platform=='taobao')).mappings().first()

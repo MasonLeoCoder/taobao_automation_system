@@ -21,6 +21,10 @@ def parser() -> argparse.ArgumentParser:
     account.add_argument("--no-wait", action="store_true", help="仅淘宝 login：保存会话后自动关闭浏览器，默认保留窗口")
     taobao = commands.add_parser("taobao", help="淘宝关键词搜索、列表及详情采集与任务控制")
     taobao_actions = taobao.add_subparsers(dest="action", required=True)
+    resume = taobao_actions.add_parser('resume',help='查看或继续已保存的原采集计划')
+    resume.add_argument('--task-id',required=True,help='原计划最近一次执行的完整任务编号')
+    resume.add_argument('--preview',action='store_true',help='只显示恢复计划，不启动采集')
+    resume.add_argument('--no-wait',action='store_true',help='恢复执行完成后关闭浏览器')
     for action, description in (("pause", "暂停当前任务"), ("stop", "停止当前任务"), ("continue", "向当前提示发送继续"),
                                 ("confirm", "确认当前原生弹窗"), ("cancel", "取消当前原生弹窗")):
         taobao_actions.add_parser(action, help=description)
@@ -92,6 +96,7 @@ def parser() -> argparse.ArgumentParser:
     database_actions.add_parser("check", help="只读核对连接、版本、表字段备注及关联约束")
     database_actions.add_parser("upgrade", help="使用迁移账号显式升级 MySQL 表结构")
     database_actions.add_parser('replay-events',help='补写属于当前库的本地事件流水；不执行浏览器动作')
+    database_actions.add_parser('migrate-collection-jobs',help='核对并迁移当前派发记录到统一申请表，不启动采集')
     dictionary = database_actions.add_parser("dictionary", help="按同版结构生成完整中文字段字典")
     dictionary.add_argument("--output", default="docs/数据库字段字典.md", help="字典输出路径，相对项目根目录；重新生成会更新该文档")
     verify = database_actions.add_parser("verify", help="仅在 _verify 验证库用合成数据验证，结束回滚")
@@ -138,6 +143,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(query(settings,args.action,**values),ensure_ascii=False,indent=2))
             return 0
         if args.command == "taobao":
+            if args.action=='resume':
+                from ecommerce.cli.commands.collection import execute_resume
+                result=execute_resume(settings,args.task_id,preview=args.preview,wait=not args.no_wait)
+                if args.preview:
+                    print(json.dumps(result,ensure_ascii=False,indent=2,default=str))
+                    return 0
+                print(f'[{result.status}] {result.message}\n任务编号：{result.task_id}')
+                return result.exit_code
             if args.action in {"search", "collect", "detail"}:
                 from ecommerce.cli.commands.collection import execute, execute_collect, execute_detail
                 if args.action == "search":

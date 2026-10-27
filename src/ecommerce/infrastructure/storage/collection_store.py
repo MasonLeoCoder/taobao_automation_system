@@ -188,8 +188,13 @@ class CollectionWriter:
         if header['values']['record_type']!='detail_open':
             raise CollectionDataError('只有详情入口可以关联列表观察')
         batch=self._select(self.tables['collection_batches'],{'platform':'taobao','module':'list','source_batch_key':source['source_batch_key']})
-        if (batch is None or batch['task_id']!=self.task_id or batch['visibility']!='published' or
-            (batch['result_payload'].get('record') or {}).get('task_id')!=header.get('task_id')):
+        related=False
+        if batch and batch['task_id']!=self.task_id:
+            executions=self.tables['collection_plan_executions']
+            plans=list(self.connection.scalars(sa.select(executions.c.plan_id).where(executions.c.task_id.in_([self.task_id,batch['task_id']]))))
+            related=len(plans)==2 and plans[0]==plans[1]
+        if (batch is None or (batch['task_id']!=self.task_id and not related) or batch['visibility']!='published' or
+            (batch['result_payload'].get('record') or {}).get('task_id')!=batch['task_id']):
             raise CollectionDataError('详情入口的来源列表批次不存在、未发布或不属于同一任务')
         observation=self._select(self.tables['list_observations'],{'batch_id':batch['id'],'product_index':source['product_index']})
         if observation is None or observation['product_id']!=product:
@@ -505,13 +510,23 @@ class CollectionStore:
                     if (existing['details'] or {}).get('operation_fingerprint')!=digest:
                         raise CollectionDataError('采集流水事件键内容冲突')
                     return existing['task_sequence']
-                if task['finished_at'] is not None:
-                    raise CollectionDataError('已经结束的任务不接受新的采集写入')
                 header,iterator=open_snapshot(self.settings,operation['snapshot'])
                 iterator.close()
                 if header.get('task_id')!=task['id']:
                     raise CollectionDataError('采集快照与执行任务不一致')
-                result=CollectionWriter(self.settings,connection).apply(operation['snapshot'],operation.get('context'))
+                discarded=self.tables['collection_discarded_batches']
+                source_key=header.get('values',{}).get('source_batch_key')
+                removed=source_key and connection.scalar(sa.select(discarded.c.source_batch_key).where(discarded.c.source_batch_key==source_key))
+                if task['finished_at'] is not None and not removed:
+                    raise CollectionDataError('已经结束的任务不接受新的采集写入')
+                if removed:
+                    result={'table':'collection_discarded_batches','id':source_key,'issues':[], 'batch_id':None,'run_id':None}
+                else:
+                    result=CollectionWriter(self.settings,connection).apply(operation['snapshot'],operation.get('context'))
+                recovery=(operation.get('context') or {}).get('recovery')
+                if recovery and not removed:
+                    from ecommerce.infrastructure.storage.collection_recovery import apply_checkpoint
+                    apply_checkpoint(connection,self.tables,recovery,task['id'])
                 sequence=task['last_event_sequence']+1
                 connection.execute(events.insert().values(task_id=task['id'],task_sequence=sequence,
                     event_type='collection_saved',level='WARNING' if result['issues'] else 'INFO',step=header.get('module'),
