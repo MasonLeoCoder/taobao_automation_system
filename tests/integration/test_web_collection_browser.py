@@ -759,5 +759,86 @@ class WebCollectionBrowserTests(unittest.TestCase):
         expect(other).to_have_js_property('open',True)
         self.assertEqual(self.errors,[])
 
+    def scrolled_history(self,width=1440,height=1000):
+        """准备带展开说明的长列表并滚动到下方；参数：视口；返回：样例记录、阅读卡片和位置。"""
+        self.page.set_viewport_size({'width':width,'height':height})
+        rows=self.history_requests(25)
+        self.save({**rows[1],'state':'failed','message':'合成任务说明：用于验证整页阅读位置。\n'*50})
+        self.page.goto('http://127.0.0.1/modules/collection')
+        expect(self.page.locator('#collection-job-list .collection-job')).to_have_count(20)
+        self.page.locator(f'[data-job-id="{rows[1]["id"]}"] summary').click()
+        card=self.page.locator(f'[data-job-id="{rows[12]["id"]}"]')
+        card.evaluate("node=>node.scrollIntoView({block:'start',behavior:'instant'})")
+        position=card.evaluate('node=>({top:node.getBoundingClientRect().top,y:window.scrollY})')
+        self.assertGreater(position['y'],2000)
+        return rows,card,position
+
+    def assert_scrolled_history_survives_updates(self,width,height):
+        """连续实际刷新说明并核对整页位置；参数：视口；返回：无。"""
+        rows,card,position=self.scrolled_history(width,height)
+        note=self.page.locator(f'[data-job-id="{rows[1]["id"]}"] details')
+        for marker in ('第一次列表刷新','第二次列表刷新'):
+            self.save({**rows[1],'state':'failed','message':('合成任务说明：用于验证整页阅读位置。\n'*50)+marker})
+            expect(note.locator('p')).to_contain_text(marker,timeout=7000)
+            actual=card.evaluate('node=>({top:node.getBoundingClientRect().top,y:window.scrollY})')
+            self.assertAlmostEqual(actual['y'],position['y'],delta=1)
+            self.assertAlmostEqual(actual['top'],position['top'],delta=1)
+            expect(note).to_have_js_property('open',True)
+        self.assertEqual(self.errors,[])
+
+    def test_history_auto_refresh_does_not_scroll_back_to_filter_on_desktop(self):
+        """桌面滚动到列表下方后，多次刷新不回滚到筛选区。"""
+        self.assert_scrolled_history_survives_updates(1440,1000)
+
+    def test_history_auto_refresh_does_not_scroll_back_to_filter_on_mobile(self):
+        """手机滚动到列表下方后，多次刷新不回滚到筛选区。"""
+        self.assert_scrolled_history_survives_updates(390,844)
+
+    def test_new_request_above_view_keeps_same_task_at_same_reading_position(self):
+        """新申请插入当前页上方时仍保持原可见任务的位置，而不强制跳到最新项。"""
+        from datetime import timedelta
+        from ecommerce.infrastructure.storage.time_values import database_now
+        rows,card,position=self.scrolled_history()
+        new=self.paused_job('999999')
+        j=self.job_db.tables['collection_jobs']
+        with self.job_db.engine.begin() as c:
+            c.execute(j.update().where(j.c.id==new['id']).values(created_at=database_now()+timedelta(days=1)))
+        expect(self.page.locator('#collection-history-status')).to_contain_text('共 26 条',timeout=7000)
+        actual=card.evaluate('node=>({top:node.getBoundingClientRect().top,y:window.scrollY})')
+        self.assertAlmostEqual(actual['top'],position['top'],delta=1)
+        self.assertGreater(actual['y'],position['y'])
+        self.assertEqual(self.errors,[])
+
+    def test_scroll_while_refresh_is_pending_keeps_latest_user_position(self):
+        """刷新请求等待期间继续滚动，响应到达后不得恢复成请求前的位置。"""
+        rows,card,position=self.scrolled_history()
+        self.page.evaluate("""() => {
+          const original=window.fetch;
+          let hold=true;
+          window.fetch=async (...args) => {
+            const response=await original(...args);
+            if (hold && String(args[0]).includes('/api/collection-jobs?page=1&status=all')) {
+              hold=false;
+              await new Promise(resolve=>{
+                window.releaseHistory=resolve;
+                document.documentElement.dataset.historyHeld='true';
+              });
+            }
+            return response;
+          };
+        }""")
+        self.save({**rows[1],'state':'failed','message':('合成任务说明。\n'*50)+'等待期间继续滚动'})
+        expect(self.page.locator('html')).to_have_attribute('data-history-held','true',timeout=7000)
+        target=self.page.locator(f'[data-job-id="{rows[17]["id"]}"]')
+        target.evaluate("node=>node.scrollIntoView({block:'start',behavior:'instant'})")
+        latest=target.evaluate('node=>({top:node.getBoundingClientRect().top,y:window.scrollY})')
+        self.page.evaluate('window.releaseHistory()')
+        expect(self.page.locator(f'[data-job-id="{rows[1]["id"]}"] details p')).to_contain_text('等待期间继续滚动',timeout=7000)
+        actual=target.evaluate('node=>({top:node.getBoundingClientRect().top,y:window.scrollY})')
+        self.assertGreater(latest['y'],position['y'])
+        self.assertAlmostEqual(actual['y'],latest['y'],delta=1)
+        self.assertAlmostEqual(actual['top'],latest['top'],delta=1)
+        self.assertEqual(self.errors,[])
+
 
 if __name__=='__main__':unittest.main()

@@ -28,6 +28,7 @@
   let historyLoading = true;
   let refreshAgain = false;
   const historyNotes = new Map();
+  let renderedHistoryView = null;
   const startingJobs = new Set();
   const startFeedback = new Map();
   const pendingSubmissions = new Map();
@@ -310,7 +311,15 @@
     container.querySelectorAll('[data-job-note]').forEach(note => historyNotes.set(note.dataset.jobNote,{
       open:note.open,scrollTop:note.querySelector('p').scrollTop
     }));
-    container.replaceChildren();
+    const view = `${historyData.page}:${historyData.status}`;
+    const preserveViewport = renderedHistoryView === view;
+    const viewport = {left:window.scrollX,top:window.scrollY};
+    const visibleCard = preserveViewport && container.getBoundingClientRect().top <= 0
+      ? [...container.children].find(card => card.getBoundingClientRect().bottom > 0) : null;
+    const anchor = visibleCard ? {id:visibleCard.dataset.jobId,top:visibleCard.getBoundingClientRect().top} : null;
+    // 先在文档外构建完整列表，避免恢复内部滚动时按半成品页面高度截断整页位置。
+    const fragment = document.createDocumentFragment();
+    const notes = [];
     document.getElementById('collection-history-page').textContent = `第 ${historyData.page} / ${historyData.pages} 页`;
     document.getElementById('collection-history-status').textContent = historyData.total
       ? `共 ${historyData.total} 条采集申请，每页 ${historyData.page_size} 条，按申请时间从新到旧排列；包含网页和命令行，结果与日志独立保留。`
@@ -380,12 +389,23 @@
         const feedback = document.createElement('p'); feedback.className = 'collection-start-feedback'; feedback.setAttribute('role','alert');
         feedback.textContent = startFeedback.get(job.id); article.append(feedback);
       }
-      article.append(actions); container.append(article);
-      if (message.dataset.jobNote) {
-        message.querySelector('p').scrollTop = historyNotes.get(job.id)?.scrollTop || 0;
-        if (focusedNote === job.id) message.querySelector('summary').focus({preventScroll:true});
-      }
+      article.append(actions); fragment.append(article);
+      if (message.dataset.jobNote) notes.push(message);
     });
+    container.replaceChildren(fragment);
+    renderedHistoryView = view;
+    notes.forEach(note => {
+      note.querySelector('p').scrollTop = historyNotes.get(note.dataset.jobNote)?.scrollTop || 0;
+      if (focusedNote === note.dataset.jobNote) note.querySelector('summary').focus({preventScroll:true});
+    });
+    if (preserveViewport) {
+      const card = anchor && [...container.children].find(node => node.dataset.jobId === anchor.id);
+      const top = card ? window.scrollY + card.getBoundingClientRect().top - anchor.top : viewport.top;
+      // 同一历史页按刷新开始时的当前可见任务定位；用户主动翻页、筛选不套用旧位置。
+      if (Math.abs(window.scrollY - top) > .5 || Math.abs(window.scrollX - viewport.left) > .5) {
+        window.scrollTo({left:viewport.left,top,behavior:'instant'});
+      }
+    }
   }
 
   async function refresh() {
