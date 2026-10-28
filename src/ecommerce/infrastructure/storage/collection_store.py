@@ -90,6 +90,7 @@ class CollectionWriter:
         self.ids={}
         self.digest=None
         self.mutable=False
+        self.taobao_keyword_list=False
 
     def _select(self,table,key):
         """按明确唯一键取行；参数：表及键；返回：行或空。"""
@@ -114,6 +115,10 @@ class CollectionWriter:
                 sales=({name:old[name] for name in FIELDS} if old and old['sales_text']==values.get('sales_text')
                        and old['sales_parse_status']!='pending' else parse_sales(values.get('sales_text')))
                 values.update(database_values(table,sales))
+            if self.taobao_keyword_list:
+                # 已校验的旧快照可保留原件；按确认的搜索列表规则纠正派生周期，其他字段仍不可变。
+                from ecommerce.shared.sales import taobao_received_period_update
+                values.update(taobao_received_period_update(values))
         if old is None:
             pk=self.connection.execute(table.insert().values(**values)).inserted_primary_key[0]
         else:
@@ -329,6 +334,8 @@ class CollectionWriter:
         else:
             self.root_id=self._upsert(table,key,values,mutable=self.mutable)
         self.batch_id=self.root_id if kind=='batch' else None
+        self.taobao_keyword_list=(kind=='batch' and values.get('platform')=='taobao' and header['module']=='list'
+                                  and values.get('search_method')=='keyword' and bool(values.get('search_keyword')))
         counts={}
         try:
             for record in records:

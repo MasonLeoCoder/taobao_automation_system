@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from ecommerce.shared.sales import PERIODS
 
 BEIJING_TIME = ZoneInfo("Asia/Shanghai")
 
@@ -28,6 +29,7 @@ COLUMNS = (
     ("missing_fields", "缺失字段"), ("field_state_text", "字段状态说明"), ("notes", "备注"),
 )
 DISPLAY = {
+    "sales_period": PERIODS,
     "ad_recommendation": {True: "是", False: "未检测到指定标记"},
     "ad_basis": {"specified_image_url": "命中用户确认的广告标识图片"},
     "video_present": {True: "有", False: "未检测到视频标识"},

@@ -1,6 +1,6 @@
 """销量解析与迁移契约的离线边界检查。"""
 import unittest
-from ecommerce.shared.sales import parse_sales, sales_filters, MAX_COUNT, FIELDS
+from ecommerce.shared.sales import parse_sales, parse_taobao_list_sales, sales_filters, MAX_COUNT, FIELDS
 from ecommerce.infrastructure.storage.mysql_migrations import schema_v5, schema_v6
 from ecommerce.infrastructure.storage.mysql_checks import check_expression_tree
 import sqlalchemy as sa
@@ -64,6 +64,44 @@ class SalesTests(unittest.TestCase):
         from types import SimpleNamespace
         from ecommerce.modules.collection.database_records import batch_rows
         item={'title':'样例','product_index':1,'position':1,'sales_text':'1000+人收货'}
-        for changes in ({'sales_count':1000},{**parse_sales(item['sales_text']),'sales_count':2000}, {'sales_parser_version':2}):
+        for changes in ({'sales_count':1000},{**parse_sales(item['sales_text']),'sales_count':2000}, {'sales_parser_version':3}):
             with self.subTest(changes=changes),self.assertRaises(ValueError):
                 list(batch_rows(SimpleNamespace(), 'list', {'items':[{**item,**changes}]},Path('.')))
+
+    def test_taobao_received_period_uses_confirmed_source_rule_and_preserves_explicit_period(self):
+        """淘宝列表收货人数补近30天，普通文本与付款/件数不推断，明确周期不覆盖。"""
+        for raw in ('1000+人收货','0人收货','１万＋人已收货'):
+            with self.subTest(raw=raw):
+                old=parse_sales(raw)
+                new=parse_taobao_list_sales(raw)
+                self.assertEqual(old['sales_period'],'unknown')
+                self.assertEqual(new,{**old,'sales_period':'last_30_days'})
+                self.assertEqual(parse_taobao_list_sales(raw,version=1),old)
+        for raw in ('本月100人收货','累计100人收货','近30天100人收货','500人付款','500件已售',
+                    '本月行业热销',None,'约1000+人收货'):
+            self.assertEqual(parse_taobao_list_sales(raw),parse_sales(raw),raw)
+        for version in (3,True,'2'):
+            with self.assertRaises(ValueError): parse_taobao_list_sales('100人收货',version=version)
+
+    def test_v1_and_v2_raw_exports_are_validated_by_their_own_rule(self):
+        """旧JSON按V1核验且保留原文，新JSON按V2核验，混用规则拒绝。"""
+        from pathlib import Path
+        from types import SimpleNamespace
+        from ecommerce.modules.collection.database_records import batch_rows
+        item={'title':'样例','product_index':1,'position':1,'sales_text':'1000+人收货'}
+        for version,period in ((1,'unknown'),(2,'last_30_days')):
+            values={**item,**parse_taobao_list_sales(item['sales_text'],version=version),'sales_parser_version':version}
+            record=list(batch_rows(SimpleNamespace(),'list',{'items':[values]},Path('.')))[0]
+            self.assertEqual(record['values']['sales_period'],period)
+            self.assertEqual(record['values']['payload'],values)
+        invalid={**item,**parse_sales(item['sales_text']),'sales_parser_version':2}
+        with self.assertRaises(ValueError): list(batch_rows(SimpleNamespace(),'list',{'items':[invalid]},Path('.')))
+        import csv,json,tempfile
+        from ecommerce.modules.collection.export import save_batch
+        with tempfile.TemporaryDirectory() as folder:
+            values={**item,**parse_taobao_list_sales(item['sales_text']),'sales_parser_version':2}
+            json_path,csv_path=save_batch(folder,{'batch_id':'period-v2','items':[values]})
+            self.assertEqual(json.loads(json_path.read_text(encoding='utf-8'))['items'][0]['sales_period'],'last_30_days')
+            with csv_path.open(encoding='utf-8-sig',newline='') as stream:
+                exported=list(csv.DictReader(stream))
+            self.assertEqual(exported[0]['销量周期'],'近30天')

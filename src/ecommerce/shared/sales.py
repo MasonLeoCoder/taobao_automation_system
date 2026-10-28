@@ -4,6 +4,7 @@ import re
 import unicodedata
 
 PARSER_VERSION = 1
+TAOBAO_LIST_PARSER_VERSION = 2
 MAX_COUNT = 18446744073709551615
 FIELDS = ('sales_count', 'sales_precision', 'sales_metric', 'sales_period', 'sales_parse_status')
 PRECISIONS = {'exact': '精确展示', 'lower_bound': '数量下界', 'approximate': '近似数量', 'unknown': '未知'}
@@ -75,4 +76,25 @@ def sales_filters(options):
         if value and value not in allowed:
             raise ValueError('销量筛选条件无效')
         result[name] = value
+    return result
+
+
+def taobao_received_period_update(values):
+    """生成淘宝搜索列表周期更正；参数：含原文及五字段的行；返回：仅周期补丁，调用方须核对来源。"""
+    if (values.get('sales_period') != 'unknown' or values.get('sales_metric') != 'received_people'
+            or values.get('sales_parse_status') != 'parsed'):
+        return {}
+    parsed = parse_sales(values.get('sales_text'))
+    if all(values.get(name) == parsed[name] for name in FIELDS):
+        return {'sales_period': 'last_30_days'}
+    return {}
+
+
+def parse_taobao_list_sales(raw, *, version=TAOBAO_LIST_PARSER_VERSION):
+    """解析淘宝搜索列表；参数：原文和规则版本；返回：五字段，V2按用户确认补收货人数近30天周期。"""
+    if type(version) is not int or version not in (PARSER_VERSION, TAOBAO_LIST_PARSER_VERSION):
+        raise ValueError('列表销量解析规则版本不支持')
+    result = parse_sales(raw)
+    if version == TAOBAO_LIST_PARSER_VERSION:
+        result.update(taobao_received_period_update({'sales_text': raw, **result}))
     return result

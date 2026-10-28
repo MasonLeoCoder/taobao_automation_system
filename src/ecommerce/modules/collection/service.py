@@ -141,9 +141,9 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
         captured_at, raw, parsed = read_valid(signature)
         items = parsed["items"]
     positions = {item["position"] for item in items}
-    from ecommerce.shared.sales import parse_sales, PARSER_VERSION
+    from ecommerce.shared.sales import parse_taobao_list_sales, TAOBAO_LIST_PARSER_VERSION
     for item in items:
-        item.update(parse_sales(item.get('sales_text')), sales_parser_version=PARSER_VERSION)
+        item.update(parse_taobao_list_sales(item.get('sales_text')), sales_parser_version=TAOBAO_LIST_PARSER_VERSION)
     from ecommerce.modules.collection.list_images import collect_list_images
     image_downloads = collect_list_images(settings, context, result.page, items, batch_id, guard.checkpoint)
     while not guard.perform('图片下载后复核列表来源', lambda: ready(signature, raw['slots'])):

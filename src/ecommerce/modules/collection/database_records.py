@@ -190,13 +190,11 @@ def batch_rows(settings,module,record,directory):
         if len(items)!=record.get('collected_count',len(items)):
             raise ValueError('列表数量与批次记录不一致')
         for item in items:
-            from ecommerce.shared.sales import parse_sales,FIELDS,PARSER_VERSION
-            sales=parse_sales(item.get('sales_text'))
+            from ecommerce.shared.sales import parse_taobao_list_sales,FIELDS,PARSER_VERSION
+            sales=parse_taobao_list_sales(item.get('sales_text'), version=item.get('sales_parser_version',PARSER_VERSION))
             supplied=set(FIELDS)&set(item)
             if supplied and (supplied!=set(FIELDS) or any(item[name]!=sales[name] for name in FIELDS)):
                 raise ValueError('列表销量结构化结果与原文不一致')
-            if 'sales_parser_version' in item and item['sales_parser_version']!=PARSER_VERSION:
-                raise ValueError('列表销量解析规则版本不支持')
             key={'slot_index':item.get('slot_index',item.get('position'))}
             yield row('list_observations',key,{'slot_index':key['slot_index'],'product_index':item['product_index'],
                 'title':item['title'],'price_text':item.get('price_text'),'price_value':decimal_value(item.get('price_value')),

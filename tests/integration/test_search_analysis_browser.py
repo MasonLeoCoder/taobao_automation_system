@@ -75,7 +75,7 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-products tbody')).not_to_contain_text('广告样例')
         self.page.wait_for_load_state('networkidle')
         with self.page.expect_navigation():
-            self.page.locator('#sa-group-select').select_option('received_people:unknown')
+            self.page.locator('#sa-group-select').select_option('received_people:last_30_days')
         dot = self.page.locator('#sa-scatter circle[data-analysis-point="2"]')
         dot.focus()
         dot.press('Enter')
@@ -100,6 +100,16 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
         self.page.get_by_role('link', name='查看商品 ↗', exact=True).click()
         expect(self.page.locator('.sa-products tbody tr')).to_have_count(3)
+        self.assertEqual(self.errors, [])
+
+    def test_received_period_30_days_is_consistent_and_old_group_is_visible(self):
+        """近30天分组、明细和旧链接同步，并向用户说明周期更正。"""
+        self.page.goto('http://127.0.0.1/analysis/searches?group=received_people:unknown&table_group=received_people:unknown')
+        expect(self.page.locator('#sa-group-select')).to_have_value('received_people:last_30_days')
+        expect(self.page.locator('#sa-group-select option:checked')).to_contain_text('收货人数 · 近30天')
+        expect(self.page.get_by_text('收货人数周期已更正为近30天，已同步更新该数量口径筛选。',exact=True)).to_be_visible()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(2)
+        expect(self.page.locator('.sa-products tbody')).to_contain_text('近30天')
         self.assertEqual(self.errors, [])
 
     def test_mobile_layout_has_only_table_horizontal_scroll(self):

@@ -18,6 +18,7 @@
     <div class="sa-ad-row"><span>广告筛选</span><label>{{ input_control({"id": "sa-exclude-ads", "type": "checkbox", "name": "exclude_ads", "value": "1", "checked": (filters.exclude_ads)}) }}排除已识别广告商品</label>{% if filters.exclude_ads %}<strong>已排除 {{ stats.excluded_ads }} 件 · 当前样本 {{ stats.products }} 件</strong>{% endif %}<small>未命中标识的商品仍保留，不代表已确认非广告。</small></div>
   </form>
   {% if price_filter_reset %}<p class="sa-data-note" role="status">样本范围或价格分段已变化，已恢复全部价位。</p>{% endif %}
+  {% if period_filter_updated %}<p class="sa-data-note" role="status">收货人数周期已更正为近30天，已同步更新该数量口径筛选。</p>{% endif %}
   {% if not keywords and not filters.keyword %}<div class="sa-empty sa-panel"><h2>还没有可分析的关键词列表</h2><p>完成关键词采集并确认列表发布后，这里会出现可选择的搜索词。</p><a class="sa-button" href="{{ url_for('pages.module',key='collection') }}">前往商品采集</a></div>{% endif %}
   <section class="sa-metrics" aria-label="当前样本概况">
     <article><span>样本商品 / 独立观察</span><strong>{{ stats.products }}<small>项</small></strong><small>{{ stats.observations }} 条展示记录 · {{ stats.unknown_identities }} 项身份未确认</small></article>

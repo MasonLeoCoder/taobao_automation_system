@@ -73,7 +73,7 @@ class SearchAnalysisTests(unittest.TestCase):
             self.put('products', id=product, platform='taobao', platform_product_id=str(10000000000000 + product))
         values = dict(id=identifier, batch_id=batch, product_id=product or None, slot_index=identifier,
             title='可水洗粘毛器', price_value=Decimal('10'), price_text='¥10', sales_text='1万+人收货',
-            sales_count=10000, sales_precision='lower_bound', sales_metric='received_people', sales_period='unknown',
+            sales_count=10000, sales_precision='lower_bound', sales_metric='received_people', sales_period='last_30_days',
             sales_parse_status='parsed', ad_status='not_identified', shop_name='样例店铺', payload={'currency_symbol': '¥'})
         self.put('list_observations', **(values | overrides))
 
@@ -133,7 +133,7 @@ class SearchAnalysisTests(unittest.TestCase):
         self.observation(3, sales_count=5000)
         self.observation(4, sales_count=0, sales_precision='exact')
         self.observation(5, sales_period='monthly')
-        result = self.read(group='received_people:unknown')
+        result = self.read(group='received_people:last_30_days')
         self.assertEqual(len(result['sales_groups']), 2)
         self.assertEqual(result['stats']['comparable'], 4)
         self.assertEqual(result['stats']['high'], 1)

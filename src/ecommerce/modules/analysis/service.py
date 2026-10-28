@@ -158,6 +158,14 @@ def analyze_sample(sample, filters):
             groups[row['sales_group']].append(row)
     sales_groups = [{'key': key, 'label': members[0]['sales_group_label'], 'count': len(members)}
                     for key, members in sorted(groups.items(), key=lambda pair: (-len(pair[1]), pair[0]))]
+    # 旧链接中的未知收货周期仅在该组已不存在、近30天组确实存在时更新，保留其他真实口径。
+    period_filter_updated = False
+    if 'received_people:unknown' not in groups and 'received_people:last_30_days' in groups:
+        filters = dict(filters)
+        for key in ('group', 'table_group'):
+            if filters[key] == 'received_people:unknown':
+                filters[key] = 'received_people:last_30_days'
+                period_filter_updated = True
     selected_group = filters['group'] or (sales_groups[0]['key'] if sales_groups else '')
     if selected_group and selected_group not in {m + ':' + p for m in METRICS for p in PERIODS}:
         raise ValueError('展示数量口径无效')
@@ -193,6 +201,7 @@ def analyze_sample(sample, filters):
     return {'filters': filters, 'stats': stats,
         'price_bins': price_bins, 'price_cross': price_cross, 'sales_groups': sales_groups,
         'price_distribution': distribution, 'peak_bins': peak_bins, 'price_filter_reset': price_filter_reset,
+        'period_filter_updated': period_filter_updated,
         'group_label': next((item['label'] for item in sales_groups if item['key'] == selected_group),
             METRICS.get(selected_group.split(':')[0], '暂无可用数量') + ' · ' + PERIODS.get(selected_group.split(':')[-1], '未知周期') if selected_group else '暂无可用数量'),
         'group_available': selected_group in groups,
