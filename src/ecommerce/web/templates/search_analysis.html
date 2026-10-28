@@ -27,6 +27,7 @@
     <article><span>有收货人数数据的商品</span><strong>{{ stats.quantities }}<small>件</small></strong><small>已获取近30天收货人数</small></article>
     <article><span>{{ '已排除广告商品' if filters.exclude_ads else '已识别广告商品' }}</span><strong>{{ stats.excluded_ads if filters.exclude_ads else stats.identified_ads }}<small>项</small></strong><small>{{ '按当前搜索词与快照统计' if filters.exclude_ads else '未命中标识 ≠ 已确认非广告' }}</small></article>
   </section>
+  {% include 'search_concentration.html' %}
   <div class="sa-sample-line"><span>{{ filters.keyword or '未选择搜索词' }} · {{ '日期范围内每件商品取最新观察（可能混合时间）' if filters.snapshot=='range' else '单次采集，每件商品取首次观察' }} · {{ stats.batch_count }} 批 · 搜索页码 {{ stats.pages|join('、') or '未记录' }} · {{ stats.sorts|join(' / ') or '排序未记录' }}</span><a href="{{ url_for('pages.collection_keyword_products',category=filters.keyword,since=filters.since,until=filters.until,return_to=current_location()) if filters.keyword else url_for('pages.collection_searches') }}">查看原始列表 ↗</a></div>
   <section class="sa-chart-grid">
     <article class="sa-panel sa-price-panel"><div class="sa-panel-head"><div><h2>商品集中在哪些价位？</h2><p>列表入口价 · 点击柱形筛选商品明细</p></div><span class="sa-small-tag">自动分段</span></div>
@@ -90,7 +91,6 @@
     {% else %}<p class="sa-region-empty">当前筛选范围内暂无商品。</p>{% endfor %}</div>
     <div class="sa-composition-foot"><span>占比表示商品数量分布，按当前采集范围每件商品所选记录统计；地区缺失仍计入分母。</span><small>地区未记录 {{ shipping_distribution.missing }} 件 · 地区待识别 {{ shipping_distribution.unrecognized }} 件；占比四舍五入后合计可能略有差异。</small></div>
   </details>
-  {% include 'search_concentration.html' %}
   <section class="sa-panel sa-products" id="sa-products">
     <div class="sa-table-heading"><nav class="sa-tabs" aria-label="分析明细视图"><a class="{{ 'selected' if filters.view=='goods' }}" href="{{ analysis_url(view='goods',_anchor='sa-products') }}">商品明细 <small>{{ stats.products }}</small></a><a class="{{ 'selected' if filters.view=='stores' }}" href="{{ analysis_url(view='stores',_anchor='sa-products') }}">店铺分布</a><a id="sa-saved-link" class="{{ 'selected' if filters.view=='saved' }}" href="{{ analysis_url(view='saved',_anchor='sa-products') }}">我的关注 <small id="sa-saved-count">{{ filters.saved|length }}</small></a></nav><span>关注仅保存在当前浏览器标签页</span></div>
     <form class="sa-detail-form" id="sa-detail-form" method="get" action="{{ url_for('analysis.index',_anchor='sa-products') }}">{% for key in ['keyword','snapshot','since','until','group','view','store','finding','price_scale','quantity_tier','region','city'] %}{% if filters[key] %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endif %}{% endfor %}{% if filters.bin is not none %}<input type="hidden" name="bin" value="{{ filters.bin }}">{% endif %}{% if filters.exclude_ads %}<input type="hidden" name="exclude_ads" value="1">{% endif %}<input type="hidden" name="saved" value="{{ filters.saved|join(',') }}">

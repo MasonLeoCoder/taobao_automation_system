@@ -19,6 +19,7 @@
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip b{flex-shrink:0}
 .sa-composition>summary{display:flex;align-items:center;gap:13px;list-style:none;padding:19px 22px}
+.sa-metrics+.sa-concentration{margin-top:18px}
 .sa-concentration-flow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 22px 6px;font-size:11px;color:var(--sa-muted)}
 .sa-concentration-flow b{font-weight:600;color:var(--data-4-text)}
 .sa-concentration-flow i{font-style:normal;color:var(--data-1-text)}
