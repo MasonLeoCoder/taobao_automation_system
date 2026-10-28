@@ -34,9 +34,9 @@ def parse_quantity_tier(raw):
             'label':_label(int(count),precision,metric), 'group_label':METRICS[metric]+' · '+PERIODS[period]}
 
 
-def price_composition(rows, bins, group):
-    """按价位汇总展示档位；参数：完整样本、既有价格段和数量口径；返回：行、统一色标和合计。"""
-    comparable = [r for r in rows if r['price_usable'] and r['quantity_usable'] and r['sales_group']==group]
+def quantity_tiers(rows, group):
+    """汇总真实展示档位；参数：样本及数量口径；返回：保留精度、按数值排序的档位。"""
+    comparable = [r for r in rows if r['quantity_usable'] and r['sales_group']==group]
     counts = Counter((r['sales_count'],r['sales_precision']) for r in comparable)
     ordered = sorted(counts,key=lambda pair:(pair[0],('exact','lower_bound','approximate').index(pair[1])))
     tiers = []
@@ -44,6 +44,22 @@ def price_composition(rows, bins, group):
         key = f'{group}:{precision}:{value}'
         tiers.append({**parse_quantity_tier(key),'count':counts[value,precision],
                       'tone':round(index*4/(len(ordered)-1)) if len(ordered)>1 else 2})
+    return tiers
+
+
+def common_received_tiers(rows):
+    """计算最常见收货档位；参数：当前完整样本；返回：近30天有效商品分母及全部并列档位。"""
+    tiers = quantity_tiers(rows, 'received_people:last_30_days')
+    total = sum(tier['count'] for tier in tiers)
+    maximum = max((tier['count'] for tier in tiers),default=0)
+    return {'total':total, 'tiers':[{**tier,'percent':float(Decimal(tier['count'])*100/total)}
+                                  for tier in tiers if tier['count']==maximum]}
+
+
+def price_composition(rows, bins, group):
+    """按价位汇总展示档位；参数：完整样本、既有价格段和数量口径；返回：行、统一色标和合计。"""
+    comparable = [r for r in rows if r['price_usable'] and r['quantity_usable'] and r['sales_group']==group]
+    tiers = quantity_tiers(comparable,group)
     items = []
     for item in bins:
         members = [r for r in comparable if r['price_bin']==item['index']]

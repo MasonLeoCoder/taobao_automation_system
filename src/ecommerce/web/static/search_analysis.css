@@ -12,6 +12,12 @@
   .sa-filter-top select{min-width:0}
 }
 /* 价格摘要和图形只展示业务层给出的同一套自动分段。 */
+.sa-finding-grid>.sa-quantity-finding{padding:14px 16px;background:#f0f5e9;border:1px solid #e0e9d4;border-radius:7px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.sa-common-tiers{display:flex;flex-wrap:wrap;gap:10px 18px}
+.sa-common-tiers>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.sa-quantity-finding .ui-data-chip>span{font:inherit;color:inherit}
+.sa-quantity-finding>.sa-common-tiers .ui-data-chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.sa-quantity-finding>.sa-common-tiers .ui-data-chip b{flex-shrink:0}
 .sa-composition>summary{display:flex;align-items:center;gap:13px;list-style:none;padding:19px 22px}
 .sa-composition>summary::-webkit-details-marker{display:none}
 .sa-composition>summary::before{content:"";width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .16s;flex-shrink:0}

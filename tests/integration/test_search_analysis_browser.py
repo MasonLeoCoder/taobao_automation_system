@@ -124,6 +124,42 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_common_received_ties_missing_price_and_clear(self):
+        """并列档位独立点击，缺价不丢失，清除筛选和CSV保持数量一致。"""
+        self.fixture.observation(4,price_value=None,sales_count=0,sales_precision='exact')
+        self.fixture.observation(5,sales_count=10000,sales_precision='lower_bound')
+        self.goto()
+        card=self.page.locator('#sa-common-quantity')
+        expect(card).to_contain_text('2个档位并列最多')
+        expect(card.locator('[data-common-tier]')).to_have_count(2)
+        expect(card).to_contain_text('占 50.0%')
+        card.locator('[data-common-tier$=":exact:0"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(2)
+        expect(self.page.locator('.sa-active-filters')).not_to_contain_text('达到1万')
+        self.assertIn('finding=quantity',self.page.locator('#sa-export').get_attribute('href'))
+        self.page.get_by_role('link',name='清除明细筛选 ×',exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(5)
+        self.assertNotIn('quantity_tier=',self.page.url)
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        self.assertEqual(self.errors,[])
+
+    def test_common_received_updates_with_ad_filter(self):
+        """排除广告后卡片重算分母和档位，点击不继承旧的明细搜索。"""
+        self.goto()
+        self.page.locator('#sa-exclude-ads').check()
+        card=self.page.locator('#sa-common-quantity')
+        expect(card.locator('[data-common-tier]')).to_have_count(1)
+        expect(card).to_contain_text('按有近30天收货人数的 1 件商品统计')
+        expect(card).to_contain_text('100.0%')
+        self.page.get_by_label('搜索明细',exact=True).fill('不存在的商品')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        card.locator('[data-common-tier]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody')).to_contain_text('普通样例')
+        self.assertEqual(self.errors,[])
+
     def test_price_composition_style_counts_and_tier_drilldown(self):
         """展示档位、合计及色标一致，点击按价位和精度筛选，原图表保持完整样本。"""
         self.fixture.observation(4,price_value=0,sales_text='0+人收货',sales_count=0,sales_precision='lower_bound')
@@ -451,7 +487,7 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         self.assertNotIn('finding=', self.page.url)
         expect(self.page.locator('.sa-products tbody tr')).to_have_count(2)
         expect(self.page.locator('.sa-products th')).to_have_count(6)
-        expect(self.page.locator('.sa-finding-grid>a')).to_have_count(2)
+        expect(self.page.locator('.sa-finding-grid>*')).to_have_count(2)
         expect(self.page.get_by_text('产品类型', exact=True)).to_have_count(0)
         self.page.locator('.sa-detail-btn').first.click()
         expect(self.page.locator('#sa-detail-dialog')).to_be_visible()

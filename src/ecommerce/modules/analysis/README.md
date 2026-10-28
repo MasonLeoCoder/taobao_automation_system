@@ -6,7 +6,9 @@
 
 `service.analysis_page` 是共用业务入口；`infrastructure.storage.search_analysis` 只读批次和观察；Web仅处理输入输出、图形展示及当前浏览器标签页关注。
 
-`composition.price_composition`提供价位内展示档位和合计，精确值/下界/近似分开，色标在表内统一；`quantity_tier=指标:周期:精度:展示整数`仅是明细筛选参数，不写入数据库。档位筛选限有效价格样本，图表和表格统计仍使用完整范围；旧`price_cross`门槛统计保留供原统计兼容，构成表已不展示固定1万达标率。
+`composition.price_composition`提供价位内展示档位和合计，精确值/下界/近似分开，色标在表内统一；`quantity_tier=指标:周期:精度:展示整数`仅是明细筛选参数，不写入数据库。构成表档位筛选限有效价格样本，图表和表格统计仍使用完整范围；旧`price_cross`门槛统计保留供原统计兼容，构成表已不展示固定1万达标率。
+
+`composition.quantity_tiers`统一生成展示档位；`common_received_tiers`固定使用`received_people:last_30_days`，从完整筛选样本取最高商品数的全部并列档位，占比以该口径可用商品为分母，缺价亦计入。卡片点击使用`finding=quantity`配合`quantity_tier`，明确不限制价格，缺少档位返回400；原表链接不带此finding，继续限定有效价格。明细查询、分页、CSV和清除筛选复用原机制，旧`finding=high`链接兼容保留。
 
 - 单次任务每件商品取首次完整观察；日期范围每件商品取最新完整观察。身份未确认按观察分别保留，先选观察再排广告，不用旧记录补位。
 - 价格由`prices.price_distribution`按完整样本自动分段，尾部单列、同价合并，所有有效价格各有唯一归属；中位数及四分位数使用线性插值，明确非人民币价格不进入人民币分布。
