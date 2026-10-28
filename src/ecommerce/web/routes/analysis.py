@@ -61,6 +61,17 @@ def _number(value, places=0):
     return format(rounded,f',.{places}f')
 
 
+def _compact_number(value):
+    """简化统计数值；参数：原始统计值；返回：最多两位小数，整数不显示小数点。"""
+    text=_number(value,2)
+    return text.rstrip('0').rstrip('.') if '.' in text else text
+
+
+def _stat_money(value):
+    """格式化价格统计；参数：未舍入的统计值；返回：最终展示两位小数，不改变商品原价。"""
+    return '¥'+_number(value,2) if value is not None else '—'
+
+
 def _point(row):
     """限制浏览器中的观察字段；参数：分析行；返回：图表及依据侧栏需要的字段。"""
     fields = ('id', 'key', 'product_id', 'platform_product_id', 'title', 'price', 'price_text', 'price_label',
@@ -100,6 +111,7 @@ def index():
         'price_bins': data['price_bins'], 'filters': data['filters']}
     return render_template('search_analysis.html', active='analysis', shop_name=settings.shop_name,
         analysis_url=analysis_url, analysis_money=_money, analysis_number=_number, export_url=url_for('analysis.export', **{**values, 'page': 1}),
+        analysis_compact_number=_compact_number, analysis_stat_money=_stat_money,
         middle_export_url=url_for('analysis.export',**{**values,'page':1,'finding':'middle','sort':'concentration',
             'bin':None,'quantity_tier':None,'region':None,'city':None,'q':None,'store':None,'table_group':'all','view':'goods'}),
         browser_data=public(browser_data), **public({key: value for key, value in data.items() if key not in {'all_rows', 'detail_rows', 'scatter'}}))

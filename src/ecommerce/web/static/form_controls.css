@@ -191,3 +191,10 @@ textarea.ui-control { min-height: calc(var(--control-height)*2); resize: vertica
 .ui-distribution-bar::-webkit-meter-bar{height:7px;border:0;border-radius:99px;background:var(--data-0-bg)}
 .ui-distribution-bar::-webkit-meter-optimum-value{border-radius:99px;background:var(--data-3-text)}
 .ui-distribution-bar::-moz-meter-bar{border-radius:99px;background:var(--data-3-text)}
+/* 名称和说明浮层共用一套外观；浮层挂到body，避免卡片裁切。 */
+.ui-help-label{display:inline-flex;align-items:baseline;gap:5px;max-width:100%;padding:0;border:0;background:transparent;color:inherit;font:inherit;line-height:inherit;text-align:left;white-space:normal;cursor:help}
+.ui-help-label .ui-help-icon{flex-shrink:0;font:400 12px/1 var(--control-font);color:var(--control-label)}
+.ui-help-label:hover .ui-help-icon{color:var(--control-accent)}
+.ui-help-label:focus-visible{outline:2px solid var(--control-accent);outline-offset:3px;border-radius:3px}
+.ui-help-popup{position:fixed;z-index:2000;box-sizing:border-box;width:max-content;max-width:min(320px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;padding:12px 14px;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-surface);color:var(--control-text);font:400 12px/1.8 var(--control-font);white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 8px 28px #173c3024}
+.ui-help-popup[hidden]{display:none}

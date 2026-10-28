@@ -38,3 +38,8 @@
 {% macro distribution_bar(value,label) -%}
 <meter class="ui-distribution-bar" min="0" max="100" value="{{ value }}" aria-label="{{ label }}">{{ '%.1f'|format(value) }}%</meter>
 {%- endmacro %}
+
+{% macro help_label(label,description,attrs={}) -%}
+{% set help_attrs=dict(attrs,**{'type':'button','data-ui-help-text':description}) %}
+<button{{ attributes(help_attrs,'ui-help-label') }}><span>{{ label }}</span><span class="ui-help-icon" aria-hidden="true">ⓘ</span></button>
+{%- endmacro %}

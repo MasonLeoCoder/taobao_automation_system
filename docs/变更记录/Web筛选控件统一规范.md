@@ -74,3 +74,7 @@ flowchart LR
 任务表示一次采集执行，批次表示其中一页保存结果，观察表示商品在该页某位置的展示；本地商品主键与平台商品号分别标识数据库身份和淘宝身份。媒体引用的批次/位置与观察由程序匹配，并非观察到媒体的数据库外键；文件索引关联保留原件。此次仅替换展示控件，仍从原批次和原文件追溯，不生成另一份业务数据。
 
 2026-10-28：新增公共`distribution_bar(value,label)`宏与`.ui-distribution-bar`比例条，使用原生meter表达0～100的百分比，色彩复用公共数据色阶，辅助名称由调用方提供；页面另显示商品数和百分比文字。发货地区折叠模块复用现有`.sa-composition`的标题、箭头、边框及合计标签；省份/城市只在页面CSS中增加布局，不另复制一套折叠标题样式。
+
+2026-10-28：新增公共`help_label(label,description,attrs={})`，输出type=button的可聚焦说明名称和ⓘ图标；通过data-ui-help-text传递已转义说明。全站base仅加载一次help_tooltip.js；初始页面有说明按钮才启用，浮层挂到body，使用textContent展示、role=tooltip与动态aria-describedby关联。支持悬停名称/图标、浮层内阅读、键盘聚焦/Esc、触屏点击切换及外部关闭，滚动/窗口变化时重新定位或隐藏，边缘自动避让；显式关闭后抑制布局变化触发的意外重开，直到真实鼠标移动。外观由公共.ui-help-label/.ui-help-popup和现有设计变量统一维护。
+
+首批仅腰部卡片和对照表使用：metric_help_definitions.html集中保存middle_metrics的名称和解释，search_middle.html通过同一宏复用。新增指标说明应先维护统一定义，禁止各展示位置复制不同文案；其他页面可复用help_label，无需再实现浮层脚本。定义文件只含展示文字，不承担业务统计规则。
