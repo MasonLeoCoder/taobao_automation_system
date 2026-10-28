@@ -18,6 +18,8 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024)
     from ecommerce.web.routes.pages import pages
     app.register_blueprint(pages)
+    from ecommerce.web.routes.analysis import analysis
+    app.register_blueprint(analysis)
     import secrets
     app.config['COLLECTION_TOKEN']=secrets.token_hex(32)
     from ecommerce.web.routes.collection_jobs import collection_jobs

@@ -5,6 +5,7 @@
 {% block breadcrumb %}<a href="{{ url_for('pages.collection_searches') }}">搜索列表</a> / 搜索词商品{% endblock %}
 {% block content %}
 <p class="back-link"><a class="button action-button action-neutral" href="{{ back_url }}">← 返回来源列表</a></p>
+{% if request.args.get('category') and request.args.get('category_missing')!='1' %}<p><a class="button action-button action-primary" href="{{ url_for('analysis.index',keyword=request.args.get('category'),since=request.args.get('since',''),until=request.args.get('until',''),snapshot='range') }}">分析当前搜索词与日期范围 ↗</a></p>{% endif %}
 <section class="intro"><div><p class="eyebrow">KEYWORD PRODUCTS</p><h1>{{ request.args.get('category') if request.args.get('category_missing')!='1' else '搜索词未记录' }}</h1><p>当前搜索词及日期范围：{{ scope_products }} 个商品 / {{ scope_records }} 条列表记录 · 最近采集 {{ latest_at|full_local_time }}</p>{% if request.args.get('product') %}<p>正在查看商品 ID {{ request.args.get('product') }} 的记录</p>{% endif %}</div><a class="button action-button action-history" href="{{ url_for('pages.collection_searches',category=request.args.get('category'),category_missing=request.args.get('category_missing'),since=request.args.get('since',''),until=request.args.get('until',''),return_to=current_location()) }}">查看历次采集</a></section>
 <form class="panel filters" method="get">
 {% if request.args.get('category_missing')=='1' %}<input type="hidden" name="category_missing" value="1">{% else %}<input type="hidden" name="category" value="{{ request.args.get('category','') }}">{% endif %}

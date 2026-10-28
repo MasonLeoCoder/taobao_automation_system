@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% block title %}概览{% endblock %} · 电商工作台</title>
   <link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}">
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
 <a class="skip" href="#main">跳到主要内容</a>
@@ -17,6 +18,7 @@
     <a class="{{ 'active' if active == 'collections' and ('/searches' in request.path or '/batches' in request.path or request.args.get('view')=='searches') }}" href="{{ url_for('pages.collection_searches') }}">搜索列表</a>
     <a class="{{ 'active' if active == 'collections' and '/searches' not in request.path and '/batches' not in request.path and request.args.get('view')!='searches' }}" href="{{ url_for('pages.collection_details') }}">商品库</a>
     <a class="{{ 'active' if active == 'collection' }}" href="{{ url_for('pages.module',key='collection') }}">商品采集</a>
+    <a class="{{ 'active' if active == 'analysis' }}" href="{{ url_for('analysis.index') }}">搜索词分析</a>
   </nav>
   <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。<small>基础架构 · v0.2</small></div>
 </aside>
@@ -50,4 +52,5 @@
 <script src="{{ url_for('static',filename='image_preview.js') }}" defer></script>
 <script src="{{ url_for('static',filename='parameters.js') }}" defer></script>
 <script src="{{ url_for('static',filename='collection.js') }}" defer></script>
+{% block extra_scripts %}{% endblock %}
 </body></html>

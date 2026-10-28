@@ -9,7 +9,7 @@ def safe_return(value,default='/collections'):
     decoded=unquote(value)
     if any(char in decoded for char in ('\\','\r','\n')): return default
     parsed=urlsplit(decoded)
-    if parsed.scheme or parsed.netloc or not parsed.path.startswith(('/collections','/tasks','/logs')):
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith(('/collections','/tasks','/logs','/analysis/searches')):
         return default
     return value
 
