@@ -88,9 +88,9 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
     def test_bin_drilldown_group_and_store_view(self):
         """价格区间、数量口径和店铺视图保持分析范围，所有跳转可用。"""
         self.goto()
-        self.page.get_by_role('link', name='5–10元，1项商品，筛选明细', exact=True).click()
+        self.page.get_by_role('link', name='5元，1项商品，筛选明细', exact=True).click()
         expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
-        expect(self.page.locator('.sa-active-filters')).to_contain_text('5–10元')
+        expect(self.page.locator('.sa-active-filters')).to_contain_text('5元')
         self.page.get_by_role('link', name='清除明细筛选 ×', exact=True).click()
         self.page.wait_for_load_state('networkidle')
         with self.page.expect_navigation():
@@ -112,6 +112,97 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         self.page.locator('#sa-rules-open').click()
         expect(self.page.locator('#sa-rules-dialog')).to_be_visible()
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
+        self.assertEqual(self.errors, [])
+
+    def test_adaptive_high_prices_tooltip_drilldown_and_detail_search(self):
+        """高价样本形成多个价位；提示、点击、明细搜索及导出保留同一分段。"""
+        prices = [1599,1699,2999,3499,3699,4499,5299,6499,8999,9499,10999]
+        for identifier, price in enumerate(prices, start=1):
+            if identifier <= 3:
+                table = self.fixture.tables['list_observations']
+                with self.fixture.engine.begin() as connection:
+                    connection.execute(table.update().where(table.c.id==identifier).values(price_value=price))
+            else:
+                self.fixture.observation(identifier, price_value=price)
+        self.goto()
+        expect(self.page.locator('.sa-price-summary')).to_contain_text('¥1599.00')
+        expect(self.page.locator('.sa-price-summary')).to_contain_text('¥10999.00')
+        bars = self.page.locator('[data-price-bin]')
+        self.assertTrue(5 <= bars.count() <= 7)
+        original = bars.locator('span:not(.sa-visually-hidden)').all_text_contents()
+        bar = bars.last
+        bar.hover()
+        expect(self.page.locator('#sa-tooltip')).to_be_visible()
+        expect(self.page.locator('#sa-tooltip')).to_contain_text('实际价格')
+        bar.focus()
+        expect(self.page.locator('#sa-tooltip')).to_contain_text('¥10999.00')
+        bar.press('Enter')
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody')).to_contain_text('10999')
+        selected = self.page.url
+        self.page.get_by_label('搜索明细', exact=True).fill('不存在的商品')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        expect(self.page.locator('.sa-empty')).to_contain_text('当前条件下没有数据')
+        self.assertEqual(bars.locator('span:not(.sa-visually-hidden)').all_text_contents(), original)
+        self.assertIn('bin=', self.page.url)
+        self.assertIn('price_scale=', self.page.url)
+        self.page.goto(selected)
+        with self.page.expect_download() as pending:
+            self.page.locator('#sa-export').click()
+        download = pending.value
+        self.assertIsNone(download.failure())
+        self.assertEqual(self.errors, [])
+
+    def test_adaptive_tail_same_price_empty_and_mobile_layout(self):
+        """主体和尾部一起保留，窄屏无整页溢出，同价和缺价显示真实状态。"""
+        prices = [0,*range(1000,1801,100),100000]
+        table = self.fixture.tables['list_observations']
+        for identifier, price in enumerate(prices,start=1):
+            if identifier <= 3:
+                with self.fixture.engine.begin() as connection:
+                    connection.execute(table.update().where(table.c.id==identifier).values(price_value=price))
+            else:
+                self.fixture.observation(identifier,price_value=price)
+        self.goto()
+        expect(self.page.locator('.sa-price-tail')).to_have_count(2)
+        expect(self.page.locator('.sa-price-chart')).to_contain_text('高价尾部')
+        self.page.locator('.sa-price-tail').last.click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody')).to_contain_text('100000')
+        for width in (390,768,1480):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        with self.fixture.engine.begin() as connection:
+            connection.execute(table.update().values(price_value=4499))
+        self.page.goto('http://127.0.0.1/analysis/searches')
+        expect(self.page.locator('[data-price-bin]')).to_have_count(1)
+        expect(self.page.locator('.sa-price-foot')).to_contain_text('全部有效入口价相同')
+        with self.fixture.engine.begin() as connection:
+            connection.execute(table.update().values(price_value=None))
+        self.page.reload()
+        expect(self.page.locator('.sa-price-empty')).to_contain_text('暂无有效入口价')
+        expect(self.page.locator('[data-price-bin]')).to_have_count(0)
+        self.assertEqual(self.errors, [])
+
+    def test_price_selection_clears_on_scope_change_and_old_link(self):
+        """广告、搜索词与旧链接更新范围时不继续应用旧的价格段编号。"""
+        self.add_keywords('手机壳')
+        self.goto()
+        self.page.locator('[data-price-bin]').last.click()
+        expect(self.page.locator('.sa-active-filters')).to_be_visible()
+        self.page.locator('#sa-exclude-ads').check()
+        expect(self.page.locator('#sa-exclude-ads')).to_be_checked()
+        expect(self.page.locator('input[name="bin"]')).to_have_count(0)
+        self.page.locator('.ss-trigger').click()
+        self.page.get_by_role('combobox',name='查找搜索词',exact=True).fill('手机')
+        self.page.locator('.ss-list').get_by_role('option',name='手机壳',exact=True).click()
+        self.page.get_by_role('button',name='应用筛选',exact=True).click()
+        expect(self.page.locator('[data-price-bin]')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        self.assertNotIn('bin=',self.page.url)
+        self.page.goto('http://127.0.0.1/analysis/searches?keyword=粘毛器&bin=5')
+        expect(self.page.get_by_text('样本范围或价格分段已变化，已恢复全部价位。',exact=True)).to_be_visible()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(3)
         self.assertEqual(self.errors, [])
 
     def test_default_range_and_keyword_date_changes_match_summary(self):

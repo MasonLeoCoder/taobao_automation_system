@@ -43,8 +43,12 @@ def _parameters(filters):
 
 
 def _money(value):
-    """格式化入口价格；参数：数字或空；返回：保留两位小数或空标记。"""
-    return '¥' + format(Decimal(str(value)), '.2f') if value is not None else '—'
+    """格式化入口价格；参数：数字或空；返回：至少两位小数，保留来源精度或空标记。"""
+    if value is None:
+        return '—'
+    number = Decimal(str(value))
+    precision = max(2, -number.normalize().as_tuple().exponent)
+    return '¥' + format(number, f'.{precision}f')
 
 
 def _point(row):
@@ -96,13 +100,17 @@ def export():
     from ecommerce.shared.time import BEIJING
     data = _read()
     filters = data['filters']
+    selected_bin = data['price_bins'][filters['bin']] if filters['bin'] is not None else None
     buffer = StringIO(newline='')
     writer = csv.writer(buffer)
     writer.writerow(['搜索词分析', _csv_cell(filters['keyword']), '采集范围', filters['snapshot'],
         '广告筛选', '排除已识别广告' if filters['exclude_ads'] else '包含已识别广告', '排除数量', data['stats']['excluded_ads'],
         '日期起', filters['since'], '日期止', filters['until'],
-        '图表口径', data['group_label'], '明细口径', filters['table_group'], '价格段', filters['bin'] if filters['bin'] is not None else '不限',
-        '搜索', _csv_cell(filters['q']), '店铺', _csv_cell(filters['store']), '观察筛选', filters['finding'], '视图', filters['view']])
+        '图表口径', data['group_label'], '明细口径', filters['table_group'], '价格段', selected_bin['label'] if selected_bin else '不限',
+        '搜索', _csv_cell(filters['q']), '店铺', _csv_cell(filters['store']), '观察筛选', filters['finding'], '视图', filters['view'],
+        '价格边界', selected_bin['boundary_label'] if selected_bin else '全部商品，含价格不可用项',
+        '自动分段方式', data['price_distribution']['description'], '价格分段标识', filters['price_scale'],
+        '价格筛选状态', '样本或分段变化，已恢复全部价位' if data['price_filter_reset'] else '当前分析范围'])
     if filters['view'] == 'stores':
         writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:

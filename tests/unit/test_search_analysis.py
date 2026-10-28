@@ -137,7 +137,7 @@ class SearchAnalysisTests(unittest.TestCase):
         self.assertEqual(len(result['sales_groups']), 2)
         self.assertEqual(result['stats']['comparable'], 4)
         self.assertEqual(result['stats']['high'], 1)
-        cross = result['price_cross'][2]
+        cross = result['price_cross'][result['all_rows'][0]['price_bin']]
         self.assertEqual(cross['threshold_eligible'], 2)
         self.assertEqual(cross['high_percent'], 50)
         self.assertEqual(len(self.read(finding='high')['detail_rows']), 1)
@@ -145,7 +145,7 @@ class SearchAnalysisTests(unittest.TestCase):
     def test_empty_data_and_invalid_scope_are_honest(self):
         """空数据正常展示；非法参数和跨搜索词快照明确拒绝。"""
         self.assertEqual(self.client.get('/analysis/searches').status_code, 200)
-        for query in ['exclude_ads=yes', 'bin=6', 'page=0', 'snapshot=bad', 'since=bad',
+        for query in ['exclude_ads=yes', 'bin=7', 'price_scale=bad', 'page=0', 'snapshot=bad', 'since=bad',
                       'since=2026-10-29&until=2026-10-28', 'group=unknown:invalid', 'saved=bad', 'finding=bad']:
             self.assertEqual(self.client.get('/analysis/searches?' + query).status_code, 400, query)
         self.assertEqual(self.client.get('/analysis/searches?snapshot=task:' + 'f' * 32).status_code, 404)

@@ -2,15 +2,15 @@
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+import hashlib
+import json
 import re
 from urllib.parse import parse_qs, urlsplit
 
 from ecommerce.infrastructure.storage.search_analysis import load_search_sample
 from ecommerce.shared.sales import METRICS, PERIODS, PRECISIONS
 from ecommerce.shared.pagination import pagination, PAGE_SIZE
-
-PRICE_BOUNDS = (Decimal(0), Decimal(5), Decimal(10), Decimal(20), Decimal(30), Decimal(50))
-PRICE_LABELS = ('5元以下', '5–10元', '10–20元', '20–30元', '30–50元', '50元及以上')
+from ecommerce.modules.analysis.prices import MAX_PRICE_BINS, contains_price, price_distribution, quantile
 
 
 def _text(value, maximum=200):
@@ -40,9 +40,12 @@ def parse_filters(options):
         if values[key] not in allowed:
             raise ValueError('分析筛选无效：' + key)
     raw_bin = options.get('bin', '')
-    if raw_bin not in ('', '0', '1', '2', '3', '4', '5'):
+    if raw_bin not in ('', *map(str, range(MAX_PRICE_BINS))):
         raise ValueError('价格段筛选无效')
     values['bin'] = int(raw_bin) if raw_bin else None
+    values['price_scale'] = options.get('price_scale', '')
+    if not isinstance(values['price_scale'], str) or not re.fullmatch(r'(?:[a-f0-9]{16})?', values['price_scale']):
+        raise ValueError('价格分段标识无效')
     raw_page = str(options.get('page', '1'))
     if not re.fullmatch(r'[1-9][0-9]{0,8}', raw_page):
         raise ValueError('页码须为正整数')
@@ -97,23 +100,6 @@ def _shop_key(row):
     return ('name:' + row['shop_name'], '按店铺名称近似分组') if row.get('shop_name') else (None, '店铺未记录')
 
 
-def _quantile(values, fraction):
-    """计算线性插值分位数；参数：已排序数值及分位；返回：Decimal或空。"""
-    if not values:
-        return None
-    position = Decimal(len(values) - 1) * fraction
-    low = int(position)
-    high = min(low + 1, len(values) - 1)
-    return values[low] + (values[high] - values[low]) * (position - low)
-
-
-def _bin(price):
-    """计算入口价区间；参数：价格；返回：左闭右开区间编号，缺失为空。"""
-    if price is None:
-        return None
-    return max(index for index, low in enumerate(PRICE_BOUNDS) if price >= low)
-
-
 def _percent(count, total):
     """计算展示占比；参数：分子分母；返回：百分数，空分母为零。"""
     return round(count * 100 / total, 1) if total else 0
@@ -140,7 +126,6 @@ def analyze_sample(sample, filters):
         payload = row.get('payload') if isinstance(row.get('payload'), dict) else {}
         currency = payload.get('currency_symbol')
         row['price_usable'] = row['price'] is not None and currency in (None, '', '¥', '￥', '元', 'CNY', 'RMB')
-        row['price_bin'] = _bin(row['price']) if row['price_usable'] else None
         number = row.get('sales_count')
         row['quantity_usable'] = (row.get('sales_parse_status') == 'parsed' and type(number) is int and number >= 0
             and row.get('sales_precision') in {'exact', 'lower_bound', 'approximate'})
@@ -153,9 +138,20 @@ def analyze_sample(sample, filters):
     excluded = [row for row in rows if row.get('ad_status') == 'identified'] if filters['exclude_ads'] else []
     rows = [row for row in rows if not filters['exclude_ads'] or row.get('ad_status') != 'identified']
     prices = sorted(row['price'] for row in rows if row['price_usable'])
-    bin_counts = Counter(row['price_bin'] for row in rows if row['price_bin'] is not None)
-    price_bins = [{'index': index, 'label': label, 'count': bin_counts[index],
-                   'percent': _percent(bin_counts[index], len(prices))} for index, label in enumerate(PRICE_LABELS)]
+    distribution = price_distribution(prices)
+    price_bins = distribution['bins']
+    for row in rows:
+        row['price_bin'] = next((item['index'] for item in price_bins if contains_price(row['price'], item)), None) if row['price_usable'] else None
+    scale_source = {key: filters[key] for key in ('since', 'until', 'exclude_ads')}
+    scale_source.update(keyword=sample['keyword'], snapshot=sample['snapshot'], prices=prices)
+    scale_source['bins'] = [{key: item[key] for key in ('low','high','include_low','include_high','kind')} for item in price_bins]
+    scale = hashlib.sha256(json.dumps(scale_source, sort_keys=True, default=str, ensure_ascii=False).encode()).hexdigest()[:16]
+    price_filter_reset = filters['bin'] is not None and filters['price_scale'] != scale
+    filters = {**filters, 'bin': None if price_filter_reset else filters['bin'], 'price_scale': scale}
+    if filters['bin'] is not None and filters['bin'] >= len(price_bins):
+        raise ValueError('价格段不属于当前样本')
+    peak_count = max((item['count'] for item in price_bins), default=0)
+    peak_bins = [item for item in price_bins if item['count'] == peak_count] if peak_count else []
     groups = defaultdict(list)
     for row in rows:
         if row['quantity_usable']:
@@ -183,8 +179,8 @@ def analyze_sample(sample, filters):
         'shops': len({row['shop_key'] for row in rows if row['shop_key']}),
         'missing_shops': sum(not row['shop_key'] for row in rows), 'prices': len(prices),
         'price_min': min(prices) if prices else None, 'price_max': max(prices) if prices else None,
-        'price_median': _quantile(prices, Decimal('.5')), 'price_q1': _quantile(prices, Decimal('.25')),
-        'price_q3': _quantile(prices, Decimal('.75')), 'quantities': sum(row['quantity_usable'] for row in rows),
+        'price_median': quantile(prices, Decimal('.5')), 'price_q1': quantile(prices, Decimal('.25')),
+        'price_q3': quantile(prices, Decimal('.75')), 'quantities': sum(row['quantity_usable'] for row in rows),
         'comparable': len(comparable), 'scatter': len(scatter),
         'high': sum(row['sales_precision'] in {'exact', 'lower_bound'} and row['sales_count'] >= 10000 for row in comparable),
         'sorts': list(dict.fromkeys(batch.get('sort_label') or '排序未记录' for batch in sample['batches'])),
@@ -196,6 +192,7 @@ def analyze_sample(sample, filters):
     info = pagination(len(table), filters['page'])
     return {'filters': filters, 'stats': stats,
         'price_bins': price_bins, 'price_cross': price_cross, 'sales_groups': sales_groups,
+        'price_distribution': distribution, 'peak_bins': peak_bins, 'price_filter_reset': price_filter_reset,
         'group_label': next((item['label'] for item in sales_groups if item['key'] == selected_group),
             METRICS.get(selected_group.split(':')[0], '暂无可用数量') + ' · ' + PERIODS.get(selected_group.split(':')[-1], '未知周期') if selected_group else '暂无可用数量'),
         'group_available': selected_group in groups,

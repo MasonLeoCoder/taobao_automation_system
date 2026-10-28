@@ -31,7 +31,7 @@
     if (text !== null) element.textContent = text;
     return element;
   }
-  function money(value) { return value === null || value === undefined ? '—' : '¥' + Number(value).toFixed(2); }
+  function money(value) { return value === null || value === undefined ? '—' : '¥' + Number(value).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:6,useGrouping:false}); }
   function quantity(value) { return value === null || value === undefined ? '—' : String(value); }
   function toast(message) {
     $('sa-status').textContent = message; $('sa-status').hidden = false;
@@ -141,6 +141,27 @@
     $('sa-tooltip').style.left = Math.max(8, Math.min(event.clientX + 14, innerWidth - 250)) + 'px'; $('sa-tooltip').style.top = Math.max(8, Math.min(event.clientY + 15, innerHeight - 120)) + 'px'; $('sa-tooltip').hidden = false;
   });
   $('sa-scatter').addEventListener('pointerleave', () => { $('sa-tooltip').hidden = true; });
+  const priceChart = document.querySelector('.sa-price-chart');
+  /** 展示价格段提示；参数：柱形链接和视口坐标；返回：无，内容使用安全文本。 */
+  function showPriceTooltip(link, x, y) {
+    const item = data.price_bins.find(item => item.index === Number(link.dataset.priceBin));
+    if (!item) return;
+    $('sa-tooltip').textContent = item.label + '\n' + item.boundary_label + '\n' + item.count + '件 · 占有效价格 ' + item.percent + '%\n实际价格：' + money(item.actual_min) + ' ～ ' + money(item.actual_max) + (item.count ? '\n点击查看对应商品' : '\n该段暂无商品');
+    $('sa-tooltip').style.left = Math.max(8, Math.min(x + 12, innerWidth - 250)) + 'px';
+    $('sa-tooltip').style.top = Math.max(8, Math.min(y + 12, innerHeight - 190)) + 'px';
+    $('sa-tooltip').hidden = false;
+  }
+  priceChart?.addEventListener('pointermove', event => {
+    const link = event.target.closest('[data-price-bin]');
+    if (link) showPriceTooltip(link, event.clientX, event.clientY);
+    else $('sa-tooltip').hidden = true;
+  });
+  priceChart?.addEventListener('pointerleave', () => { $('sa-tooltip').hidden = true; });
+  priceChart?.addEventListener('focusin', event => {
+    const link = event.target.closest('[data-price-bin]');
+    if (link) { const bounds = link.getBoundingClientRect(); showPriceTooltip(link, bounds.left, bounds.top); }
+  });
+  priceChart?.addEventListener('focusout', () => { $('sa-tooltip').hidden = true; });
   for (const dialog of [$('sa-rules-dialog'), $('sa-detail-dialog')]) {
     dialog.addEventListener('close', () => { if (lastFocus && lastFocus.isConnected) lastFocus.focus(); });
     dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
