@@ -124,6 +124,53 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_scope_and_quantity_filters_do_not_inherit_detail_anchor(self):
+        """桌面/手机从明细定位进入，应用和广告回概览，口径切换留图表，明细操作定位列表。"""
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.page.goto('http://127.0.0.1/analysis/searches#sa-products')
+            self.page.get_by_role('button',name='应用筛选',exact=True).click()
+            self.page.wait_for_url('**#sa-overview')
+            expect(self.page.locator('#sa-overview')).to_be_in_viewport()
+            self.page.locator('[data-price-bin]').first.click()
+            self.page.wait_for_url('**#sa-products')
+            expect(self.page.locator('#sa-products')).to_be_in_viewport()
+            self.page.locator('#sa-exclude-ads').check()
+            self.page.wait_for_url('**#sa-overview')
+            expect(self.page.locator('#sa-overview')).to_be_in_viewport()
+            expect(self.page.locator('.sa-ad-row')).to_contain_text('当前样本 2 件')
+            self.page.goto('http://127.0.0.1/analysis/searches#sa-products')
+            self.page.locator('#sa-group-select').select_option('received_people:monthly')
+            self.page.wait_for_url('**#sa-quantity-analysis')
+            expect(self.page.locator('#sa-quantity-analysis')).to_be_in_viewport()
+            self.page.get_by_label('搜索明细',exact=True).fill('替换')
+            self.page.get_by_role('button',name='查询明细',exact=True).click()
+            self.page.wait_for_url('**#sa-products')
+            expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        self.assertEqual(self.errors, [])
+
+    def test_analysis_pagination_keeps_detail_anchor(self):
+        """分析下一页和页码跳转定位明细，共用分页的其他页面保留原地址。"""
+        for identifier in range(4,24):
+            self.fixture.observation(identifier)
+        self.goto()
+        pager=self.page.locator('.numbered-pagination')
+        pager.get_by_role('link',name='下一页',exact=True).click()
+        self.page.wait_for_url('**#sa-products')
+        expect(self.page.locator('#sa-products')).to_be_in_viewport()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(3)
+        pager.get_by_label('跳转页码',exact=True).fill('1')
+        pager.get_by_role('button',name='跳转',exact=True).click()
+        self.page.wait_for_function("new URL(location.href).searchParams.get('page')==='1'")
+        self.assertEqual(urlsplit(self.page.url).fragment,'sa-products')
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(20)
+        from flask import render_template_string
+        with self.fixture.app.test_request_context('/collections/details'):
+            default_pager=render_template_string("{% from 'pagination.html' import pager with context %}{{ pager(info) }}",info={'page':1,'pages':2,'total':23})
+        self.assertIn('href="/collections/details?page=2"',default_pager)
+        self.assertNotIn('#sa-products',default_pager)
+        self.assertEqual(self.errors, [])
+
     def test_adaptive_high_prices_tooltip_drilldown_and_detail_search(self):
         """高价样本形成多个价位；提示、点击、明细搜索及导出保留同一分段。"""
         prices = [1599,1699,2999,3499,3699,4499,5299,6499,8999,9499,10999]
