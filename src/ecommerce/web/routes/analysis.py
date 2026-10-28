@@ -77,6 +77,8 @@ def index():
 
     def analysis_url(**overrides):
         """保留分析范围并回到首页；参数：覆盖条件；返回：站内分析地址。"""
+        if 'quantity_tier' not in overrides and ('bin' in overrides or 'finding' in overrides):
+            overrides['quantity_tier'] = None
         return url_for('analysis.index', **{**values, 'page': 1, **overrides})
 
     browser_data = {'points': [_point(row) for row in data['scatter']],
@@ -110,7 +112,9 @@ def export():
         '搜索', _csv_cell(filters['q']), '店铺', _csv_cell(filters['store']), '观察筛选', filters['finding'], '视图', filters['view'],
         '价格边界', selected_bin['boundary_label'] if selected_bin else '全部商品，含价格不可用项',
         '自动分段方式', data['price_distribution']['description'], '价格分段标识', filters['price_scale'],
-        '价格筛选状态', '样本或分段变化，已恢复全部价位' if data['price_filter_reset'] else '当前分析范围'])
+        '价格筛选状态', '样本或分段变化，已恢复全部价位' if data['price_filter_reset'] else '当前分析范围']
+        + (['展示档位筛选',data['selected_quantity_tier']['group_label']+' / '+data['selected_quantity_tier']['label']]
+           if data['selected_quantity_tier'] else []))
     if filters['view'] == 'stores':
         writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:

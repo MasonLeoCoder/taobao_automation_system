@@ -169,3 +169,20 @@ textarea.ui-control { min-height: calc(var(--control-height)*2); resize: vertica
   .sa-group-form .ui-control { max-width:100%; min-width:0; flex:1; }
 }
 @media(prefers-reduced-motion:reduce) { .ui-control,.ui-choice,.ui-button,.button,select.ui-select::picker-icon { transition:none; } }
+/* 可复用的数据档位链接；色阶仅表示当前表内展示档位，文本同时保留含义。 */
+:root {
+  --data-0-bg:#f1f6ed;--data-0-text:#71865b;--data-0-line:#dce7cf;
+  --data-1-bg:#eaf3e5;--data-1-text:#66844f;--data-1-line:#d0e1c4;
+  --data-2-bg:#e3f0df;--data-2-text:#4d794b;--data-2-line:#c6dcc1;
+  --data-3-bg:#dceddf;--data-3-text:#2f6e4c;--data-3-line:#b5d4bf;
+  --data-4-bg:#d5e9df;--data-4-text:#1a624f;--data-4-line:#a6cebd;
+}
+.ui-data-chip{--chip-bg:var(--data-2-bg);--chip-text:var(--data-2-text);--chip-line:var(--data-2-line);display:inline-flex;align-items:center;gap:9px;padding:6px 8px 6px 10px;border:1px solid var(--chip-line);border-radius:var(--control-radius);background:var(--chip-bg);color:var(--chip-text);font:500 12px/1.4 var(--control-font);text-decoration:none;white-space:nowrap;transition:var(--control-transition)}
+.ui-data-chip[data-tone="0"]{--chip-bg:var(--data-0-bg);--chip-text:var(--data-0-text);--chip-line:var(--data-0-line)}
+.ui-data-chip[data-tone="1"]{--chip-bg:var(--data-1-bg);--chip-text:var(--data-1-text);--chip-line:var(--data-1-line)}
+.ui-data-chip[data-tone="3"]{--chip-bg:var(--data-3-bg);--chip-text:var(--data-3-text);--chip-line:var(--data-3-line)}
+.ui-data-chip[data-tone="4"]{--chip-bg:var(--data-4-bg);--chip-text:var(--data-4-text);--chip-line:var(--data-4-line)}
+.ui-data-chip b{display:inline-flex;align-items:baseline;gap:2px;background:#ffffff9c;border-radius:4px;padding:2px 5px;font-size:12px;line-height:1.3;color:inherit}
+.ui-data-chip small{font-size:9px;font-weight:400}
+.ui-data-chip:hover{border-color:var(--control-accent);box-shadow:0 2px 7px #1d5b3420}
+.ui-data-chip:focus-visible,.ui-data-chip[aria-current="true"]{outline:none;box-shadow:var(--control-ring);border-color:var(--control-accent)}

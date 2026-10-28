@@ -12,6 +12,37 @@
   .sa-filter-top select{min-width:0}
 }
 /* 价格摘要和图形只展示业务层给出的同一套自动分段。 */
+.sa-composition>summary{display:flex;align-items:center;gap:13px;list-style:none;padding:19px 22px}
+.sa-composition>summary::-webkit-details-marker{display:none}
+.sa-composition>summary::before{content:"";width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .16s;flex-shrink:0}
+.sa-composition[open]>summary::before{transform:rotate(45deg)}
+.sa-composition-heading{font-size:14px;font-weight:600;line-height:1.7;color:#446c40}
+.sa-composition>summary .sa-composition-heading small{display:block;margin:3px 0 0;font-size:10px;font-weight:400;color:#8f9e83}
+.sa-composition-total{margin-left:auto;border:1px solid #dce6d6;background:#f5f9f0;border-radius:20px;padding:5px 11px;font-size:10px;color:#849773;white-space:nowrap}
+.sa-composition-total b{font-size:14px;color:#557c46;padding:0 3px}
+.sa-composition-intro{display:flex;justify-content:space-between;align-items:center;gap:15px;border-top:1px solid #edf2e8;padding:12px 23px;background:#fbfdf8;font-size:10px;color:#91a083}
+.sa-composition-intro small{font-size:9px;color:#a2ad97;white-space:nowrap}
+.search-analysis .sa-composition-table{min-width:790px}
+.sa-composition-table th{padding-top:13px;padding-bottom:13px;font-size:11px}
+.sa-composition-table td{padding-top:17px;padding-bottom:17px;font-size:12px}
+.sa-composition-table th:first-child{width:16%}.sa-composition-table th:nth-child(2){width:9%}.sa-composition-table th:nth-child(3){width:43%}.sa-composition-table th:nth-child(4){width:16%}
+.sa-composition-price{font-weight:600;color:#537748;cursor:help;text-decoration:underline dotted #cbd9bf;text-underline-offset:5px}
+.sa-composition-count{font-size:18px;font-weight:600;color:#526f44;font-variant-numeric:tabular-nums}
+.sa-composition-unit{font-size:10px;color:#a0ad94;margin-left:5px}
+.sa-composition-tiers{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.sa-composition-unavailable{font-size:10px;color:#9da995;border:1px dashed #dce3d6;background:#f8faf6;padding:6px 9px;border-radius:6px}
+.sa-composition-empty,.sa-composition-muted{font-size:10px;color:#a5b09b}
+.sa-composition-small{font-size:10px;color:#9e8553;background:#faf6ea;border:1px solid #eee5cd;border-radius:5px;padding:4px 7px;white-space:nowrap}
+.sa-composition-action{display:inline-flex;align-items:center;gap:9px;font-size:11px;white-space:nowrap}
+.sa-composition-action span{font-size:15px}
+.sa-composition-table tfoot{background:#f3f8ee}
+.sa-composition-table tfoot td,.sa-composition-table tfoot th{border-top:2px solid #d9e6cf;padding-top:17px;padding-bottom:17px;vertical-align:middle}
+.sa-composition-table tfoot th{font-size:12px;font-weight:600;color:#557849;background:transparent}
+.sa-composition-selected td{background:#f6faf1}
+.sa-composition-foot{display:flex;flex-direction:column;gap:4px;border-top:1px solid #e8efdf;background:#fcfdf9;padding:13px 23px;font-size:10px;color:#92a184;line-height:1.9}
+.sa-composition-foot small{font-size:9px;color:#a3ae98}
+.search-analysis td.sa-composition-no-data{text-align:center;padding:32px;font-size:12px;color:#95a486}
+@media(max-width:700px){.sa-composition>summary{padding:16px 14px;gap:10px}.sa-composition-heading{font-size:13px}.sa-composition>summary .sa-composition-heading small{font-size:9px}.sa-composition-total{padding:4px 8px;font-size:9px}.sa-composition-intro{padding:11px 15px;font-size:9px}.sa-composition-intro small{display:none}.sa-composition-foot{padding:12px 15px;font-size:9px}.sa-composition-tiers{gap:7px}}
 .sa-price-summary{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin:17px 20px 0;padding:14px 16px;border:1px solid var(--sa-line);border-radius:8px;background:#f8faf5}
 .sa-price-summary>div{display:flex;flex-direction:column;gap:4px;min-width:0}
 .sa-price-summary span{color:var(--sa-muted);font-size:10px}

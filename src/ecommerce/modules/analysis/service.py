@@ -11,6 +11,7 @@ from ecommerce.infrastructure.storage.search_analysis import load_search_sample
 from ecommerce.shared.sales import METRICS, PERIODS, PRECISIONS
 from ecommerce.shared.pagination import pagination, PAGE_SIZE
 from ecommerce.modules.analysis.prices import MAX_PRICE_BINS, contains_price, price_distribution, quantile
+from ecommerce.modules.analysis.composition import parse_quantity_tier, price_composition
 
 
 def _text(value, maximum=200):
@@ -43,6 +44,8 @@ def parse_filters(options):
     if raw_bin not in ('', *map(str, range(MAX_PRICE_BINS))):
         raise ValueError('价格段筛选无效')
     values['bin'] = int(raw_bin) if raw_bin else None
+    values['quantity_tier'] = options.get('quantity_tier','')
+    parse_quantity_tier(values['quantity_tier'])
     values['price_scale'] = options.get('price_scale', '')
     if not isinstance(values['price_scale'], str) or not re.fullmatch(r'(?:[a-f0-9]{16})?', values['price_scale']):
         raise ValueError('价格分段标识无效')
@@ -148,6 +151,8 @@ def analyze_sample(sample, filters):
     scale = hashlib.sha256(json.dumps(scale_source, sort_keys=True, default=str, ensure_ascii=False).encode()).hexdigest()[:16]
     price_filter_reset = filters['bin'] is not None and filters['price_scale'] != scale
     filters = {**filters, 'bin': None if price_filter_reset else filters['bin'], 'price_scale': scale}
+    if price_filter_reset:
+        filters['quantity_tier'] = ''
     if filters['bin'] is not None and filters['bin'] >= len(price_bins):
         raise ValueError('价格段不属于当前样本')
     peak_count = max((item['count'] for item in price_bins), default=0)
@@ -202,6 +207,8 @@ def analyze_sample(sample, filters):
         'price_bins': price_bins, 'price_cross': price_cross, 'sales_groups': sales_groups,
         'price_distribution': distribution, 'peak_bins': peak_bins, 'price_filter_reset': price_filter_reset,
         'period_filter_updated': period_filter_updated,
+        'price_composition': price_composition(rows,price_bins,selected_group),
+        'selected_quantity_tier': parse_quantity_tier(filters['quantity_tier']),
         'group_label': next((item['label'] for item in sales_groups if item['key'] == selected_group),
             METRICS.get(selected_group.split(':')[0], '暂无可用数量') + ' · ' + PERIODS.get(selected_group.split(':')[-1], '未知周期') if selected_group else '暂无可用数量'),
         'group_available': selected_group in groups,
@@ -215,10 +222,14 @@ def analyze_sample(sample, filters):
 def filter_detail(rows, filters):
     """筛选商品明细，不改变全局图表范围；参数：样本与条件；返回：排序后的明细。"""
     result = []
+    tier = parse_quantity_tier(filters.get('quantity_tier',''))
     for row in rows:
         if filters['view'] == 'saved' and row['key'] not in filters['saved']:
             continue
         if filters['bin'] is not None and row['price_bin'] != filters['bin']:
+            continue
+        if tier and not (row['price_usable'] and row['quantity_usable'] and row['sales_group']==tier['group']
+                         and row['sales_count']==tier['value'] and row['sales_precision']==tier['precision']):
             continue
         if filters['finding'] == 'high' and not (row['quantity_usable'] and row['sales_group'] == filters['group']
                 and row['sales_precision'] in {'exact', 'lower_bound'} and row['sales_count'] >= 10000):

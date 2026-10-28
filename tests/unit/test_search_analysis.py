@@ -293,7 +293,7 @@ class SearchAnalysisTests(unittest.TestCase):
             clean = self.client.get(location)
             self.assertEqual(clean.status_code, 200)
         text = self.client.get('/analysis/searches?category=bad&finding=unclassified', follow_redirects=True).get_data(as_text=True)
-        self.assertIn('样本商品 / 独立观察', text)
+        self.assertIn('id="sa-scope-form"', text)
 
 
 if __name__ == '__main__':

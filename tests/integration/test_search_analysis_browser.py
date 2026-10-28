@@ -124,6 +124,47 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_price_composition_style_counts_and_tier_drilldown(self):
+        """展示档位、合计及色标一致，点击按价位和精度筛选，原图表保持完整样本。"""
+        self.fixture.observation(4,price_value=0,sales_text='0+人收货',sales_count=0,sales_precision='lower_bound')
+        self.goto()
+        self.page.locator('#sa-price-composition summary').click()
+        expect(self.page.locator('#sa-price-composition')).not_to_contain_text('可判断1万门槛')
+        footer=self.page.locator('.sa-composition-table tfoot')
+        expect(footer.locator('.sa-composition-count')).to_have_text('4')
+        exact=self.page.locator('.sa-composition-table tbody a[data-quantity-tier="received_people:last_30_days:exact:0"]')
+        lower=self.page.locator('.sa-composition-table tbody a[data-quantity-tier="received_people:last_30_days:lower_bound:0"]')
+        expect(exact).to_have_count(1);expect(lower).to_have_count(1)
+        exact.click()
+        self.page.wait_for_url('**#sa-products')
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody')).to_contain_text('普通样例')
+        expect(self.page.locator('.sa-active-filters')).to_contain_text('展示档位')
+        self.assertEqual(sum(int(x) for x in self.page.locator('[data-price-bin] svg text').all_text_contents()),4)
+        self.page.get_by_label('搜索明细',exact=True).fill('普通')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        expect(self.page.locator('#sa-detail-form input[name="quantity_tier"]')).to_have_value('received_people:last_30_days:exact:0')
+        self.page.get_by_role('link',name='清除明细筛选 ×',exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(4)
+        self.assertNotIn('quantity_tier=',self.page.url)
+        self.assertEqual(self.errors, [])
+
+    def test_price_composition_large_tiers_and_mobile_scroll(self):
+        """1000+/10万+实际档位和边界提示保留，窄屏只在表格内横向滚动。"""
+        self.fixture.observation(4,price_value=50,sales_count=100000,sales_text='10万+人收货')
+        self.goto()
+        self.page.locator('#sa-price-composition summary').click()
+        expect(self.page.locator('.sa-composition-table tfoot')).to_contain_text('10万+人')
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        self.assertTrue(self.page.locator('.sa-composition-price').first.get_attribute('title'))
+        tier=self.page.locator('.sa-composition-table tfoot a[data-quantity-tier="received_people:last_30_days:lower_bound:100000"]')
+        tier.click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody')).to_contain_text('10万+人收货')
+        self.assertEqual(self.errors, [])
+
     def test_scope_and_quantity_filters_do_not_inherit_detail_anchor(self):
         """桌面/手机从明细定位进入，应用和广告回概览，口径切换留图表，明细操作定位列表。"""
         for width in (1480,390):

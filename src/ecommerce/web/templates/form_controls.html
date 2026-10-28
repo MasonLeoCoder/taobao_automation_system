@@ -30,3 +30,7 @@
 {% macro control_button(text,attrs={},variant='primary') -%}
 <button{{ attributes(attrs,'ui-button ui-' ~ variant) }}>{{ text }}</button>
 {%- endmacro %}
+
+{% macro data_chip(label,count,href,attrs={}) -%}
+<a href="{{ href }}"{{ attributes(attrs,'ui-data-chip') }}><span>{{ label }}</span><b>{{ count }}<small>件</small></b></a>
+{%- endmacro %}
