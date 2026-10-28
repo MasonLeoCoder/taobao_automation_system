@@ -101,8 +101,8 @@ class SearchAnalysisTests(unittest.TestCase):
         self.observation(1, product=1, title='首次标题', price_value=Decimal('3'), ad_status='identified')
         self.observation(2, product=1, title='第二位置', price_value=Decimal('20'))
         self.observation(3, product=2, ad_status=None)
-        self.assertEqual(self.read()['all_rows'][0]['title'], '首次标题')
-        result = self.read(exclude_ads='1')
+        self.assertEqual(self.read(snapshot='task:' + self.task)['all_rows'][0]['title'], '首次标题')
+        result = self.read(snapshot='task:' + self.task, exclude_ads='1')
         self.assertEqual([row['product_id'] for row in result['all_rows']], [2])
         self.assertEqual(result['stats']['excluded_ads'], 1)
         self.batch(2, task_id=self.later_task, captured_at=self.now + timedelta(hours=1))
@@ -151,6 +151,30 @@ class SearchAnalysisTests(unittest.TestCase):
         self.assertEqual(self.client.get('/analysis/searches?snapshot=task:' + 'f' * 32).status_code, 404)
         self.app.config['SETTINGS'] = replace(self.settings, collection_backend='files')
         self.assertEqual(self.client.get('/analysis/searches').status_code, 409)
+
+    def test_default_range_uses_all_tasks_and_latest_whole_observation(self):
+        """默认和空参数均汇总多次采集取最新，最近一次与具体任务仍可显式选择。"""
+        self.observation(1, product=1, title='历史标题', price_value=Decimal('3'))
+        self.observation(2, product=2)
+        self.batch(2, task_id=self.later_task, captured_at=self.now + timedelta(days=1))
+        self.observation(3, product=1, batch=2, title='最新标题', price_value=Decimal('20'))
+        for options in ({}, {'snapshot': ''}):
+            result = self.read(**options)
+            self.assertEqual(result['filters']['snapshot'], 'range')
+            self.assertEqual(result['stats']['products'], 2)
+            self.assertEqual(result['stats']['source_observations'], 3)
+            product = next(row for row in result['all_rows'] if row['product_id'] == 1)
+            self.assertEqual((product['title'], product['price']), ('最新标题', Decimal('20')))
+        latest = self.read(snapshot='latest')
+        self.assertEqual(latest['filters']['snapshot'], 'task:' + self.later_task)
+        self.assertEqual(latest['stats']['products'], 1)
+        specific = self.read(snapshot='task:' + self.task)
+        self.assertEqual(specific['stats']['products'], 2)
+        dated = self.read(until='2026-10-28')
+        self.assertEqual(dated['filters']['snapshot'], 'range')
+        self.assertEqual(next(row for row in dated['all_rows'] if row['product_id'] == 1)['title'], '历史标题')
+        text = self.client.get('/analysis/searches?keyword=粘毛器').get_data(as_text=True)
+        self.assertIn('<option value="range" selected>', text)
 
     def test_selected_missing_group_is_visible_and_latest_tie_uses_observation_id(self):
         """有效但当前为空的口径不隐式切换；同时间最新记录以观察编号破同值。"""

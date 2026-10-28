@@ -41,7 +41,9 @@ def read_search_sample(connection, tables, *, keyword='', snapshot='', since=Non
     snapshots = [{'key': key, 'captured_at': rows[0]['captured_at'], 'batch_count': len(rows),
                   'pages': sorted({row['page_number'] for row in rows if row['page_number'] is not None}),
                   'task_id': rows[0]['task_id']} for key, rows in groups.items()]
-    selected = snapshot or (snapshots[0]['key'] if snapshots else '')
+    selected = snapshot or 'range'
+    if selected == 'latest':
+        selected = snapshots[0]['key'] if snapshots else ''
     if selected == 'range':
         selected_batches = matching
     elif selected:

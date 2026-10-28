@@ -25,7 +25,7 @@ def parse_filters(options):
     """校验分析输入；参数：网页或其他入口的筛选；返回：规范化条件与日期边界。"""
     values = {key: _text(options.get(key, ''), 100 if key == 'keyword' else 400 if key == 'store' else 200)
               for key in ('keyword', 'snapshot', 'since', 'until', 'category', 'q', 'group', 'store')}
-    if values['snapshot'] and not re.fullmatch(r'range|task:[a-f0-9]{32}|batch:[1-9][0-9]{0,19}', values['snapshot']):
+    if values['snapshot'] and not re.fullmatch(r'range|latest|task:[a-f0-9]{32}|batch:[1-9][0-9]{0,19}', values['snapshot']):
         raise ValueError('采集快照格式无效')
     if values['category'] and values['category'] not in CATEGORIES:
         raise ValueError('商品类型筛选无效')

@@ -1,5 +1,6 @@
 """搜索词分析的隔离网页验证；所有请求进入临时Flask，不访问真实平台。"""
 import os
+from datetime import timedelta
 import unittest
 from urllib.parse import urlsplit
 
@@ -111,4 +112,30 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         self.page.locator('#sa-rules-open').click()
         expect(self.page.locator('#sa-rules-dialog')).to_be_visible()
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
+        self.assertEqual(self.errors, [])
+
+    def test_default_range_and_keyword_date_changes_match_summary(self):
+        """默认合并多次采集，切词及改日期恢复最新商品汇总，单次选择仍可使用。"""
+        self.fixture.batch(2, task_id=self.fixture.later_task, captured_at=self.fixture.now + timedelta(days=1))
+        self.fixture.observation(4, batch=2, title='可水洗粘毛器新增样例')
+        self.fixture.observation(5, batch=2, product=1, title='可水洗粘毛器最新标题')
+        self.fixture.batch(3, search_keyword='手机壳')
+        self.fixture.observation(6, batch=3, title='手机保护壳')
+        self.page.goto('http://127.0.0.1/analysis/searches?keyword=%E7%B2%98%E6%AF%9B%E5%99%A8')
+        expect(self.page.locator('#sa-scatter svg')).to_be_visible()
+        expect(self.page.locator('#sa-snapshot')).to_have_value('range')
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(4)
+        with self.page.expect_navigation():
+            self.page.locator('#sa-snapshot').select_option('latest')
+            self.page.get_by_role('button', name='应用筛选', exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(2)
+        self.page.locator('input[name="until"]').fill('2026-10-28')
+        expect(self.page.locator('#sa-snapshot')).to_have_value('range')
+        self.page.get_by_role('button', name='应用筛选', exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(3)
+        self.page.locator('#sa-keyword').select_option('手机壳')
+        expect(self.page.locator('#sa-snapshot')).to_have_value('range')
+        self.page.get_by_role('button', name='应用筛选', exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('#sa-snapshot')).to_have_value('range')
         self.assertEqual(self.errors, [])

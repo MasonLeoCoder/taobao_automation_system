@@ -122,8 +122,8 @@
     if (!rows.length) svg.append(svgElement('text', {x:width/2,y:height/2,'text-anchor':'middle'}, '当前口径没有同时具备价格与数量的商品'));
     $('sa-scatter').replaceChildren(svg);
   }
-  $('sa-keyword').addEventListener('change', () => { $('sa-snapshot').value = ''; const type = $('sa-scope-form').querySelector('input[name="category"]'); if (type) type.remove(); });
-  for (const input of $('sa-scope-form').querySelectorAll('input[type="date"]')) input.addEventListener('change', () => { if ($('sa-snapshot').value !== 'range') $('sa-snapshot').value = ''; });
+  $('sa-keyword').addEventListener('change', () => { $('sa-snapshot').value = 'range'; const type = $('sa-scope-form').querySelector('input[name="category"]'); if (type) type.remove(); });
+  for (const input of $('sa-scope-form').querySelectorAll('input[type="date"]')) input.addEventListener('change', () => { $('sa-snapshot').value = 'range'; });
   $('sa-exclude-ads').addEventListener('change', () => $('sa-scope-form').requestSubmit());
   $('sa-group-select').addEventListener('change', event => event.target.form.requestSubmit());
   $('sa-rules-open').addEventListener('click', event => openDialog($('sa-rules-dialog'), event.target));
