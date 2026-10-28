@@ -34,3 +34,7 @@
 {% macro data_chip(label,count,href,attrs={}) -%}
 <a href="{{ href }}"{{ attributes(attrs,'ui-data-chip') }}><span>{{ label }}</span><b>{{ count }}<small>件</small></b></a>
 {%- endmacro %}
+
+{% macro distribution_bar(value,label) -%}
+<meter class="ui-distribution-bar" min="0" max="100" value="{{ value }}" aria-label="{{ label }}">{{ '%.1f'|format(value) }}%</meter>
+{%- endmacro %}

@@ -124,6 +124,55 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_shipping_regions_fold_city_click_and_clear(self):
+        """省份和城市分别折叠，查看商品包含缺价，清除恢复全部；其他图表保持原样。"""
+        self.fixture.observation(4,location_text='浙江 金华',price_value=None)
+        self.fixture.observation(5,location_text='浙江 嘉兴')
+        self.goto()
+        region=self.page.locator('#sa-shipping-regions')
+        self.assertIsNone(region.get_attribute('open'))
+        expect(region.locator('summary').first).to_contain_text('地区已记录 2／5 件')
+        region.locator(':scope > summary').click()
+        province=region.locator('[data-region-key="浙江"]')
+        expect(province.locator(':scope > summary')).to_contain_text('40.0%')
+        province.locator(':scope > summary').click()
+        expect(province.locator('.sa-region-cities')).to_contain_text('以该地区 2 件商品为分母')
+        expect(province.locator('.sa-region-cities')).to_contain_text('50.0%')
+        self.assertIsNone(self.page.locator('#sa-price-composition').get_attribute('open'))
+        province.locator('[data-city-link="金华"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-active-filters')).to_contain_text('浙江 / 金华')
+        self.page.get_by_label('搜索明细',exact=True).fill('粘毛器')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        expect(self.page.locator('#sa-detail-form input[name="region"]')).to_have_value('浙江')
+        expect(self.page.locator('#sa-detail-form input[name="city"]')).to_have_value('金华')
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        self.assertIn('region=',self.page.locator('#sa-export').get_attribute('href'))
+        self.assertIn('city=',self.page.locator('#sa-export').get_attribute('href'))
+        self.page.get_by_role('link',name='清除明细筛选 ×',exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(5)
+        self.assertNotIn('region=',self.page.url)
+        self.assertEqual(self.errors,[])
+
+    def test_shipping_region_mobile_filters_and_other_drilldowns(self):
+        """窄屏无页面溢出，地区点击清理旧查询，价格柱重新选择时清理地区。"""
+        self.fixture.observation(4,location_text='浙江 金华')
+        self.goto()
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            region=self.page.locator('#sa-shipping-regions')
+            if region.get_attribute('open') is None: region.locator(':scope > summary').click()
+            region.locator('[data-region-key="浙江"] > summary').click()
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        self.page.get_by_label('搜索明细',exact=True).fill('不存在的词')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        region.locator(':scope > summary').click()
+        region.locator('[data-region-link="浙江"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        self.page.locator('[data-price-bin]').first.click()
+        self.assertNotIn('region=',self.page.url)
+        self.assertEqual(self.errors,[])
+
     def test_common_received_ties_missing_price_and_clear(self):
         """并列档位独立点击，缺价不丢失，清除筛选和CSV保持数量一致。"""
         self.fixture.observation(4,price_value=None,sales_count=0,sales_precision='exact')

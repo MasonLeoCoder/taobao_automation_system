@@ -12,6 +12,7 @@ from ecommerce.shared.sales import METRICS, PERIODS, PRECISIONS
 from ecommerce.shared.pagination import pagination, PAGE_SIZE
 from ecommerce.modules.analysis.prices import MAX_PRICE_BINS, contains_price, price_distribution, quantile
 from ecommerce.modules.analysis.composition import common_received_tiers, parse_quantity_tier, price_composition
+from ecommerce.modules.analysis.regions import parse_location, region_label, shipping_distribution, validate_region
 
 
 def _text(value, maximum=200):
@@ -45,6 +46,8 @@ def parse_filters(options):
         raise ValueError('价格段筛选无效')
     values['bin'] = int(raw_bin) if raw_bin else None
     values['quantity_tier'] = options.get('quantity_tier','')
+    values['region'], values['city'] = options.get('region',''), options.get('city','')
+    validate_region(values['region'],values['city'])
     parse_quantity_tier(values['quantity_tier'])
     if values['finding']=='quantity' and not values['quantity_tier']:
         raise ValueError('请选择数量展示档位')
@@ -138,6 +141,7 @@ def analyze_sample(sample, filters):
         row['sales_group_label'] = METRICS.get(row.get('sales_metric'), '未知口径') + ' · ' + PERIODS.get(row.get('sales_period'), '未知周期')
         row['precision_label'] = PRECISIONS.get(row.get('sales_precision'), '未知')
         row['shop_key'], row['shop_basis'] = _shop_key(row)
+        row['shipping_region'] = parse_location(row.get('location_text'))
         rows.append(row)
     raw_count = len(rows)
     excluded = [row for row in rows if row.get('ad_status') == 'identified'] if filters['exclude_ads'] else []
@@ -213,6 +217,8 @@ def analyze_sample(sample, filters):
         'period_filter_updated': period_filter_updated,
         'price_composition': price_composition(rows,price_bins,selected_group),
         'common_received': common_received_tiers(rows),
+        'shipping_distribution': shipping_distribution(rows),
+        'selected_region_label': region_label(filters['region'],filters['city']),
         'selected_quantity_tier': parse_quantity_tier(filters['quantity_tier']),
         'group_label': next((item['label'] for item in sales_groups if item['key'] == selected_group),
             METRICS.get(selected_group.split(':')[0], '暂无可用数量') + ' · ' + PERIODS.get(selected_group.split(':')[-1], '未知周期') if selected_group else '暂无可用数量'),
@@ -229,6 +235,9 @@ def filter_detail(rows, filters):
     result = []
     tier = parse_quantity_tier(filters.get('quantity_tier',''))
     for row in rows:
+        if filters.get('region') and (row['shipping_region']['region']!=filters['region']
+                or filters.get('city') and row['shipping_region']['city']!=filters['city']):
+            continue
         if filters['view'] == 'saved' and row['key'] not in filters['saved']:
             continue
         if filters['bin'] is not None and row['price_bin'] != filters['bin']:

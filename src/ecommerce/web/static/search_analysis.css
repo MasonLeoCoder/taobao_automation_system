@@ -19,6 +19,29 @@
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip b{flex-shrink:0}
 .sa-composition>summary{display:flex;align-items:center;gap:13px;list-style:none;padding:19px 22px}
+.sa-region-head,.sa-region-row{display:grid;grid-template-columns:minmax(130px,1.1fr) minmax(65px,.5fr) minmax(150px,1.6fr) 90px;align-items:center;gap:20px;padding:17px 23px}
+.sa-region-head{font-size:10px;color:#8d9d7c;background:#f6f9f1;border-top:1px solid #eaf0e1;border-bottom:1px solid #eaf0e1;padding-top:12px;padding-bottom:12px}
+.sa-region-province{border-bottom:1px solid #edf2e6}
+.sa-region-province:last-child{border-bottom:0}
+.sa-region-province>summary{cursor:pointer;list-style:none;font-size:12px;color:#537748}
+.sa-region-province>summary::-webkit-details-marker{display:none}
+.sa-region-province>summary:hover,.sa-region-selected>summary{background:#f6faf1}
+.sa-region-name{display:flex;align-items:center;gap:10px;font-weight:600;min-width:0;overflow-wrap:anywhere}
+.sa-region-name i{width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);flex-shrink:0}
+.sa-region-province[open]>summary .sa-region-name i{transform:rotate(45deg)}
+.sa-region-share{display:flex;align-items:center;gap:15px;min-width:0}
+.sa-region-row>span:nth-child(2){display:inline-flex;align-items:baseline;gap:5px;white-space:nowrap}
+.sa-region-row>span:nth-child(2) .sa-composition-unit{margin-left:0}
+.sa-region-share b{font-size:12px;font-weight:500;min-width:49px;text-align:right;font-variant-numeric:tabular-nums}
+.sa-region-cities{margin:0 23px 17px;padding:13px 0 0;border-top:1px dashed #dce6d6;background:#fbfdf8;color:#708665}
+.sa-region-cities>p{display:flex;align-items:center;gap:12px;margin:0;padding:0 16px 8px;font-size:11px;font-weight:500}
+.sa-region-cities>p span{font-size:9px;color:#98a78d;font-weight:400}
+.sa-region-cities .sa-region-row{font-size:11px;padding:11px 0;grid-template-columns:minmax(130px,1.1fr) minmax(65px,.5fr) minmax(150px,1.6fr) 90px}
+.sa-region-cities .sa-region-name{padding-left:27px;font-weight:400}
+.sa-region-cities .sa-region-share b{font-size:11px}
+.sa-region-action{white-space:nowrap;justify-self:end}
+.sa-region-unknown,.sa-region-empty{padding:15px 23px;margin:0;color:#98a78d;font-size:11px;background:#fbfdf8}
+@media(max-width:700px){.sa-regions>summary{align-items:flex-start}.sa-region-head{display:none}.sa-region-row,.sa-region-cities .sa-region-row{grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:15px}.sa-region-share{grid-column:1;grid-row:2;gap:9px}.sa-region-action{grid-column:2;grid-row:2;font-size:10px}.sa-region-row>span:nth-child(2){justify-self:end}.sa-region-cities{margin:0 12px 12px}.sa-region-cities>p{align-items:flex-start;flex-direction:column;gap:5px;padding:10px 15px 0}.sa-region-cities .sa-region-name{padding-left:10px}.sa-region-unknown,.sa-region-empty{padding:15px}}
 .sa-composition>summary::-webkit-details-marker{display:none}
 .sa-composition>summary::before{content:"";width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .16s;flex-shrink:0}
 .sa-composition[open]>summary::before{transform:rotate(45deg)}

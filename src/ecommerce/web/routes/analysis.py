@@ -77,6 +77,10 @@ def index():
 
     def analysis_url(**overrides):
         """保留分析范围并回到首页；参数：覆盖条件；返回：站内分析地址。"""
+        if 'region' not in overrides and ('bin' in overrides or 'finding' in overrides):
+            overrides.update(region=None,city=None)
+        if 'region' in overrides and 'city' not in overrides:
+            overrides['city'] = None
         if 'quantity_tier' not in overrides and ('bin' in overrides or 'finding' in overrides):
             overrides['quantity_tier'] = None
         return url_for('analysis.index', **{**values, 'page': 1, **overrides})
@@ -114,7 +118,8 @@ def export():
         '自动分段方式', data['price_distribution']['description'], '价格分段标识', filters['price_scale'],
         '价格筛选状态', '样本或分段变化，已恢复全部价位' if data['price_filter_reset'] else '当前分析范围']
         + (['展示档位筛选',data['selected_quantity_tier']['group_label']+' / '+data['selected_quantity_tier']['label']]
-           if data['selected_quantity_tier'] else []))
+           if data['selected_quantity_tier'] else [])
+        + (['发货地区筛选',data['selected_region_label']] if filters['region'] else []))
     if filters['view'] == 'stores':
         writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:
