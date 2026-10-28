@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
 {% from "sorting.html" import sort_header, media_sort with context %}
 {% from "pagination.html" import pager with context %}
 {% block title %}运行日志{% endblock %}{% block breadcrumb %}运行日志{% endblock %}
@@ -14,14 +15,14 @@
 {% if sort_spec is defined %}<input type="hidden" name="sort" value="{{ sort_spec.sort }}"><input type="hidden" name="order" value="{{ sort_spec.order }}">{% endif %}
   {% if request.args.get('return_to') %}<input type="hidden" name="return_to" value="{{ safe_return(request.args.get('return_to')) }}">{% endif %}<div class="event-filter-heading"><h2 id="log-filter-title">筛选日志</h2><span class="timezone-label">北京时间 · UTC+08:00</span></div>
   <div class="event-filter-grid">
-    <label for="log-task">任务编号<input id="log-task" name="task_id" value="{{ request.args.get('task_id','') }}" placeholder="输入完整任务编号" maxlength="32" autocomplete="off" spellcheck="false"></label>
-    <label for="log-level">日志级别<select id="log-level" name="level"><option value="">全部级别</option>{% for value,label in [('DEBUG','调试'),('INFO','信息'),('WARNING','警告'),('ERROR','错误'),('CRITICAL','严重错误')] %}<option value="{{ value }}"{% if request.args.get('level')==value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <label for="log-since">开始时间<input id="log-since" type="datetime-local" step="1" name="since" value="{{ time_filters.since_input }}"></label>
-    <label for="log-until">结束时间<input id="log-until" type="datetime-local" step="1" name="until" value="{{ time_filters.until_input }}"></label>
+    <label for="log-task">任务编号{{ input_control({"id": "log-task", "name": "task_id", "value": request.args.get('task_id',''), "placeholder": "输入完整任务编号", "maxlength": "32", "autocomplete": "off", "spellcheck": "false"}) }}</label>
+    <label for="log-level">日志级别{% call select_control({"id": "log-level", "name": "level", "aria-label": "日志级别"}) %}<option value="">全部级别</option>{% for value,label in [('DEBUG','调试'),('INFO','信息'),('WARNING','警告'),('ERROR','错误'),('CRITICAL','严重错误')] %}<option value="{{ value }}"{% if request.args.get('level')==value %} selected{% endif %}>{{ label }}</option>{% endfor %}{% endcall %}</label>
+    <label for="log-since">开始时间{{ input_control({"id": "log-since", "type": "datetime-local", "step": "1", "name": "since", "value": time_filters.since_input}) }}</label>
+    <label for="log-until">结束时间{{ input_control({"id": "log-until", "type": "datetime-local", "step": "1", "name": "until", "value": time_filters.until_input}) }}</label>
   </div>
   <div class="event-filter-footer">
-    <div class="quick-ranges" role="group" aria-label="快捷时间范围"><span>快捷范围</span>{% for value,label in [('today','今天'),('24h','最近24小时'),('7d','最近7天')] %}<button class="range-button {{ 'is-selected' if request.args.get('range')==value }}" type="submit" name="range" value="{{ value }}">{{ label }}</button>{% endfor %}</div>
-    <div class="event-filter-actions"><a class="button action-button action-neutral" href="{{ url_for('pages.logs') }}">重置</a><button class="button action-button action-primary" type="submit">查询日志</button></div>
+    <div class="quick-ranges" role="group" aria-label="快捷时间范围"><span>快捷范围</span>{% for value,label in [('today','今天'),('24h','最近24小时'),('7d','最近7天')] %}{{ control_button(label, {"class": ("range-button " ~ ('is-selected' if request.args.get('range')==value)), "type": "submit", "name": "range", "value": value}) }}{% endfor %}</div>
+    <div class="event-filter-actions"><a class="button action-button action-neutral" href="{{ url_for('pages.logs') }}">重置</a>{{ control_button("查询日志", {"class": "button action-button action-primary", "type": "submit"}) }}</div>
   </div>
 </form>
 <div class="section-heading"><h2>日志记录</h2><p>每页 20 条 · 时间均为北京时间</p></div>

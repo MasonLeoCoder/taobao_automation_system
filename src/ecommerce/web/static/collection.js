@@ -278,6 +278,11 @@
     const list = document.getElementById('collection-queue-list');
     if (!list) return;
     const data = await api('/api/collection-queue');
+    // 队列位于历史上方；新增一行时浏览器的自动滚动会取整，先保留正在阅读的卡片位置。
+    const history = document.getElementById('collection-job-list');
+    const anchor = history?.getBoundingClientRect().top <= 0
+      ? [...history.children].find(card => card.getBoundingClientRect().bottom > 0) : null;
+    const anchorTop = anchor?.getBoundingClientRect().top;
     queuePaused = Boolean(data.paused);
     list.replaceChildren();
     data.items.forEach(item => {
@@ -285,6 +290,10 @@
       list.append(line);
     });
     document.getElementById('collection-queue-status').textContent = `${data.paused ? `队列已暂停：${data.reason || '等待手动继续'}。` : ''}${data.items.length ? `${data.items.length} 项等待执行` : '暂无等待申请'}`;
+    if (anchor) {
+      const top = window.scrollY + anchor.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(window.scrollY - top) > .5) window.scrollTo({left:window.scrollX,top,behavior:'instant'});
+    }
   }
 
   function updateHistoryLocation() {

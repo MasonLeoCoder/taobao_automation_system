@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
 {% from "sorting.html" import sort_header, media_sort with context %}
 {% from "pagination.html" import pager with context %}
 {% from "collection_parts.html" import labels, batch_status with context %}
@@ -10,11 +11,11 @@
 {% if view=='searches' and not grouped_searches %}<p><a class="button action-button action-neutral" href="{{ safe_return(request.args.get('return_to'),url_for('pages.collection_searches')) }}">← 返回来源列表</a></p>{% endif %}
 <form class="panel filters" method="get">
 {% if view=='searches' and not grouped_searches %}{% if request.args.get('category_missing')=='1' %}<input type="hidden" name="category_missing" value="1">{% else %}<input type="hidden" name="category" value="{{ request.args.get('category','') }}">{% endif %}<input type="hidden" name="return_to" value="{{ safe_return(request.args.get('return_to'),url_for('pages.collection_searches')) }}">{% endif %}<input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="sort" value="{{ sort_spec.sort }}"><input type="hidden" name="order" value="{{ sort_spec.order }}">
-{% if view!='searches' %}<label>商品标题 / 商品 ID<input name="keyword" maxlength="200" value="{{ request.args.get('keyword','') }}" placeholder="输入标题或完整商品 ID"></label>{% endif %}
-{% if view!='searches' or grouped_searches %}<label>{{ '搜索词' if view=='searches' else '曾出现的搜索词' }}<input name="source" maxlength="200" value="{{ request.args.get('source','') }}" placeholder="精确匹配曾使用的搜索词"></label>{% endif %}
-<label>开始日期<input type="date" name="since" value="{{ request.args.get('since','') }}"></label><label>结束日期<input type="date" name="until" value="{{ request.args.get('until','') }}"></label>
-{% if view!='searches' %}<label>资料情况<select name="state">{% for code,label in [('','全部'),('effective','有有效详情资料'),('attempt','已有内容但无有效分区'),('list','尚无保存内容（仅入口或运行）')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
-<button class="button action-button action-primary" type="submit">搜索</button><a class="button action-button action-neutral" href="{{ url_for('pages.collection_searches',category=request.args.get('category'),category_missing=request.args.get('category_missing'),return_to=request.args.get('return_to')) if view=='searches' and not grouped_searches else url_for('pages.collections',view=view) }}">重置</a></form>
+{% if view!='searches' %}{% call field("商品标题 / 商品 ID") %}{{ input_control({"name": "keyword", "maxlength": "200", "value": request.args.get('keyword',''), "placeholder": "输入标题或完整商品 ID"}) }}{% endcall %}{% endif %}
+{% if view!='searches' or grouped_searches %}<label>{{ '搜索词' if view=='searches' else '曾出现的搜索词' }}{{ input_control({"name": "source", "maxlength": "200", "value": request.args.get('source',''), "placeholder": "精确匹配曾使用的搜索词"}) }}</label>{% endif %}
+{% call field("开始日期") %}{{ input_control({"type": "date", "name": "since", "value": request.args.get('since','')}) }}{% endcall %}{% call field("结束日期") %}{{ input_control({"type": "date", "name": "until", "value": request.args.get('until','')}) }}{% endcall %}
+{% if view!='searches' %}<label>资料情况{% call select_control({"name": "state", "aria-label": "资料情况"}) %}{% for code,label in [('','全部'),('effective','有有效详情资料'),('attempt','已有内容但无有效分区'),('list','尚无保存内容（仅入口或运行）')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}{% endcall %}</label>{% endif %}
+{{ control_button("搜索", {"class": "button action-button action-primary", "type": "submit"}) }}<a class="button action-button action-neutral" href="{{ url_for('pages.collection_searches',category=request.args.get('category'),category_missing=request.args.get('category_missing'),return_to=request.args.get('return_to')) if view=='searches' and not grouped_searches else url_for('pages.collections',view=view) }}">重置</a></form>
 {% if view!='searches' %}
 <div class="section-heading"><h2>详情商品</h2><p>同一商品合并展示，历史采集分别保留。</p></div>
 <div class="table-wrap"><table><thead><tr>{{ sort_header('title','商品',sort_spec) }}<th>资料情况</th><th>最后一次详情尝试</th>{{ sort_header('captured_at','最近详情尝试',sort_spec) }}<th>操作</th></tr></thead><tbody>

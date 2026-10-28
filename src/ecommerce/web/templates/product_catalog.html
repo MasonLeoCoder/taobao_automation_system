@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
 {% from 'sorting.html' import sort_header with context %}
 {% from 'pagination.html' import pager with context %}
 {% block title %}商品库{% endblock %}
@@ -8,14 +9,14 @@
 {% if enabled %}
 <form class="panel filters" method="get">
 <input type="hidden" name="sort" value="{{ sort_spec.sort }}"><input type="hidden" name="order" value="{{ sort_spec.order }}">
-<label>标题 / 商品 ID<input name="keyword" maxlength="200" value="{{ request.args.get('keyword','') }}" placeholder="标题包含文字或完整商品 ID"></label>
-<label>店铺<input name="shop" maxlength="200" value="{{ request.args.get('shop','') }}" placeholder="当前显示的店铺名称"></label>
-<label>关联搜索词<input name="source" maxlength="200" value="{{ request.args.get('source','') }}" placeholder="精确匹配曾出现的搜索词"></label>
-<label>资料来源<select name="origin" aria-label="资料来源">{% for code,label in [('','全部'),('list','仅搜索列表'),('detail','仅详情采集或访问'),('both','列表与详情都有'),('registered','仅登记商品')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('origin','')==code }}>{{ label }}</option>{% endfor %}</select></label>
-<label>资料情况<select name="state" aria-label="资料情况">{% for code,label in [('','全部'),('registered','仅登记商品'),('list','仅有列表信息'),('attempt','尚无有效详情资料'),('partial','部分模块有效'),('complete','九模块均有效'),('effective','有有效详情资料')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}</select></label>
-<label>开始日期<input type="date" name="since" value="{{ request.args.get('since','') }}"></label><label>结束日期<input type="date" name="until" value="{{ request.args.get('until','') }}"></label>
-<fieldset class="sales-range"><legend>销量范围</legend><div class="sales-range-inputs"><input type="number" name="sales_min" min="0" step="1" max="18446744073709551615" value="{{ request.args.get('sales_min','') }}" placeholder="最小值，不限" aria-label="销量最小值"><span aria-hidden="true">～</span><input type="number" name="sales_max" min="0" step="1" max="18446744073709551615" value="{{ request.args.get('sales_max','') }}" placeholder="最大值，不限" aria-label="销量最大值"></div></fieldset>
-<button class="button action-button action-primary" type="submit">查询</button><a class="button action-button action-neutral" href="{{ url_for('pages.collection_details') }}">重置</a>
+{% call field("标题 / 商品 ID") %}{{ input_control({"name": "keyword", "maxlength": "200", "value": request.args.get('keyword',''), "placeholder": "标题包含文字或完整商品 ID"}) }}{% endcall %}
+{% call field("店铺") %}{{ input_control({"name": "shop", "maxlength": "200", "value": request.args.get('shop',''), "placeholder": "当前显示的店铺名称"}) }}{% endcall %}
+{% call field("关联搜索词") %}{{ input_control({"name": "source", "maxlength": "200", "value": request.args.get('source',''), "placeholder": "精确匹配曾出现的搜索词"}) }}{% endcall %}
+<label>资料来源{% call select_control({"name": "origin", "aria-label": "资料来源"}) %}{% for code,label in [('','全部'),('list','仅搜索列表'),('detail','仅详情采集或访问'),('both','列表与详情都有'),('registered','仅登记商品')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('origin','')==code }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
+<label>资料情况{% call select_control({"name": "state", "aria-label": "资料情况"}) %}{% for code,label in [('','全部'),('registered','仅登记商品'),('list','仅有列表信息'),('attempt','尚无有效详情资料'),('partial','部分模块有效'),('complete','九模块均有效'),('effective','有有效详情资料')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
+{% call field("开始日期") %}{{ input_control({"type": "date", "name": "since", "value": request.args.get('since','')}) }}{% endcall %}{% call field("结束日期") %}{{ input_control({"type": "date", "name": "until", "value": request.args.get('until','')}) }}{% endcall %}
+{{ range_field('销量范围', {"type": "number", "name": "sales_min", "min": "0", "step": "1", "max": "18446744073709551615", "value": request.args.get('sales_min',''), "placeholder": "最小值，不限", "aria-label": "销量最小值"}, {"type": "number", "name": "sales_max", "min": "0", "step": "1", "max": "18446744073709551615", "value": request.args.get('sales_max',''), "placeholder": "最大值，不限", "aria-label": "销量最大值"}, {'class':'sales-range'}) }}
+{{ control_button("查询", {"class": "button action-button action-primary", "type": "submit"}) }}<a class="button action-button action-neutral" href="{{ url_for('pages.collection_details') }}">重置</a>
 </form>
 <p class="subtle catalog-help">日期筛选对应“最近记录”。价格、销量和店铺优先取同一条最近列表记录；没有列表记录时展示已保存的详情基本信息，并标明来源时间。数值排序和销量区间使用已结构化的列表数量／价格；详情原文和未知值不当作0。销量范围包含上下限，留空不限，“1000+”按1000参与筛选，不代表实际数量上限。</p>
 <p id="collection-plan-status" class="catalog-feedback" role="status" aria-live="polite">补采只处理未完成模块，已完成及已确认无内容的模块会跳过。</p>
@@ -30,7 +31,7 @@
 <div class="catalog-detail-entry" data-entry-kind="{{ item.detail_entry_kind }}"><small>最近详情入口</small><span>{{ item.detail_entry_label }}</span>{% if item.detail_entry_kind=='search' %}<small>入口搜索词：{{ item.detail_entry_keyword or '搜索词未记录' }}</small>{% endif %}{% if item.detail_entry_at %}<small>{{ item.detail_entry_at|full_local_time }}</small>{% endif %}</div></td>
 <td><span class="catalog-state {{ item.catalog_state }}">{{ {'registered':'仅登记商品','list':'仅有列表信息','attempt':'尚无有效详情资料','partial':'部分模块有效','complete':'九模块均有效'}.get(item.catalog_state) }}</span><small>{{ item.valid_count }}/9 模块有效，按各自范围</small>{% if item.run_status %}<small>最近尝试：{{ item.run_label }}</small><small>{{ item.run_started_at|full_local_time }}</small>{% endif %}</td>
 <td class="catalog-record-time">{{ item.captured_at|full_local_time }}<small>{{ item.event_label or '记录时间未提供' }}</small></td>
-<td class="actions-cell"><a class="button action-button action-primary" href="{{ url_for('pages.collection_product',product_id=item.platform_product_id,return_to=current_location()) }}">查看详情</a><a class="button action-button action-history" href="{{ url_for('pages.collection_product',product_id=item.platform_product_id,module='history',return_to=current_location()) }}">查看采集历史</a><button type="button" class="button action-button action-source collect-remaining" data-product="{{ item.platform_product_id }}" data-remaining-count="{{ item.remaining_count }}" {{ 'disabled' if not item.remaining_count }}>{{ '补采未完成模块（'~item.remaining_count~'）' if item.remaining_count else '已全部采集' }}</button></td>
+<td class="actions-cell"><a class="button action-button action-primary" href="{{ url_for('pages.collection_product',product_id=item.platform_product_id,return_to=current_location()) }}">查看详情</a><a class="button action-button action-history" href="{{ url_for('pages.collection_product',product_id=item.platform_product_id,module='history',return_to=current_location()) }}">查看采集历史</a>{{ control_button('补采未完成模块（'~item.remaining_count~'）' if item.remaining_count else '已全部采集', {"type": "button", "class": "button action-button action-source collect-remaining", "data-product": item.platform_product_id, "data-remaining-count": item.remaining_count, "disabled": (not item.remaining_count)}) }}</td>
 </tr>{% else %}<tr><td colspan="8" class="empty-row">没有符合条件的商品，可调整筛选条件。</td></tr>{% endfor %}
 </tbody></table></div>
 {{ pager(pagination) }}

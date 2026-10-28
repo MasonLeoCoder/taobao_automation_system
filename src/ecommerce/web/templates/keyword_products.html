@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
 {% from "sorting.html" import sort_header with context %}
 {% from "pagination.html" import pager with context %}
 {% block title %}{{ request.args.get('category') if request.args.get('category_missing')!='1' else '搜索词未记录' }} · 商品{% endblock %}
@@ -11,13 +12,13 @@
 {% if request.args.get('category_missing')=='1' %}<input type="hidden" name="category_missing" value="1">{% else %}<input type="hidden" name="category" value="{{ request.args.get('category','') }}">{% endif %}
 <input type="hidden" name="mode" value="{{ mode }}"><input type="hidden" name="return_to" value="{{ back_url }}"><input type="hidden" name="sort" value="{{ sort_spec.sort }}"><input type="hidden" name="order" value="{{ sort_spec.order }}">
 {% if request.args.get('product') %}<input type="hidden" name="product" value="{{ request.args.get('product') }}">{% endif %}
-<label>标题 / 商品 ID<input name="keyword" maxlength="200" value="{{ request.args.get('keyword','') }}" placeholder="标题包含文字或完整商品 ID"></label>
-<label>店铺<input name="shop" maxlength="200" value="{{ request.args.get('shop','') }}" placeholder="店铺名称包含文字"></label>
-<label>开始日期<input type="date" name="since" value="{{ request.args.get('since','') }}"></label><label>结束日期<input type="date" name="until" value="{{ request.args.get('until','') }}"></label>
-<label>详情资料<select name="state">{% for code,label in [('','全部'),('effective','有有效详情资料'),('attempt','已有内容但无有效分区'),('none','暂无已保存详情内容')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}</select></label>
-<label>广告识别<select name="ad_status">{% for code,label in [('','全部'),('identified','已识别广告'),('not_identified','未命中广告规则'),('unconfirmed','未确认或未记录')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('ad_status','')==code }}>{{ label }}</option>{% endfor %}</select></label>
-<fieldset class="sales-range"><legend>销量范围</legend><div class="sales-range-inputs"><input type="number" name="sales_min" min="0" step="1" max="18446744073709551615" value="{{ request.args.get('sales_min','') }}" placeholder="最小值，不限" aria-label="销量最小值"><span aria-hidden="true">～</span><input type="number" name="sales_max" min="0" step="1" max="18446744073709551615" value="{{ request.args.get('sales_max','') }}" placeholder="最大值，不限" aria-label="销量最大值"></div></fieldset>
-<button class="button action-button action-primary" type="submit">查询</button><a class="button action-button action-neutral" href="{{ url_for('pages.collection_keyword_products',category=request.args.get('category'),category_missing=request.args.get('category_missing'),mode=mode,return_to=back_url) }}">重置</a>
+{% call field("标题 / 商品 ID") %}{{ input_control({"name": "keyword", "maxlength": "200", "value": request.args.get('keyword',''), "placeholder": "标题包含文字或完整商品 ID"}) }}{% endcall %}
+{% call field("店铺") %}{{ input_control({"name": "shop", "maxlength": "200", "value": request.args.get('shop',''), "placeholder": "店铺名称包含文字"}) }}{% endcall %}
+{% call field("开始日期") %}{{ input_control({"type": "date", "name": "since", "value": request.args.get('since','')}) }}{% endcall %}{% call field("结束日期") %}{{ input_control({"type": "date", "name": "until", "value": request.args.get('until','')}) }}{% endcall %}
+<label>详情资料{% call select_control({"name": "state", "aria-label": "详情资料"}) %}{% for code,label in [('','全部'),('effective','有有效详情资料'),('attempt','已有内容但无有效分区'),('none','暂无已保存详情内容')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('state','')==code }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
+<label>广告识别{% call select_control({"name": "ad_status", "aria-label": "广告识别"}) %}{% for code,label in [('','全部'),('identified','已识别广告'),('not_identified','未命中广告规则'),('unconfirmed','未确认或未记录')] %}<option value="{{ code }}" {{ 'selected' if request.args.get('ad_status','')==code }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
+{{ range_field('销量范围', {"type": "number", "name": "sales_min", "min": "0", "step": "1", "max": "18446744073709551615", "value": request.args.get('sales_min',''), "placeholder": "最小值，不限", "aria-label": "销量最小值"}, {"type": "number", "name": "sales_max", "min": "0", "step": "1", "max": "18446744073709551615", "value": request.args.get('sales_max',''), "placeholder": "最大值，不限", "aria-label": "销量最大值"}, {'class':'sales-range'}) }}
+{{ control_button("查询", {"class": "button action-button action-primary", "type": "submit"}) }}<a class="button action-button action-neutral" href="{{ url_for('pages.collection_keyword_products',category=request.args.get('category'),category_missing=request.args.get('category_missing'),mode=mode,return_to=back_url) }}">重置</a>
 </form>
 <p class="subtle">按展示数量筛选，包含上下限；留空表示不限，0表示数量为零；“1000+”按1000参与排序和筛选，不代表实际数量不超过上限。不同口径、周期和近似数不可直接作为真实销量合计。</p>
 <div class="tabs" aria-label="商品视图">{% for value,label in [('summary','商品汇总'),('records','全部采集记录')] %}<a class="{{ 'selected' if mode==value }}" href="{{ pagination_url(1,{'mode':value}) }}">{{ label }}</a>{% endfor %}</div>

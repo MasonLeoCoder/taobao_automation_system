@@ -1,12 +1,13 @@
+{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
 {% from 'collection_media.html' import inline_media with context %}
 {% macro selection_form(part,code,batch_key,page_key,anchor) %}
 <form class="review-selection" method="get" action="{{ request.path }}#{{ anchor }}">
 {% for key,value in pagination_parameters(review_parameters,'__unused').items() if key not in [batch_key,page_key] %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-<label>{{ '概览资料' if code=='review_summary' else '明细资料' }}<select name="{{ batch_key }}"><option value="0">{{ '本次关联运行的结果' if context_run else '最近有效资料' }}</option>{% for item in part.history %}<option value="{{ item.id }}" {{ 'selected' if part.selected and part.selected.id==item.id }}>{{ item.captured_at|full_local_time }} · 批次 {{ item.id }}</option>{% endfor %}</select></label><button type="submit" class="button action-button action-neutral">查看</button>
+{% call field('概览资料' if code=='review_summary' else '明细资料') %}{% call select_control({"name": batch_key}) %}<option value="0">{{ '本次关联运行的结果' if context_run else '最近有效资料' }}</option>{% for item in part.history %}<option value="{{ item.id }}" {{ 'selected' if part.selected and part.selected.id==item.id }}>{{ item.captured_at|full_local_time }} · 批次 {{ item.id }}</option>{% endfor %}{% endcall %}{% endcall %}{{ control_button("查看", {"type": "submit", "class": "button action-button action-neutral"}) }}
 </form>
 {% endmacro %}
 {% macro module_actions(part,code,name) %}
-<div class="module-actions"><button type="button" class="button action-button action-primary module-collect" data-module="{{ code }}">{{ '重新采集' if part.selected else '采集' }}{{ name }}</button>
+<div class="module-actions">{{ control_button((('重新采集' if part.selected else '采集') ~ (name)), {"type": "button", "class": "button action-button action-primary module-collect", "data-module": code}) }}
 {% if part.selected and part.selected.task_id %}<a class="button action-button action-history" data-job-logs href="{{ url_for('pages.logs',task_id=part.selected.task_id,return_to=current_location()) }}">查看任务日志</a>{% endif %}</div><p class="module-job-status" role="status" aria-live="polite"></p>
 {% endmacro %}
 {% set overview=reviews_view.overview %}{% set comments=reviews_view.comments %}
@@ -31,9 +32,9 @@
 {% if context_run and comments.selected.run_id!=context_run %}<p class="provenance-warning">已手动切换历史明细，本批次不属于上方关联运行。</p>{% endif %}
 <div class="table-wrap"><table class="review-comment-table"><colgroup><col class="review-order-col"><col class="review-author-col"><col><col class="review-sku-col"><col class="review-date-col"></colgroup><thead><tr>{{ sort_header('position','顺序',comments.detail.sort_spec,review_parameters) }}{{ sort_header('author','用户',comments.detail.sort_spec,review_parameters) }}{{ sort_header('content','评价内容',comments.detail.sort_spec,review_parameters) }}{{ sort_header('sku','商品规格',comments.detail.sort_spec,review_parameters) }}{{ sort_header('date','评价时间',comments.detail.sort_spec,review_parameters) }}</tr></thead><tbody>
 {% for item in comments.detail.records %}<tr data-review-id="{{ item.id }}"><td>{{ item.position }}</td><td>{{ item.author or '用户未记录' }}</td><td>
-<div class="review-body"><div id="review-text-{{ item.id }}" class="review-text">{{ item.content or '未记录评价文字' }}</div><button type="button" class="button action-button action-neutral review-toggle" aria-expanded="false" aria-controls="review-text-{{ item.id }}" hidden>展开全文</button></div>
+<div class="review-body"><div id="review-text-{{ item.id }}" class="review-text">{{ item.content or '未记录评价文字' }}</div>{{ control_button("展开全文", {"type": "button", "class": "button action-button action-neutral review-toggle", "aria-expanded": "false", "aria-controls": ("review-text-" ~ (item.id)), "hidden": true}) }}</div>
 {{ inline_media(item.media) }}
-{% for append in item.appends %}<div class="review-append"><strong>追评</strong>{% if append.time_raw %}<small>{{ append.time_raw }}</small>{% endif %}<div class="review-body"><div id="review-append-{{ item.id }}-{{ loop.index }}" class="review-text">{{ append.content or '未记录追评文字' }}</div><button type="button" class="button action-button action-neutral review-toggle" aria-expanded="false" aria-controls="review-append-{{ item.id }}-{{ loop.index }}" hidden>展开全文</button></div>{{ inline_media(append.media) }}</div>{% endfor %}
+{% for append in item.appends %}<div class="review-append"><strong>追评</strong>{% if append.time_raw %}<small>{{ append.time_raw }}</small>{% endif %}<div class="review-body"><div id="review-append-{{ item.id }}-{{ loop.index }}" class="review-text">{{ append.content or '未记录追评文字' }}</div>{{ control_button("展开全文", {"type": "button", "class": "button action-button action-neutral review-toggle", "aria-expanded": "false", "aria-controls": ("review-append-" ~ (item.id) ~ "-" ~ (loop.index)), "hidden": true}) }}</div>{{ inline_media(append.media) }}</div>{% endfor %}
 </td><td>{{ item.sku_text or '未记录' }}</td><td>{{ item.date_text }}</td></tr>{% else %}<tr><td colspan="5" class="empty-row">{{ '本次已确认无评价。' if comments.selected.status=='no_reviews' else '本批次没有已保存的评价明细。' }}</td></tr>{% endfor %}
 </tbody></table></div>
 {{ pager(comments.detail,review_parameters) }}

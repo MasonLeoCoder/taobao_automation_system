@@ -1,5 +1,4 @@
 """商品库的隔离浏览器验证；采集派发模拟，不访问真实平台。"""
-import json
 import os
 import unittest
 
@@ -107,14 +106,11 @@ class ProductCatalogBrowserTests(unittest.TestCase):
         expect(modal).to_be_visible(timeout=7000);expect(modal).to_contain_text('商品 456')
         modal.get_by_role('button',name='继续',exact=True).click()
         expect(modal).not_to_be_visible()
-        control=self.host.settings.workspace/'storage/task_controls'/f"{job['id']}.json"
-        self.assertEqual(json.loads(control.read_text(encoding='utf-8'))['action'],'continue')
-        control.unlink();control.with_suffix('.state.json').unlink()
+        self.assertEqual(self.host.command(job)['action'],'continue')
         self.host.publish(job,prompt='c'*32)
         expect(modal).to_be_visible(timeout=7000)
         modal.get_by_role('button',name='停止',exact=True).click()
-        self.assertEqual(json.loads(control.read_text(encoding='utf-8'))['action'],'stop')
-        control.unlink();control.with_suffix('.state.json').unlink()
+        self.assertEqual(self.host.command(job)['action'],'stop')
         job.update(state='cancelled',message='已停止',result={'valid':False,'modules':[]});jobs.save(self.host.settings,job)
         button=self.page.locator('[data-catalog-product="123"] .collect-remaining')
         expect(button).to_be_enabled(timeout=7000)

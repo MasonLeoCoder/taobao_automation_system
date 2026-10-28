@@ -23,9 +23,13 @@
 
   function enhance(select) {
     const id = 'searchable-select-' + (++sequence);
+    const fieldLabel = select.dataset.selectLabel || select.getAttribute('aria-label') || '选项';
+    const triggerLabel = select.dataset.triggerLabel || fieldLabel;
+    const searchLabel = select.dataset.searchLabel || '查找' + fieldLabel;
+    const unit = select.dataset.optionUnit || '个选项';
     const choices = Array.from(select.options).filter(option => option.value && !option.disabled)
       .map(option => ({value:option.value, label:option.textContent.trim()}));
-    const trigger = element('button', 'ss-trigger');
+    const trigger = element('button', 'ui-control ss-trigger');
     trigger.type = 'button';
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-expanded', 'false');
@@ -36,22 +40,22 @@
     trigger.append(triggerIcon, valueText, chevron);
 
     const popup = element('div', 'ss-popover'); popup.id = id;
-    popup.setAttribute('role', 'dialog'); popup.setAttribute('aria-label', '选择搜索关键词');
+    popup.setAttribute('role', 'dialog'); popup.setAttribute('aria-label', '选择' + fieldLabel);
     const nativePopover = typeof popup.showPopover === 'function';
     if (nativePopover) popup.setAttribute('popover', 'auto'); else popup.hidden = true;
     const heading = element('div', 'ss-heading');
-    heading.append(element('strong', '', '选择搜索词'), element('span', 'ss-heading-hint', '已采集的关键词'));
+    heading.append(element('strong', '', '选择' + fieldLabel), element('span', 'ss-heading-hint', select.dataset.optionsHint || '输入部分文字查找'));
     const searchBox = element('div', 'ss-search');
     searchBox.append(icon('search'));
-    const input = element('input', 'ss-input'); input.type = 'search'; input.placeholder = '输入文字，查找搜索词'; input.autocomplete = 'off'; input.spellcheck = false;
-    input.setAttribute('role', 'combobox'); input.setAttribute('aria-label', '查找搜索词'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-controls', id + '-list');
+    const input = element('input', 'ss-input'); input.type = 'search'; input.placeholder = '输入文字，查找' + fieldLabel; input.autocomplete = 'off'; input.spellcheck = false;
+    input.setAttribute('role', 'combobox'); input.setAttribute('aria-label', searchLabel); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-controls', id + '-list');
     const clear = element('button', 'ss-clear'); clear.type = 'button'; clear.setAttribute('aria-label', '清空搜索'); clear.append(icon('close')); clear.hidden = true;
     searchBox.append(input, clear);
     const resultStatus = element('div', 'ss-result-status'); resultStatus.setAttribute('role', 'status'); resultStatus.setAttribute('aria-live', 'polite');
-    const list = element('div', 'ss-list'); list.id = id + '-list'; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', '匹配的搜索词');
-    const empty = element('div', 'ss-empty'); empty.hidden = true; empty.append(icon('search'), element('strong', '', '没有匹配的搜索词'), element('span', '', '试试更短的文字，或清空后重新选择。'));
+    const list = element('div', 'ss-list'); list.id = id + '-list'; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', '匹配的' + fieldLabel);
+    const empty = element('div', 'ss-empty'); empty.hidden = true; empty.append(icon('search'), element('strong', '', '没有匹配的' + fieldLabel), element('span', '', '试试更短的文字，或清空后重新选择。'));
     const footer = element('div', 'ss-footer');
-    footer.append(element('span', '', '仅选择已采集的搜索词'), element('span', 'ss-keyboard-hint', '↑↓ 选择  ·  Enter 确认'));
+    footer.append(element('span', '', select.dataset.footerText || '点击选项完成选择'), element('span', 'ss-keyboard-hint', '↑↓ 选择  ·  Enter 确认'));
     popup.append(heading, searchBox, resultStatus, list, empty, footer);
     document.body.append(popup);
     select.after(trigger); select.hidden = true;
@@ -59,9 +63,9 @@
 
     function updateValue() {
       const option = select.selectedOptions[0];
-      valueText.textContent = select.value && option ? option.textContent.trim() : select.dataset.placeholder || '请选择搜索词';
+      valueText.textContent = select.value && option ? option.textContent.trim() : select.dataset.placeholder || '请选择' + fieldLabel;
       trigger.title = valueText.textContent;
-      trigger.setAttribute('aria-label', '搜索关键词，当前：' + valueText.textContent);
+      trigger.setAttribute('aria-label', triggerLabel + '，当前：' + valueText.textContent);
       trigger.disabled = select.disabled;
       trigger.classList.toggle('ss-placeholder', !select.value);
     }
@@ -107,8 +111,8 @@
       });
       list.replaceChildren(fragment); list.scrollTop = 0;
       empty.hidden = matches.length > 0;
-      if (!choices.length) { empty.querySelector('strong').textContent = '当前日期范围内暂无搜索词'; empty.querySelector('span').textContent = '可调整日期范围后再选择。'; }
-      resultStatus.textContent = query ? `匹配 ${matches.length} / ${choices.length} 个搜索词` : `共 ${choices.length} 个搜索词`;
+      if (!choices.length) { empty.querySelector('strong').textContent = select.dataset.emptyText || '暂无可选择的' + fieldLabel; empty.querySelector('span').textContent = select.dataset.emptyHint || '可调整筛选范围后再选择。'; }
+      resultStatus.textContent = query ? `匹配 ${matches.length} / ${choices.length} ${unit}` : `共 ${choices.length} ${unit}`;
       clear.hidden = !input.value;
       const selectedIndex = matches.findIndex(choice => choice.value === select.value);
       setActive(selectedIndex >= 0 ? selectedIndex : 0);

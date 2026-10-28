@@ -1,3 +1,5 @@
+
+{% from 'form_controls.html' import control_button with context %}
 {% from "sorting.html" import sort_header with context %}
 {% from "question_cards.html" import question_cards with context %}
 {% set labels={'basic':'基本信息','basic_info':'基本信息采集记录','list':'列表商品','video':'视频','main_images':'主图','skus':'SKU','parameters':'商品参数','detail_images':'详情图片','review_summary':'评价概览','reviews':'评价明细','questions':'问大家','history':'采集历史','sources':'关联搜索列表'} %}
@@ -13,7 +15,7 @@
 {% set has_value=item.value is not none and item.value|string|trim != '' %}
 <div class="parameter-value" data-parameter-value>
 <div{% if has_value %} data-parameter-copy role="button" tabindex="0" title="点击复制" aria-label="点击复制参数值：{{ item.name or '参数名称未记录' }}"{% endif %} id="parameter-value-{{ item.id }}" class="parameter-value-text{{ ' is-empty' if not has_value }}">{{ item.value if has_value else '未采到参数值' }}</div>
-{% if has_value %}<div class="parameter-value-actions" hidden><button type="button" class="button action-button action-neutral parameter-toggle" aria-expanded="false" aria-controls="parameter-value-{{ item.id }}" hidden>展开全部</button></div>{% endif %}
+{% if has_value %}<div class="parameter-value-actions" hidden>{{ control_button("展开全部", {"type": "button", "class": "button action-button action-neutral parameter-toggle", "aria-expanded": "false", "aria-controls": ("parameter-value-" ~ (item.id)), "hidden": true}) }}</div>{% endif %}
 </div>
 {% endmacro %}
 {% macro record_table(detail) %}

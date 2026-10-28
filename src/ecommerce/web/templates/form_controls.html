@@ -1,0 +1,32 @@
+{# 全站公共表单控件。页面传属性、选项和布局；外观只在form_controls.css维护。 #}
+{% set field_state=namespace(label=none) %}
+{% macro attributes(attrs={}, css='') -%}
+{%- for key,value in attrs.items() if key!='class' and value is not none and value is not sameas false -%}
+{{ {key:value}|xmlattr }}
+{%- endfor %} class="{{ (css ~ ' ' ~ attrs.get('class',''))|trim }}"
+{%- endmacro %}
+
+{% macro input_control(attrs={}) -%}
+<input{{ attributes(attrs,'ui-choice' if attrs.get('type') in ['checkbox','radio'] else 'ui-control') }}>
+{%- endmacro %}
+
+{% macro select_control(attrs={},label=none) -%}
+{%- if not attrs.get('aria-label') and not attrs.get('aria-labelledby') and (label or field_state.label) -%}
+{%- set attrs=dict(attrs,**{'aria-label':label or field_state.label}) -%}
+{%- endif -%}
+<select{{ attributes(attrs,'ui-control ui-select') }}>{{ caller() }}</select>
+{%- endmacro %}
+
+{% macro field(label,attrs={}) -%}
+{%- set previous_label=field_state.label -%}{%- set field_state.label=label -%}
+<label{{ attributes(attrs,'ui-field') }}><span class="ui-label">{{ label }}</span>{{ caller() }}</label>
+{%- set field_state.label=previous_label -%}
+{%- endmacro %}
+
+{% macro range_field(label,min_attrs,max_attrs,attrs={}) -%}
+<fieldset{{ attributes(attrs,'ui-range-field') }}><legend>{{ label }}</legend><div class="ui-range">{{ input_control(min_attrs) }}<span aria-hidden="true">～</span>{{ input_control(max_attrs) }}</div></fieldset>
+{%- endmacro %}
+
+{% macro control_button(text,attrs={},variant='primary') -%}
+<button{{ attributes(attrs,'ui-button ui-' ~ variant) }}>{{ text }}</button>
+{%- endmacro %}
