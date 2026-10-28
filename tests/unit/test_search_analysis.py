@@ -146,7 +146,7 @@ class SearchAnalysisTests(unittest.TestCase):
         """空数据正常展示；非法参数和跨搜索词快照明确拒绝。"""
         self.assertEqual(self.client.get('/analysis/searches').status_code, 200)
         for query in ['exclude_ads=yes', 'bin=6', 'page=0', 'snapshot=bad', 'since=bad',
-                      'since=2026-10-29&until=2026-10-28', 'group=unknown:invalid', 'saved=bad', 'category=bad']:
+                      'since=2026-10-29&until=2026-10-28', 'group=unknown:invalid', 'saved=bad', 'finding=bad']:
             self.assertEqual(self.client.get('/analysis/searches?' + query).status_code, 400, query)
         self.assertEqual(self.client.get('/analysis/searches?snapshot=task:' + 'f' * 32).status_code, 404)
         self.app.config['SETTINGS'] = replace(self.settings, collection_backend='files')
@@ -201,7 +201,7 @@ class SearchAnalysisTests(unittest.TestCase):
         self.assertEqual(rows[2][0], '2')
         self.assertTrue(rows[2][3].startswith("'="))
         self.assertEqual(rows[2][2], "'10000000000002")
-        self.assertNotIn('已识别广告', [row[15] for row in rows[2:]])
+        self.assertNotIn('已识别广告', [row[14] for row in rows[2:]])
         self.assertIn('attachment', response.headers['Content-Disposition'])
 
     def test_template_escapes_and_links_to_same_source(self):
@@ -249,13 +249,51 @@ class SearchAnalysisTests(unittest.TestCase):
             after = [dict(row) for row in connection.execute(sa.select(self.tables['list_observations'])).mappings()]
         self.assertEqual(before, after)
 
-    def test_classification_conflict_and_saved_list_obey_ads(self):
-        """标题含整机与替换装时待核实；关注商品同样服从广告排除。"""
+    def test_saved_list_obeys_ads_without_product_classification(self):
+        """不再推测产品类型；关注商品继续服从广告排除。"""
         self.observation(1, title='粘毛滚筒手柄替换芯套装', ad_status='identified')
         self.observation(2, title='手机保护壳')
-        self.assertEqual(self.read()['all_rows'][0]['category'], '待分类')
+        result = self.read()
+        self.assertNotIn('category', result['all_rows'][0])
+        self.assertNotIn('categories', result)
+        self.assertNotIn('unclassified', result['stats'])
         self.assertEqual(self.read(view='saved', saved='p:1')['pagination']['total'], 1)
         self.assertEqual(self.read(view='saved', saved='p:1', exclude_ads='1')['pagination']['total'], 0)
+
+    def test_product_type_removed_from_page_store_and_exports(self):
+        """商品、店铺、依据数据和两类CSV不再输出产品类型。"""
+        self.observation(1)
+        result = self.read(category='替换耗材', finding='unclassified')
+        self.assertEqual(result['stats']['products'], 1)
+        self.assertNotIn('category', result['filters'])
+        self.assertNotIn('categories', result['shops'][0])
+        for suffix in ('', '?view=stores'):
+            response = self.client.get('/analysis/searches' + suffix)
+            text = response.get_data(as_text=True)
+            for retired in ('产品类型', '类型初分', '标题初分', '待分类', '分类待核实', 'sa-type-row'):
+                self.assertNotIn(retired, text)
+            response = self.client.get('/analysis/searches/export.csv' + suffix)
+            rows = list(csv.reader(io.StringIO(response.data.decode('utf-8-sig'))))
+            self.assertNotIn('类型', rows[0])
+            self.assertNotIn('标题初分类型', rows[1])
+            self.assertEqual(len(rows[1]), len(rows[2]))
+
+    def test_retired_category_urls_clear_only_retired_filters(self):
+        """旧类型链接与导出自动清理参数，其余搜索词、日期和广告筛选继续保留。"""
+        self.observation(1, ad_status='identified')
+        self.observation(2)
+        for path in ('/analysis/searches', '/analysis/searches/export.csv'):
+            response = self.client.get(path + '?keyword=粘毛器&category=替换耗材&finding=unclassified&exclude_ads=1&since=2026-10-28')
+            self.assertEqual(response.status_code, 302)
+            location = response.headers['Location']
+            self.assertNotIn('category=', location)
+            self.assertNotIn('finding=', location)
+            self.assertIn('exclude_ads=1', location)
+            self.assertIn('since=2026-10-28', location)
+            clean = self.client.get(location)
+            self.assertEqual(clean.status_code, 200)
+        text = self.client.get('/analysis/searches?category=bad&finding=unclassified', follow_redirects=True).get_data(as_text=True)
+        self.assertIn('样本商品 / 独立观察', text)
 
 
 if __name__ == '__main__':

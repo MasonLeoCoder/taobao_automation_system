@@ -11,7 +11,6 @@ from ecommerce.shared.pagination import pagination, PAGE_SIZE
 
 PRICE_BOUNDS = (Decimal(0), Decimal(5), Decimal(10), Decimal(20), Decimal(30), Decimal(50))
 PRICE_LABELS = ('5元以下', '5–10元', '10–20元', '20–30元', '30–50元', '50元及以上')
-CATEGORIES = ('滚筒整机', '替换耗材', '可水洗式', '刷式', '保护壳', '保护膜', '手机整机', '配件', '待分类')
 
 
 def _text(value, maximum=200):
@@ -24,11 +23,9 @@ def _text(value, maximum=200):
 def parse_filters(options):
     """校验分析输入；参数：网页或其他入口的筛选；返回：规范化条件与日期边界。"""
     values = {key: _text(options.get(key, ''), 100 if key == 'keyword' else 400 if key == 'store' else 200)
-              for key in ('keyword', 'snapshot', 'since', 'until', 'category', 'q', 'group', 'store')}
+              for key in ('keyword', 'snapshot', 'since', 'until', 'q', 'group', 'store')}
     if values['snapshot'] and not re.fullmatch(r'range|latest|task:[a-f0-9]{32}|batch:[1-9][0-9]{0,19}', values['snapshot']):
         raise ValueError('采集快照格式无效')
-    if values['category'] and values['category'] not in CATEGORIES:
-        raise ValueError('商品类型筛选无效')
     values['exclude_ads'] = options.get('exclude_ads', '')
     if values['exclude_ads'] not in ('', '0', '1'):
         raise ValueError('广告筛选无效')
@@ -36,8 +33,10 @@ def parse_filters(options):
     for key, allowed, default in (('view', {'goods', 'stores', 'saved'}, 'goods'),
                                   ('sort', {'position', 'price_asc', 'price_desc'}, 'position'),
                                   ('table_group', {'all', 'missing', *[m + ':' + p for m in METRICS for p in PERIODS]}, 'all'),
-                                  ('finding', {'', 'high', 'unclassified'}, '')):
+                                  ('finding', {'', 'high'}, '')):
         values[key] = options.get(key, default)
+        if key == 'finding' and values[key] == 'unclassified':
+            values[key] = ''  # 已移除的旧类型参数不再限制分析结果。
         if values[key] not in allowed:
             raise ValueError('分析筛选无效：' + key)
     raw_bin = options.get('bin', '')
@@ -74,30 +73,6 @@ def _decimal(value):
         return number if number.is_finite() and number >= 0 else None
     except (InvalidOperation, ValueError):
         return None
-
-
-def _category(title):
-    """保守地按标题初分产品形态；参数：标题；返回：类型及初分依据，不代表SKU确认。"""
-    title = title or ''
-    if any(word in title for word in ('手机壳', '保护壳')):
-        return '保护壳'
-    if any(word in title for word in ('钢化膜', '手机膜', '保护膜')):
-        return '保护膜'
-    if any(word in title for word in ('充电器', '数据线', '手机支架')):
-        return '配件'
-    if any(word in title for word in ('粘毛', '沾毛', '除毛')):
-        if any(word in title for word in ('替换', '补充', '纸芯')):
-            # 标题同时营销整机和替换装时不能凭最低价判断具体规格。
-            return '待分类' if any(word in title for word in ('整机', '手柄', '套装')) else '替换耗材'
-        if '水洗' in title:
-            return '可水洗式'
-        if any(word in title for word in ('静电', '除毛刷', '去毛刷')):
-            return '刷式'
-        if '滚筒' in title and any(word in title for word in ('手柄', '整机')):
-            return '滚筒整机'
-    if '手机' in title and any(word in title for word in ('智能', '全网通', '5G', '5g')):
-        return '手机整机'
-    return '待分类'
 
 
 def _shop_key(row):
@@ -161,7 +136,6 @@ def analyze_sample(sample, filters):
         row, batch = dict(source), batches[source['batch_id']]
         row.update({name: batch.get(name) for name in ('task_id', 'captured_at', 'page_number', 'sort_label')})
         row['occurrences'] = occurrences[row['key']]
-        row['category'] = _category(row.get('title'))
         row['price'] = _decimal(row.get('price_value'))
         payload = row.get('payload') if isinstance(row.get('payload'), dict) else {}
         currency = payload.get('currency_symbol')
@@ -178,11 +152,6 @@ def analyze_sample(sample, filters):
     raw_count = len(rows)
     excluded = [row for row in rows if row.get('ad_status') == 'identified'] if filters['exclude_ads'] else []
     rows = [row for row in rows if not filters['exclude_ads'] or row.get('ad_status') != 'identified']
-    categories = [{'name': name, 'count': sum(row['category'] == name for row in rows)}
-                  for name in CATEGORIES if any(row['category'] == name for row in rows)]
-    if filters['category']:
-        rows = [row for row in rows if row['category'] == filters['category']]
-        excluded = [row for row in excluded if row['category'] == filters['category']]
     prices = sorted(row['price'] for row in rows if row['price_usable'])
     bin_counts = Counter(row['price_bin'] for row in rows if row['price_bin'] is not None)
     price_bins = [{'index': index, 'label': label, 'count': bin_counts[index],
@@ -218,7 +187,6 @@ def analyze_sample(sample, filters):
         'price_q3': _quantile(prices, Decimal('.75')), 'quantities': sum(row['quantity_usable'] for row in rows),
         'comparable': len(comparable), 'scatter': len(scatter),
         'high': sum(row['sales_precision'] in {'exact', 'lower_bound'} and row['sales_count'] >= 10000 for row in comparable),
-        'unclassified': sum(row['category'] == '待分类' for row in rows),
         'sorts': list(dict.fromkeys(batch.get('sort_label') or '排序未记录' for batch in sample['batches'])),
         'pages': sorted({batch['page_number'] for batch in sample['batches'] if batch.get('page_number') is not None}),
         'batch_count': len(sample['batches'])}
@@ -226,7 +194,7 @@ def analyze_sample(sample, filters):
     shops = group_shops(detail)
     table = shops if filters['view'] == 'stores' else detail
     info = pagination(len(table), filters['page'])
-    return {'filters': filters, 'stats': stats, 'categories': categories, 'category_total': sum(item['count'] for item in categories),
+    return {'filters': filters, 'stats': stats,
         'price_bins': price_bins, 'price_cross': price_cross, 'sales_groups': sales_groups,
         'group_label': next((item['label'] for item in sales_groups if item['key'] == selected_group),
             METRICS.get(selected_group.split(':')[0], '暂无可用数量') + ' · ' + PERIODS.get(selected_group.split(':')[-1], '未知周期') if selected_group else '暂无可用数量'),
@@ -245,8 +213,6 @@ def filter_detail(rows, filters):
         if filters['view'] == 'saved' and row['key'] not in filters['saved']:
             continue
         if filters['bin'] is not None and row['price_bin'] != filters['bin']:
-            continue
-        if filters['finding'] == 'unclassified' and row['category'] != '待分类':
             continue
         if filters['finding'] == 'high' and not (row['quantity_usable'] and row['sales_group'] == filters['group']
                 and row['sales_precision'] in {'exact', 'lower_bound'} and row['sales_count'] >= 10000):
@@ -279,8 +245,7 @@ def group_shops(rows):
         prices = [row['price'] for row in members if row['price_usable']]
         result.append({'key': key, 'name': members[0]['shop_name'], 'basis': members[0]['shop_basis'],
             'count': len(members), 'percent': _percent(len(members), len(rows)),
-            'price_min': min(prices) if prices else None, 'price_max': max(prices) if prices else None,
-            'categories': sorted({row['category'] for row in members})})
+            'price_min': min(prices) if prices else None, 'price_max': max(prices) if prices else None})
     return sorted(result, key=lambda row: (-row['count'], row['key']))
 
 

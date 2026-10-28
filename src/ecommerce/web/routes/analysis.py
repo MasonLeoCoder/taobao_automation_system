@@ -2,13 +2,23 @@
 import csv
 from io import StringIO
 from decimal import Decimal
+from urllib.parse import urlencode
 
-from flask import Blueprint, abort, current_app, render_template, request, url_for, Response
+from flask import Blueprint, abort, current_app, render_template, request, url_for, Response, redirect
 
 from ecommerce.modules.analysis.service import analysis_page
 from ecommerce.infrastructure.storage.collection_queries import public
 
 analysis = Blueprint('analysis', __name__)
+
+
+@analysis.before_request
+def remove_retired_filters():
+    """清理旧类型链接；参数：当前请求；返回：保留其余条件的跳转，避免隐藏筛选继续生效。"""
+    if 'category' in request.args or 'unclassified' in request.args.getlist('finding'):
+        values = [(key, value) for key, items in request.args.lists() if key != 'category'
+                  for value in items if not (key == 'finding' and value == 'unclassified')]
+        return redirect(request.path + ('?' + urlencode(values) if values else ''))
 
 
 def _read():
@@ -39,7 +49,7 @@ def _money(value):
 
 def _point(row):
     """限制浏览器中的观察字段；参数：分析行；返回：图表及依据侧栏需要的字段。"""
-    fields = ('id', 'key', 'product_id', 'platform_product_id', 'title', 'category', 'price', 'price_text', 'price_label',
+    fields = ('id', 'key', 'product_id', 'platform_product_id', 'title', 'price', 'price_text', 'price_label',
         'sales_text', 'sales_count', 'sales_precision', 'precision_label', 'sales_group_label', 'ad_status',
         'shop_name', 'shop_basis', 'location_text', 'captured_at', 'page_number', 'slot_index', 'batch_id',
         'task_id', 'sort_label', 'occurrences')
@@ -90,20 +100,20 @@ def export():
     writer = csv.writer(buffer)
     writer.writerow(['搜索词分析', _csv_cell(filters['keyword']), '采集范围', filters['snapshot'],
         '广告筛选', '排除已识别广告' if filters['exclude_ads'] else '包含已识别广告', '排除数量', data['stats']['excluded_ads'],
-        '类型', filters['category'] or '全部', '日期起', filters['since'], '日期止', filters['until'],
+        '日期起', filters['since'], '日期止', filters['until'],
         '图表口径', data['group_label'], '明细口径', filters['table_group'], '价格段', filters['bin'] if filters['bin'] is not None else '不限',
         '搜索', _csv_cell(filters['q']), '店铺', _csv_cell(filters['store']), '观察筛选', filters['finding'], '视图', filters['view']])
     if filters['view'] == 'stores':
-        writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价', '标题初分类型'])
+        writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:
-            writer.writerow([_csv_cell(row['name']), row['basis'], row['count'], row['percent'], row['price_min'], row['price_max'], ' / '.join(row['categories'])])
+            writer.writerow([_csv_cell(row['name']), row['basis'], row['count'], row['percent'], row['price_min'], row['price_max']])
     else:
-        writer.writerow(['观察编号', '商品内部编号', '平台商品编号（文本）', '标题', '标题初分类型', '入口价数值', '价格原文', '价格条件',
+        writer.writerow(['观察编号', '商品内部编号', '平台商品编号（文本）', '标题', '入口价数值', '价格原文', '价格条件',
             '数量原文', '数量数值', '数量口径及周期', '数量精度', '店铺', '店铺识别依据', '地区', '广告识别', '采集时间（北京时间）',
             '任务编号', '批次编号', '搜索页码', '原始格子位置', '范围内展示次数'])
         for row in data['detail_rows']:
             writer.writerow([_csv_cell(value) for value in [row['id'], row['product_id'],
-                "'" + row['platform_product_id'] if row.get('platform_product_id') else '', row.get('title'), row['category'], row['price'],
+                "'" + row['platform_product_id'] if row.get('platform_product_id') else '', row.get('title'), row['price'],
                 row.get('price_text'), row.get('price_label'), row.get('sales_text'), row.get('sales_count'), row['sales_group_label'],
                 row['precision_label'], row.get('shop_name'), row['shop_basis'], row.get('location_text'),
                 {'identified': '已识别广告', 'not_identified': '未命中标识（不等于非广告）'}.get(row.get('ad_status'), '广告未确认'),

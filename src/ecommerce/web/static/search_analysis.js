@@ -70,7 +70,7 @@
     const row = byId.get(String(id)); if (!row) return;
     const container = $('sa-detail-content'); container.replaceChildren();
     const body = append(container, 'div', '', 'sa-drawer-content');
-    append(body, 'span', row.category + ' · 标题初分', 'sa-type-tag'); append(body, 'h2', row.title || '标题未记录').id = 'sa-detail-title';
+    append(body, 'h2', row.title || '标题未记录').id = 'sa-detail-title';
     const stats = append(body, 'div', '', 'sa-drawer-grid');
     for (const [label, value, note] of [['入口价格', money(row.price), row.price_label || '价格条件未记录'], ['展示数量', quantity(row.sales_count), row.sales_group_label + ' · ' + row.precision_label]]) {
       const stat = append(stats, 'div', '', 'sa-drawer-stat'); append(stat, 'span', label); append(stat, 'strong', value); append(stat, 'small', note);
@@ -122,7 +122,7 @@
     if (!rows.length) svg.append(svgElement('text', {x:width/2,y:height/2,'text-anchor':'middle'}, '当前口径没有同时具备价格与数量的商品'));
     $('sa-scatter').replaceChildren(svg);
   }
-  $('sa-keyword').addEventListener('change', () => { $('sa-snapshot').value = 'range'; const type = $('sa-scope-form').querySelector('input[name="category"]'); if (type) type.remove(); });
+  $('sa-keyword').addEventListener('change', () => { $('sa-snapshot').value = 'range'; });
   for (const input of $('sa-scope-form').querySelectorAll('input[type="date"]')) input.addEventListener('change', () => { $('sa-snapshot').value = 'range'; });
   $('sa-exclude-ads').addEventListener('change', () => $('sa-scope-form').requestSubmit());
   $('sa-group-select').addEventListener('change', event => event.target.form.requestSubmit());

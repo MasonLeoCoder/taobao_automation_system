@@ -139,3 +139,25 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
         expect(self.page.locator('#sa-snapshot')).to_have_value('range')
         self.assertEqual(self.errors, [])
+
+    def test_product_type_removed_and_legacy_filter_does_not_hide_goods(self):
+        """移除类型筛选、商品/店铺列及依据标签，旧链接清理后仍按广告条件展示。"""
+        # 隔离路由仅模拟单次响应，先校验服务端跳转，再打开其真实目标。
+        legacy = self.fixture.client.get('/analysis/searches?category=old&finding=unclassified&exclude_ads=1')
+        self.assertEqual(legacy.status_code, 302)
+        self.page.goto('http://127.0.0.1' + legacy.headers['Location'])
+        expect(self.page.locator('#sa-scatter svg')).to_be_visible()
+        self.assertNotIn('category=', self.page.url)
+        self.assertNotIn('finding=', self.page.url)
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(2)
+        expect(self.page.locator('.sa-products th')).to_have_count(6)
+        expect(self.page.locator('.sa-finding-grid>a')).to_have_count(2)
+        expect(self.page.get_by_text('产品类型', exact=True)).to_have_count(0)
+        self.page.locator('.sa-detail-btn').first.click()
+        expect(self.page.locator('#sa-detail-dialog')).to_be_visible()
+        expect(self.page.locator('#sa-detail-content')).not_to_contain_text('标题初分')
+        self.page.locator('[data-sa-close="sa-detail-dialog"]').click()
+        self.page.get_by_role('link', name='店铺分布', exact=True).click()
+        expect(self.page.locator('.sa-products th')).to_have_count(5)
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        self.assertEqual(self.errors, [])
