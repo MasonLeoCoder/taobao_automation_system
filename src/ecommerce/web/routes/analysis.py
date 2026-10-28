@@ -2,6 +2,7 @@
 import csv
 from io import StringIO
 from decimal import Decimal
+from decimal import ROUND_HALF_UP
 from urllib.parse import urlencode
 
 from flask import Blueprint, abort, current_app, render_template, request, url_for, Response, redirect
@@ -51,6 +52,14 @@ def _money(value):
     return '¥' + format(number, f'.{precision}f')
 
 
+def _number(value, places=0):
+    """格式化计算依据；参数：整数或Decimal序列化值及位数；返回：最终展示才舍入的数值文本。"""
+    if value is None:
+        return '—'
+    rounded=Decimal(str(value)).quantize(Decimal(1).scaleb(-places),rounding=ROUND_HALF_UP)
+    return format(rounded,f',.{places}f')
+
+
 def _point(row):
     """限制浏览器中的观察字段；参数：分析行；返回：图表及依据侧栏需要的字段。"""
     fields = ('id', 'key', 'product_id', 'platform_product_id', 'title', 'price', 'price_text', 'price_label',
@@ -89,7 +98,7 @@ def index():
         'details': [_point(row) for row in data['table_rows']] if data['filters']['view'] != 'stores' else [],
         'price_bins': data['price_bins'], 'filters': data['filters']}
     return render_template('search_analysis.html', active='analysis', shop_name=settings.shop_name,
-        analysis_url=analysis_url, analysis_money=_money, export_url=url_for('analysis.export', **{**values, 'page': 1}),
+        analysis_url=analysis_url, analysis_money=_money, analysis_number=_number, export_url=url_for('analysis.export', **{**values, 'page': 1}),
         browser_data=public(browser_data), **public({key: value for key, value in data.items() if key not in {'all_rows', 'detail_rows', 'scatter'}}))
 
 
@@ -119,7 +128,11 @@ def export():
         '价格筛选状态', '样本或分段变化，已恢复全部价位' if data['price_filter_reset'] else '当前分析范围']
         + (['展示档位筛选',data['selected_quantity_tier']['group_label']+' / '+data['selected_quantity_tier']['label']]
            if data['selected_quantity_tier'] else [])
-        + (['发货地区筛选',data['selected_region_label']] if filters['region'] else []))
+        + (['发货地区筛选',data['selected_region_label']] if filters['region'] else [])
+        + (['集中度筛选',{'top3':'入选样本前3件','top10':'入选样本前10件','top50':'入选样本全部商品'}[filters['finding']],
+            '集中度计算口径','近30天收货人数，精确值直接使用，下界值取展示整数',
+            '集中度参与件数',data['concentration']['count'],'集中度人数计算值合计',data['concentration']['total']]
+           if filters['finding'] in {'top3','top10','top50'} else []))
     if filters['view'] == 'stores':
         writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:

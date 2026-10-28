@@ -124,6 +124,49 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_concentration_top50_metrics_query_export_and_original_scopes(self):
+        """前50排序和指标一致，前三跳转清理旧条件，查询/CSV沿用名单，原模块不缩小。"""
+        for i in range(4,64): self.fixture.observation(i,sales_count=i*100,price_value=None if i%2 else i)
+        self.goto()
+        concentration=self.page.locator('#sa-concentration')
+        self.assertIsNone(concentration.get_attribute('open'))
+        concentration.locator(':scope > summary').click()
+        expect(concentration.locator(':scope > summary')).to_contain_text('50')
+        expect(concentration.locator('[data-concentration-metric="HHI"]')).to_contain_text('200.00')
+        self.page.locator('#sa-exclude-ads').check()
+        concentration.locator(':scope > summary').click()
+        concentration.locator('[data-concentration-link="top3"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(3)
+        expect(self.page.locator('.sa-products tbody tr').first).to_have_attribute('id','analysis-observation-63')
+        expect(self.page.locator('.sa-active-filters')).to_contain_text('集中度入选')
+        self.page.get_by_label('搜索明细',exact=True).fill('粘毛器')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(3)
+        self.assertIn('finding=top3',self.page.locator('#sa-export').get_attribute('href'))
+        self.assertEqual(sum(int(x) for x in self.page.locator('[data-price-bin] svg text').all_text_contents()),32)
+        self.page.locator('[data-price-bin]').first.click()
+        self.assertNotIn('finding=top3',self.page.url)
+        self.assertEqual(self.errors,[])
+
+    def test_concentration_empty_zero_small_and_mobile(self):
+        """不足3/10件和全零均明确提示，手机展开依据时只表内滚动。"""
+        self.goto()
+        concentration=self.page.locator('#sa-concentration')
+        concentration.locator(':scope > summary').click()
+        expect(concentration).to_contain_text('有效商品不足50件')
+        expect(concentration.locator('[data-concentration-metric="CR3"]')).to_contain_text('样本不足3件')
+        self.page.locator('#sa-exclude-ads').check()
+        concentration.locator(':scope > summary').click()
+        expect(concentration.locator('[data-concentration-metric="HHI"]')).to_contain_text('人数计算值合计为0')
+        concentration.locator('.sa-concentration-basis > summary').click()
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        self.page.goto('http://127.0.0.1/analysis/searches?keyword=粘毛器&since=2099-01-01')
+        concentration.locator(':scope > summary').click()
+        expect(concentration.locator('[data-concentration-metric="HHI"]')).to_contain_text('暂无可计算商品')
+        self.assertEqual(self.errors,[])
+
     def test_shipping_regions_fold_city_click_and_clear(self):
         """省份和城市分别折叠，查看商品包含缺价，清除恢复全部；其他图表保持原样。"""
         self.fixture.observation(4,location_text='浙江 金华',price_value=None)

@@ -13,6 +13,7 @@ from ecommerce.shared.pagination import pagination, PAGE_SIZE
 from ecommerce.modules.analysis.prices import MAX_PRICE_BINS, contains_price, price_distribution, quantile
 from ecommerce.modules.analysis.composition import common_received_tiers, parse_quantity_tier, price_composition
 from ecommerce.modules.analysis.regions import parse_location, region_label, shipping_distribution, validate_region
+from ecommerce.modules.analysis.concentration import FINDINGS, competition_concentration
 
 
 def _text(value, maximum=200):
@@ -33,14 +34,16 @@ def parse_filters(options):
         raise ValueError('广告筛选无效')
     values['exclude_ads'] = values['exclude_ads'] == '1'
     for key, allowed, default in (('view', {'goods', 'stores', 'saved'}, 'goods'),
-                                  ('sort', {'position', 'price_asc', 'price_desc'}, 'position'),
+                                  ('sort', {'position', 'price_asc', 'price_desc', 'concentration'}, 'position'),
                                   ('table_group', {'all', 'missing', *[m + ':' + p for m in METRICS for p in PERIODS]}, 'all'),
-                                  ('finding', {'', 'high', 'quantity'}, '')):
+                                  ('finding', {'', 'high', 'quantity', *FINDINGS}, '')):
         values[key] = options.get(key, default)
         if key == 'finding' and values[key] == 'unclassified':
             values[key] = ''  # 已移除的旧类型参数不再限制分析结果。
         if values[key] not in allowed:
             raise ValueError('分析筛选无效：' + key)
+    if values['sort']=='concentration' and values['finding'] not in FINDINGS:
+        values['sort']='position'
     raw_bin = options.get('bin', '')
     if raw_bin not in ('', *map(str, range(MAX_PRICE_BINS))):
         raise ValueError('价格段筛选无效')
@@ -207,7 +210,8 @@ def analyze_sample(sample, filters):
         'sorts': list(dict.fromkeys(batch.get('sort_label') or '排序未记录' for batch in sample['batches'])),
         'pages': sorted({batch['page_number'] for batch in sample['batches'] if batch.get('page_number') is not None}),
         'batch_count': len(sample['batches'])}
-    detail = filter_detail(rows, filters)
+    concentration = competition_concentration(rows)
+    detail = filter_detail(rows, filters, concentration)
     shops = group_shops(detail)
     table = shops if filters['view'] == 'stores' else detail
     info = pagination(len(table), filters['page'])
@@ -218,6 +222,7 @@ def analyze_sample(sample, filters):
         'price_composition': price_composition(rows,price_bins,selected_group),
         'common_received': common_received_tiers(rows),
         'shipping_distribution': shipping_distribution(rows),
+        'concentration': concentration,
         'selected_region_label': region_label(filters['region'],filters['city']),
         'selected_quantity_tier': parse_quantity_tier(filters['quantity_tier']),
         'group_label': next((item['label'] for item in sales_groups if item['key'] == selected_group),
@@ -230,11 +235,21 @@ def analyze_sample(sample, filters):
         'batches': sample['batches']}
 
 
-def filter_detail(rows, filters):
+def filter_detail(rows, filters, concentration=None):
     """筛选商品明细，不改变全局图表范围；参数：样本与条件；返回：排序后的明细。"""
     result = []
     tier = parse_quantity_tier(filters.get('quantity_tier',''))
+    concentration = concentration if concentration is not None else competition_concentration(rows)
+    finding_size=FINDINGS.get(filters['finding'])
+    chosen=concentration['members'][:finding_size] if finding_size and concentration['count']>=min(finding_size,50) else []
+    # 不足50件时仍可查看实际入选；前三/前十不足时不伪装成完整名单。
+    if filters['finding']=='top50':
+        chosen=concentration['members']
+    chosen_ids={row['id'] for row in chosen}
+    ranks={row['id']:row['rank'] for row in concentration['members']}
     for row in rows:
+        if finding_size and row['id'] not in chosen_ids:
+            continue
         if filters.get('region') and (row['shipping_region']['region']!=filters['region']
                 or filters.get('city') and row['shipping_region']['city']!=filters['city']):
             continue
@@ -257,6 +272,8 @@ def filter_detail(rows, filters):
         if filters['q'] and filters['q'].casefold() not in ' '.join(str(row.get(key) or '') for key in ('title', 'shop_name', 'platform_product_id')).casefold():
             continue
         result.append(row)
+    if filters['sort']=='concentration':
+        return sorted(result,key=lambda row:ranks.get(row['id'],len(rows)+1))
     if filters['sort'].startswith('price_'):
         available = [row for row in result if row['price_usable']]
         missing = [row for row in result if not row['price_usable']]

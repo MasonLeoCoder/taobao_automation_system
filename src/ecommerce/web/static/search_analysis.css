@@ -19,6 +19,29 @@
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip b{flex-shrink:0}
 .sa-composition>summary{display:flex;align-items:center;gap:13px;list-style:none;padding:19px 22px}
+.sa-concentration-flow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 22px 6px;font-size:11px;color:var(--sa-muted)}
+.sa-concentration-flow b{font-weight:600;color:var(--data-4-text)}
+.sa-concentration-flow i{font-style:normal;color:var(--data-1-text)}
+.sa-concentration-flow>a{margin-left:auto}
+.sa-concentration-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:13px 22px}
+.sa-concentration-metrics article{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:18px;border:1px solid var(--data-0-line);border-radius:8px;background:var(--data-0-bg);min-width:0}
+.sa-concentration-metrics article>span{display:flex;align-items:baseline;gap:10px;color:var(--data-4-text);font-size:13px;font-weight:600;flex-wrap:wrap}
+.sa-concentration-metrics article>span small{font-size:10px;color:var(--data-0-text);font-weight:400}
+.sa-concentration-metrics article>strong{font:500 29px/1.35 "Segoe UI",sans-serif;color:var(--data-4-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;max-width:100%}
+.sa-concentration-metrics article>strong small{font-size:13px;margin-left:3px}
+.sa-concentration-metrics article>p{font-size:10px;line-height:1.7;color:var(--data-0-text);margin:0;overflow-wrap:anywhere}
+.sa-concentration-metrics article>small{font-size:9px;color:var(--data-0-text);line-height:1.7}
+.sa-concentration-metrics article>a{margin-top:auto;padding-top:4px}
+.sa-concentration-quality{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:13px 22px 18px;font-size:10px;color:var(--sa-muted)}
+.sa-concentration-quality b{color:var(--data-4-text);font-weight:600}
+.sa-concentration-notice{margin:13px 22px;padding:11px 13px;border-left:3px solid var(--data-2-line);background:var(--data-0-bg);border-radius:3px;font-size:10px;line-height:1.9;color:var(--data-0-text)}
+.sa-concentration-basis{border-top:1px solid var(--sa-line)}
+.sa-concentration-basis>summary{cursor:pointer;padding:15px 22px;font-size:12px;color:var(--data-4-text)}
+.sa-concentration-table .sa-concentration-product{min-width:180px;max-width:290px}
+.sa-concentration-table th,.sa-concentration-table td{white-space:nowrap}
+.sa-concentration-table td.sa-concentration-product{white-space:normal}
+.search-analysis td.sa-concentration-empty{text-align:center;padding:25px;color:var(--sa-muted)}
+@media(max-width:700px){.sa-concentration-metrics{grid-template-columns:1fr;margin:12px 14px}.sa-concentration-metrics article{padding:15px;gap:6px}.sa-concentration-metrics article>strong{font-size:27px}.sa-concentration-flow{padding:14px 14px 4px;gap:8px}.sa-concentration-flow>a{flex-basis:100%;margin-left:0}.sa-concentration-quality{margin:12px 14px 16px;align-items:flex-start;flex-direction:column}.sa-concentration-notice{margin:12px 14px}.sa-concentration-basis>summary{padding:14px}}
 .sa-region-head,.sa-region-row{display:grid;grid-template-columns:minmax(130px,1.1fr) minmax(65px,.5fr) minmax(150px,1.6fr) 90px;align-items:center;gap:20px;padding:17px 23px}
 .sa-region-head{font-size:10px;color:#8d9d7c;background:#f6f9f1;border-top:1px solid #eaf0e1;border-bottom:1px solid #eaf0e1;padding-top:12px;padding-bottom:12px}
 .sa-region-province{border-bottom:1px solid #edf2e6}
