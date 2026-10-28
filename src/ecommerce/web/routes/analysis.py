@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from flask import Blueprint, abort, current_app, render_template, request, url_for, Response, redirect
 
 from ecommerce.modules.analysis.service import analysis_page
+from ecommerce.modules.analysis.middle import MIDDLE_FINDINGS
 from ecommerce.infrastructure.storage.collection_queries import public
 
 analysis = Blueprint('analysis', __name__)
@@ -99,6 +100,8 @@ def index():
         'price_bins': data['price_bins'], 'filters': data['filters']}
     return render_template('search_analysis.html', active='analysis', shop_name=settings.shop_name,
         analysis_url=analysis_url, analysis_money=_money, analysis_number=_number, export_url=url_for('analysis.export', **{**values, 'page': 1}),
+        middle_export_url=url_for('analysis.export',**{**values,'page':1,'finding':'middle','sort':'concentration',
+            'bin':None,'quantity_tier':None,'region':None,'city':None,'q':None,'store':None,'table_group':'all','view':'goods'}),
         browser_data=public(browser_data), **public({key: value for key, value in data.items() if key not in {'all_rows', 'detail_rows', 'scatter'}}))
 
 
@@ -106,6 +109,29 @@ def _csv_cell(value):
     """保护导出文本；参数：单元格；返回：阻止公式执行的文本，保留长编号。"""
     text = '' if value is None else str(value)
     return "'" + text if text.lstrip().startswith(('=', '+', '-', '@')) or text.startswith(('\t', '\r', '\n')) else text
+
+
+def _middle_metadata(data):
+    """保留腰部导出上下文；参数：当前完整分析结果；返回：一行元信息的附加单元格。"""
+    if data['filters']['finding'] not in MIDDLE_FINDINGS:
+        return []
+    m=data['middle']; head=m['head']; waist=m['summary']
+    values=['腰部分析口径','同一前50名单取第11～30件，近30天收货人数下界取展示整数',
+            '同值排序','页码升序、slot_index升序、采集时间较新优先、观察ID升序',
+            '导出对象',{'middle':'腰部商品','middle_shared':'腰部中与头部店铺重合的商品',
+                        'middle_boundary10':'第10/11件边界的全部有效同值商品',
+                        'middle_boundary30':'第30/31件边界的全部有效同值商品'}[data['filters']['finding']],
+            '前50实际件数',data['concentration']['count'],'前50人数计算值合计',data['concentration']['total'],
+            '腰部占前50人数计算值比例（%）',m['quantity_share'],
+            '腰部店铺分组数',waist['shop_count'],'腰部店铺缺失商品数',waist['missing_shops'],
+            '与头部重合店铺数',m['overlap_shop_count'],'重合比例分母（腰部已知店铺数）',waist['shop_count'],
+            '腰部最早采集时间',m['earliest'],'腰部最新采集时间',m['latest'],'腰部时间缺失数',m['missing_times']]
+    for label,summary in (('头部',head),('腰部',waist)):
+        for name,key in (('件数','count'),('人数计算值合计','quantity_total'),('单件平均计算值','quantity_mean'),
+                         ('人数计算值中位数','quantity_median'),('有效价格件数','price_count'),('入口价中位数','price_median'),
+                         ('入口价Q1','price_q1'),('入口价Q3','price_q3')):
+            values.extend([label+name,summary[key]])
+    return values
 
 
 @analysis.get('/analysis/searches/export.csv')
@@ -132,7 +158,7 @@ def export():
         + (['集中度筛选',{'top3':'入选样本前3件','top10':'入选样本前10件','top50':'入选样本全部商品'}[filters['finding']],
             '集中度计算口径','近30天收货人数，精确值直接使用，下界值取展示整数',
             '集中度参与件数',data['concentration']['count'],'集中度人数计算值合计',data['concentration']['total']]
-           if filters['finding'] in {'top3','top10','top50'} else []))
+           if filters['finding'] in {'top3','top10','top50'} else [])+_middle_metadata(data))
     if filters['view'] == 'stores':
         writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:

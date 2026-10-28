@@ -124,6 +124,68 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_middle_comparison_tier_missing_price_and_query_scope(self):
+        """腰部紧跟集中度，头腰价格覆盖独立；缺价档位钻取与查询保留固定腰部。"""
+        for i in range(4,64): self.fixture.observation(i,sales_count=i*100,price_value=None if i%2 else i)
+        self.page.goto('http://127.0.0.1/analysis/searches?exclude_ads=1')
+        waist=self.page.locator('#sa-middle')
+        self.assertIsNone(waist.get_attribute('open'))
+        self.assertTrue(self.page.evaluate("document.querySelector('#sa-concentration').nextElementSibling.id==='sa-middle'"))
+        waist.locator(':scope > summary').click()
+        expect(waist.locator(':scope > summary')).to_contain_text('20')
+        expect(waist.locator('[data-middle-metric="price"]')).to_contain_text('10／20')
+        expect(waist.locator('.sa-middle-compare')).to_contain_text('5／10')
+        expect(waist).to_contain_text('分母为腰部已知店铺数')
+        waist.locator('[data-middle-tier$=":5300"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        expect(self.page.locator('.sa-products tbody tr')).to_have_attribute('id','analysis-observation-53')
+        self.page.get_by_label('搜索明细',exact=True).fill('粘毛器')
+        self.page.get_by_role('button',name='查询明细',exact=True).click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(1)
+        self.assertIn('finding=middle',self.page.locator('#sa-export').get_attribute('href'))
+        waist.locator(':scope > summary').click()
+        waist.locator('[data-middle-link="all"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(20)
+        self.assertNotIn('quantity_tier=',self.page.url)
+        self.page.locator('[data-price-bin]').first.click()
+        self.assertNotIn('finding=middle',self.page.url)
+        self.assertEqual(self.errors,[])
+
+    def test_middle_boundary_view_all_shared_store_and_mobile(self):
+        """边界查看全部同值不改变20件腰部；重合入口和手机展开名单可用。"""
+        for i in range(4,64): self.fixture.observation(i,sales_count=2000)
+        self.goto()
+        waist=self.page.locator('#sa-middle')
+        waist.locator(':scope > summary').click()
+        expect(waist.locator('[data-middle-boundary="30"]')).to_contain_text('共60件')
+        waist.locator('[data-middle-boundary="30"] a').click()
+        expect(self.page.locator('#sa-detail-form>span')).to_contain_text('60 项商品')
+        waist.locator(':scope > summary').click()
+        expect(waist.locator(':scope > summary')).to_contain_text('20')
+        waist.locator('[data-middle-link="shared"]').click()
+        expect(self.page.locator('.sa-products tbody tr')).to_have_count(20)
+        waist.locator(':scope > summary').click()
+        waist.locator('.sa-middle-members > summary').click()
+        waist.locator('.sa-middle-shops > summary').click()
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        self.assertEqual(self.errors,[])
+
+    def test_middle_empty_partial_zero_and_missing_price(self):
+        """不足11件空态，实际16件时腰部6件；全零和缺价无虚假比例或价格。"""
+        self.goto()
+        waist=self.page.locator('#sa-middle')
+        waist.locator(':scope > summary').click()
+        expect(waist).to_contain_text('暂无腰部样本')
+        for i in range(4,19): self.fixture.observation(i,sales_count=0,sales_precision='exact',price_value=None)
+        self.page.goto('http://127.0.0.1/analysis/searches?exclude_ads=1')
+        waist.locator(':scope > summary').click()
+        expect(waist).to_contain_text('实际第11～16件，共6件')
+        expect(waist.locator('[data-middle-metric="share"]')).to_contain_text('无法计算比例')
+        expect(waist.locator('[data-middle-metric="price"]')).to_contain_text('0／6')
+        self.assertEqual(self.errors,[])
+
     def test_concentration_top50_metrics_query_export_and_original_scopes(self):
         """前50排序和指标一致，前三跳转清理旧条件，查询/CSV沿用名单，原模块不缩小。"""
         for i in range(4,64): self.fixture.observation(i,sales_count=i*100,price_value=None if i%2 else i)

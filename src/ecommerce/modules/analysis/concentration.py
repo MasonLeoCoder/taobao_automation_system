@@ -17,8 +17,8 @@ def _time_key(value):
     return (local.year,local.month,local.day,local.hour,local.minute,local.second,local.microsecond)
 
 
-def competition_concentration(rows):
-    """计算前三/前十及HHI；参数：已去重且已按广告条件筛选的完整商品；返回：前50名单和依据。"""
+def ranked_concentration_candidates(rows):
+    """统一候选与稳定排序；参数：完整去重样本；返回：排序后的有效商品及互斥排除计数。"""
     reasons=Counter(identity=0,missing=0,group=0,approximate=0)
     eligible=[]
     for row in rows:
@@ -38,6 +38,12 @@ def competition_concentration(rows):
     ranked.sort(key=lambda row:(row.get('page_number') is None,row.get('page_number') or 0,
                                row.get('slot_index') is None,row.get('slot_index') or 0))
     ranked.sort(key=lambda row:row['sales_count'],reverse=True)
+    return ranked,reasons
+
+
+def competition_concentration(rows):
+    """计算前三/前十及HHI；参数：已去重且已按广告条件筛选的完整商品；返回：前50名单和依据。"""
+    ranked,reasons=ranked_concentration_candidates(rows)
     selected=ranked[:50]
     count=len(selected)
     total=sum(row['sales_count'] for row in selected)
@@ -60,7 +66,7 @@ def competition_concentration(rows):
         value=ranked[49]['sales_count']
         included=sum(row['sales_count']==value for row in selected)
         boundary={'value':value,'tied':ties[value],'included':included,'excluded':ties[value]-included}
-    return {'source_count':len(rows),'eligible_count':len(eligible),'count':count,'total':total,
+    return {'source_count':len(rows),'eligible_count':len(ranked),'count':count,'total':total,
             'excluded':sum(reasons.values()),'reasons':dict(reasons),'members':members,'metrics':metrics,
             'hhi':Decimal(sum(row['sales_count']**2 for row in selected))*10000/(Decimal(total)**2) if total else None,
             'uniform_hhi':Decimal(10000)/count if count and total else None,

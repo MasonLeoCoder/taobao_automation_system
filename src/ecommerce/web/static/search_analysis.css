@@ -20,6 +20,23 @@
 .sa-quantity-finding>.sa-common-tiers .ui-data-chip b{flex-shrink:0}
 .sa-composition>summary{display:flex;align-items:center;gap:13px;list-style:none;padding:19px 22px}
 .sa-metrics+.sa-concentration{margin-top:18px}
+.sa-concentration-metrics.sa-middle-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+.sa-concentration-metrics.sa-middle-metrics article>span{font-size:12px}
+.sa-concentration-metrics.sa-middle-metrics article>strong{font-size:25px}
+.sa-middle-actions{display:flex;align-items:center;justify-content:flex-end;gap:18px;margin:13px 22px 17px}
+.sa-middle-section{padding:16px 22px;border-top:1px solid var(--sa-line)}
+.sa-middle-section h3{font-size:12px;color:var(--data-4-text);margin:0 0 7px;font-weight:600}
+.sa-middle-section p,.sa-middle-time{font-size:10px;line-height:1.9;color:var(--sa-muted);margin:0}
+.sa-middle-tiers{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.search-analysis .sa-middle-compare{min-width:560px}
+.sa-middle-time{padding:13px 22px;border-top:1px solid var(--sa-line)}
+.sa-middle-empty{padding:24px 22px;margin:0;font-size:12px;color:var(--sa-muted)}
+.sa-middle-members table{min-width:1050px}
+.sa-middle-members td{white-space:nowrap}
+.sa-middle-members td.sa-middle-product{min-width:170px;max-width:260px;white-space:normal}
+@media(max-width:700px){.search-analysis .sa-middle-compare{min-width:0;table-layout:fixed}.sa-middle-compare th{white-space:normal}.sa-middle-compare th:first-child{width:40%}.sa-middle-compare th,.sa-middle-compare td{padding:12px 8px}}
+@media(max-width:1000px){.sa-concentration-metrics.sa-middle-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.sa-middle-section{padding:15px 14px}.sa-middle-actions{margin:12px 14px 16px;justify-content:flex-start;flex-wrap:wrap;gap:12px}.sa-middle-time{padding:12px 14px}.sa-middle-empty{padding:20px 14px}.sa-concentration-metrics.sa-middle-metrics{grid-template-columns:1fr}}
 .sa-concentration-flow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 22px 6px;font-size:11px;color:var(--sa-muted)}
 .sa-concentration-flow b{font-weight:600;color:var(--data-4-text)}
 .sa-concentration-flow i{font-style:normal;color:var(--data-1-text)}
