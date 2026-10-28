@@ -21,10 +21,10 @@
   {% if period_filter_updated %}<p class="sa-data-note" role="status">收货人数周期已更正为近30天，已同步更新该数量口径筛选。</p>{% endif %}
   {% if not keywords and not filters.keyword %}<div class="sa-empty sa-panel"><h2>还没有可分析的关键词列表</h2><p>完成关键词采集并确认列表发布后，这里会出现可选择的搜索词。</p><a class="sa-button" href="{{ url_for('pages.module',key='collection') }}">前往商品采集</a></div>{% endif %}
   <section class="sa-metrics" id="sa-overview" aria-label="当前样本概况">
-    <article><span>样本商品 / 独立观察</span><strong>{{ stats.products }}<small>项</small></strong><small>{{ stats.observations }} 条展示记录 · {{ stats.unknown_identities }} 项身份未确认</small></article>
-    <article><span>样本店铺分组</span><strong>{{ stats.shops }}<small>组</small></strong><small>缺少店铺 {{ stats.missing_shops }} 项 · 名称分组有局限</small></article>
+    <article><span>商品数量（去重后）</span><strong>{{ stats.products }}<small>件</small></strong><small>共{{ stats.observations }} 条展示记录 · {{ stats.unknown_identities }} 项身份未确认</small></article>
+    <article><span>店铺分组</span><strong>{{ stats.shops }}<small>组</small></strong><small>缺少店铺 {{ stats.missing_shops }} 项 · 名称分组有局限</small></article>
     <article class="sa-metric-accent"><span>入口价中位数</span><strong>{{ analysis_money(stats.price_median) }}</strong><small>有效入口价 {{ stats.prices }} / {{ stats.products }} 项</small></article>
-    <article><span>有可用数量的商品</span><strong>{{ stats.quantities }}<small>项</small></strong><small>按数量口径与周期分开比较</small></article>
+    <article><span>有收货人数数据的商品</span><strong>{{ stats.quantities }}<small>件</small></strong><small>已获取近30天收货人数</small></article>
     <article><span>{{ '已排除广告商品' if filters.exclude_ads else '已识别广告商品' }}</span><strong>{{ stats.excluded_ads if filters.exclude_ads else stats.identified_ads }}<small>项</small></strong><small>{{ '按当前搜索词与快照统计' if filters.exclude_ads else '未命中标识 ≠ 已确认非广告' }}</small></article>
   </section>
   <div class="sa-sample-line"><span>{{ filters.keyword or '未选择搜索词' }} · {{ '日期范围内每件商品取最新观察（可能混合时间）' if filters.snapshot=='range' else '单次采集，每件商品取首次观察' }} · {{ stats.batch_count }} 批 · 搜索页码 {{ stats.pages|join('、') or '未记录' }} · {{ stats.sorts|join(' / ') or '排序未记录' }}</span><a href="{{ url_for('pages.collection_keyword_products',category=filters.keyword,since=filters.since,until=filters.until,return_to=current_location()) if filters.keyword else url_for('pages.collection_searches') }}">查看原始列表 ↗</a></div>
