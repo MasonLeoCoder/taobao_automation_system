@@ -7,21 +7,6 @@
   const byId = new Map([...data.points, ...data.details].map(row => [String(row.id), row]));
   const $ = id => document.getElementById(id);
   const ns = 'http://www.w3.org/2000/svg';
-  const savedStorageKey = 'ecommerce.search-analysis.saved.v1';
-  let saved = new Set();
-  let storedSaved = false;
-  try {
-    const stored = sessionStorage.getItem(savedStorageKey);
-    const previous = JSON.parse(stored || '[]');
-    if (Array.isArray(previous)) {
-      saved = new Set(previous.filter(key => typeof key === 'string' && /^[po]:[1-9][0-9]{0,19}$/.test(key)).slice(0, 200));
-      storedSaved = stored !== null;
-    }
-  } catch { /* 浏览器禁用存储时，关注仍可在本次页面中使用。 */ }
-  if (!storedSaved) for (const key of data.filters.saved.slice(0, 200)) saved.add(key);
-  if (data.filters.view === 'saved' && [...saved].sort().join(',') !== [...data.filters.saved].sort().join(',')) {
-    const current = new URL(location.href); current.searchParams.set('saved', [...saved].join(',')); current.searchParams.set('page', '1'); location.replace(current.href); return;
-  }
   let lastFocus = null;
   let toastTimer;
 
@@ -36,31 +21,6 @@
   function toast(message) {
     $('sa-status').textContent = message; $('sa-status').hidden = false;
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('sa-status').hidden = true; }, 2600);
-  }
-  function updateSaved() {
-    $('sa-saved-count').textContent = saved.size;
-    for (const button of document.querySelectorAll('[data-save-key]')) {
-      const active = saved.has(button.dataset.saveKey);
-      button.textContent = button.classList.contains('sa-drawer-save') ? active ? '★ 已关注 · 点击取消' : '☆ 加入我的关注' : active ? '★' : '☆';
-      button.setAttribute('aria-pressed', String(active));
-      button.setAttribute('aria-label', active ? '取消关注此商品' : '关注此商品');
-    }
-    for (const input of document.querySelectorAll('input[name="saved"]')) input.value = [...saved].join(',');
-    for (const link of [$('sa-saved-link'), ...(data.filters.view === 'saved' ? [$('sa-export')] : [])]) {
-      const url = new URL(link.href); url.searchParams.set('saved', [...saved].join(',')); url.searchParams.set('page', '1'); link.href = url.href;
-    }
-  }
-  function save(key) {
-    if (saved.has(key)) saved.delete(key);
-    else {
-      if (saved.size >= 200) { toast('当前标签页最多关注200项，请先移除部分商品。'); return; }
-      saved.add(key);
-    }
-    try { sessionStorage.setItem(savedStorageKey, JSON.stringify([...saved])); } catch { toast('浏览器未允许保存关注，刷新后可能丢失。'); }
-    updateSaved();
-    if (data.filters.view === 'saved') {
-      const url = new URL(location.href); url.searchParams.set('saved', [...saved].join(',')); url.searchParams.set('page', '1'); location.assign(url.href);
-    }
   }
   function append(parent, tag, text, className = '') {
     const element = document.createElement(tag); element.textContent = text; if (className) element.className = className; parent.append(element); return element;
@@ -92,7 +52,7 @@
     const source = append(links, 'a', '查看来源批次 #' + row.batch_id, 'sa-button');
     const url = new URL('/collections/batches/' + row.batch_id, location.origin); url.searchParams.set('return_to', location.pathname + location.search); source.href = url.href;
     const saveButton = append(body, 'button', '', 'sa-button sa-primary sa-drawer-save'); saveButton.type = 'button'; saveButton.dataset.saveKey = row.key;
-    updateSaved(); $('sa-tooltip').hidden = true; openDialog($('sa-detail-dialog'), origin);
+    document.dispatchEvent(new Event('favorites:render')); $('sa-tooltip').hidden = true; openDialog($('sa-detail-dialog'), origin);
   }
   function renderScatter() {
     const width = 560, height = 225, left = 61, right = 20, top = 18, bottom = 35;
@@ -130,7 +90,6 @@
   document.addEventListener('click', event => {
     const detailButton = event.target.closest('[data-analysis-detail],[data-analysis-point]');
     if (detailButton) detail(detailButton.dataset.analysisDetail || detailButton.dataset.analysisPoint, detailButton);
-    const saveButton = event.target.closest('[data-save-key]'); if (saveButton) save(saveButton.dataset.saveKey);
     const close = event.target.closest('[data-sa-close]'); if (close) $(close.dataset.saClose).close();
   });
   $('sa-scatter').addEventListener('keydown', event => { if ((event.key === 'Enter' || event.key === ' ') && event.target.dataset.analysisPoint) { event.preventDefault(); detail(event.target.dataset.analysisPoint, event.target); } });
@@ -166,5 +125,5 @@
     dialog.addEventListener('close', () => { if (lastFocus && lastFocus.isConnected) lastFocus.focus(); });
     dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
   }
-  renderScatter(); updateSaved();
+  renderScatter();
 })();

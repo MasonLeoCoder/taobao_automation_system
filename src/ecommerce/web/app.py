@@ -22,6 +22,8 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(analysis)
     import secrets
     app.config['COLLECTION_TOKEN']=secrets.token_hex(32)
+    from ecommerce.web.routes.favorites import favorites
+    app.register_blueprint(favorites)
     from ecommerce.web.routes.collection_jobs import collection_jobs
     app.register_blueprint(collection_jobs)
     from ecommerce.web.navigation import current_location,safe_return

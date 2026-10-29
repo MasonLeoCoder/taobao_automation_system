@@ -37,7 +37,9 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         if url.path == '/api/collection-jobs/active':
             route.fulfill(json={'jobs': []})
             return
-        response = self.fixture.client.get(url.path + ('?' + url.query if url.query else ''))
+        response = self.fixture.client.open(url.path + ('?' + url.query if url.query else ''), method=route.request.method,
+            base_url='http://127.0.0.1', data=route.request.post_data,
+            headers={key:value for key,value in route.request.headers.items() if key.lower() in {'content-type','x-collection-token','origin'}})
         route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
         response.close()
 
@@ -62,7 +64,7 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
     def test_drawer_focus_saved_list_and_chart_keyboard(self):
         """依据侧栏安全展示，关注跨刷新保留，散点支持键盘打开。"""
         self.goto()
-        self.page.locator('.sa-detail-btn').first.click()
+        self.page.locator('.sa-products .sa-detail-btn').first.click()
         expect(self.page.locator('#sa-detail-dialog')).to_be_visible()
         expect(self.page.locator('#sa-detail-content')).to_contain_text('观察编号')
         self.page.locator('.sa-drawer-save').click()
@@ -84,6 +86,65 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         self.page.keyboard.press('Escape')
         expect(self.page.locator('#sa-detail-dialog')).not_to_be_visible()
         self.assertEqual(self.errors, [])
+
+    def test_permanent_favorites_notes_comparison_and_undo(self):
+        """长期关注跨新标签保留，备注和加入时依据固定，原地取消可撤销。"""
+        self.goto()
+        self.page.evaluate("sessionStorage.setItem('ecommerce.search-analysis.saved.v1',JSON.stringify(['p:3']))")
+        self.page.reload()
+        expect(self.page.locator('#sa-saved-count')).to_have_text('0')
+        self.page.locator('#analysis-observation-2 [data-save-key]').click()
+        expect(self.page.locator('#sa-saved-count')).to_have_text('1')
+        another=self.context.new_page()
+        self.page.close(); self.page=another
+        self.page.goto('http://127.0.0.1/favorites')
+        expect(self.page.locator('.favorite-card')).to_have_count(1)
+        self.page.locator('input[name="note"]').fill('重点核对 <规格>')
+        self.page.get_by_role('button',name='保存备注',exact=True).click()
+        expect(self.page.locator('.favorite-notice')).to_contain_text('备注已保存')
+        self.fixture.batch(2,search_keyword='新词',captured_at=self.fixture.now+timedelta(days=1))
+        self.fixture.observation(20,product=2,batch=2,sales_count=2000,sales_text='2000+人收货',price_value=None)
+        self.page.reload()
+        expect(self.page.locator('input[name="note"]')).to_have_value('重点核对 <规格>')
+        expect(self.page.locator('.favorite-time-state')).not_to_contain_text('尚未')
+        self.page.locator('.favorite-comparison > summary').click()
+        expect(self.page.locator('.favorite-compare-grid section').first).to_contain_text('¥0.00')
+        expect(self.page.locator('.favorite-compare-grid section').nth(1)).to_contain_text('新词')
+        before=self.page.url
+        self.page.get_by_role('button',name='取消关注',exact=True).click()
+        expect(self.page.locator('.favorite-card')).to_be_hidden()
+        self.page.get_by_role('button',name='撤销',exact=True).click()
+        expect(self.page.locator('.favorite-card')).to_be_visible()
+        self.assertEqual(self.page.url,before)
+        expect(self.page.locator('input[name="note"]')).to_have_value('重点核对 <规格>')
+        self.assertEqual(self.errors,[])
+
+    def test_favorites_mobile_filters_and_unknown_identity(self):
+        """手机关注与对照不横向溢出，未知身份禁用，搜索仅匹配目标。"""
+        from ecommerce.modules.favorites.service import add
+        self.fixture.observation(4,product=0,title='身份未确认')
+        self.goto()
+        expect(self.page.locator('#analysis-observation-4 [data-save-key]')).to_be_disabled()
+        add(self.fixture.settings,1,1);add(self.fixture.settings,2,2)
+        self.page.set_viewport_size({'width':390,'height':900})
+        self.page.goto('http://127.0.0.1/favorites')
+        self.page.locator('.favorite-comparison > summary').first.click()
+        self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        self.page.locator('input[name="q"]').fill('普通样例')
+        self.page.get_by_role('button',name='查询关注',exact=True).click()
+        expect(self.page.locator('.favorite-card')).to_have_count(1)
+        expect(self.page.locator('.favorite-card')).to_contain_text('普通样例')
+        self.assertEqual(self.errors,[])
+
+    def test_favorite_failure_does_not_fake_success(self):
+        """写入失败保留空星标并提供错误提示。"""
+        self.goto()
+        self.page.route('**/api/favorites',lambda route:route.fulfill(status=503,json={'error':'数据库暂不可用'}))
+        button=self.page.locator('#analysis-observation-2 [data-save-key]')
+        button.click()
+        expect(self.page.locator('.favorite-notice')).to_contain_text('数据库暂不可用')
+        expect(button).to_have_text('☆')
+        expect(self.page.locator('#sa-saved-count')).to_have_text('0')
 
     def test_bin_drilldown_group_and_store_view(self):
         """价格区间、数量口径和店铺视图保持分析范围，所有跳转可用。"""

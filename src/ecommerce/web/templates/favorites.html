@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% from 'form_controls.html' import field,input_control,select_control,control_button %}
+{% from 'pagination.html' import pager with context %}
+{% block title %}我的关注{% endblock %}
+{% block breadcrumb %}竞品研究 / 我的关注{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='favorites.css') }}">{% endblock %}
+{% macro source(row,label) %}
+{% if row %}<a class="ui-button ui-secondary" href="{{ url_for('pages.collection_batch',batch_id=row.batch_id,page=row.source_page,return_to=current_location(),_anchor='observation-'~row.id) }}">{{ label }}</a>{% else %}<span>依据暂不可用</span>{% endif %}
+{% endmacro %}
+{% macro values(row) %}
+{% if row %}<dl><dt>网页列表价</dt><dd>{{ favorite_money(row.price_value) }}<small>{{ row.price_label or '价格条件未记录' }} · {{ row.price_text or '价格原文未记录' }}</small></dd><dt>人数展示</dt><dd>{{ row.sales_text or '未提供' }}<small>{{ row.sales_group_label }}</small></dd><dt>店铺</dt><dd>{{ row.shop_name or '未记录' }}</dd><dt>来源搜索词</dt><dd>{{ row.search_keyword }}</dd><dt>采集时间</dt><dd>{{ row.captured_at|full_local_time }}</dd></dl>{{ source(row,'查看这条采集依据') }}{% else %}<p>该记录当前不可公开查看，不使用其他观察补齐。</p>{% endif %}
+{% endmacro %}
+{% block content %}
+<div class="favorite-page">
+  <div class="favorite-intro"><div><p class="eyebrow">MY WATCHLIST</p><h1>留下值得持续研究的商品。</h1><p>关注长期保存在本工作台 · 展示最近已采集数据，不自动采集</p></div><a class="ui-button ui-secondary" href="{{ url_for('analysis.index') }}">前往搜索词分析</a></div>
+  <form class="favorite-filters" method="get">
+    {% call field('搜索商品') %}{{ input_control({'type':'search','name':'q','value':filters.q,'maxlength':255,'placeholder':'商品标题或完整商品编号'}) }}{% endcall %}
+    {% call field('加入时的搜索词') %}{% call select_control({'name':'keyword','data-searchable-select':true,'data-select-label':'搜索词','data-trigger-label':'加入时的搜索词','data-search-label':'查找搜索词','data-option-unit':'个搜索词'}) %}<option value="">全部搜索词</option>{% for keyword in keywords %}<option value="{{ keyword }}" {{ 'selected' if filters.keyword==keyword }}>{{ keyword }}</option>{% endfor %}{% endcall %}{% endcall %}
+    {% call field('最近记录的店铺') %}{% call select_control({'name':'shop','data-searchable-select':true,'data-select-label':'店铺','data-trigger-label':'最近记录的店铺','data-search-label':'查找店铺','data-option-unit':'组店铺'}) %}<option value="">全部店铺</option>{% for shop in shops %}<option value="{{ shop }}" {{ 'selected' if filters.shop==shop }}>{{ shop }}</option>{% endfor %}{% endcall %}{% endcall %}
+    {% call field('排序') %}{% call select_control({'name':'sort'}) %}{% for key,label in [('created_desc','最近关注在前'),('created_asc','较早关注在前'),('latest_desc','最近采集在前'),('latest_asc','较早采集在前')] %}<option value="{{ key }}" {{ 'selected' if filters.sort==key }}>{{ label }}</option>{% endfor %}{% endcall %}{% endcall %}
+    <div>{{ control_button('查询关注',{'type':'submit'},'primary') }}<a class="ui-button ui-secondary" href="{{ url_for('favorites.index') }}">重置</a></div>
+  </form>
+  <div class="favorite-list-heading"><strong>当前 {{ pagination.total }} 件关注商品</strong><span>独立清单覆盖所有搜索词 · 缺失数据保留，不视为零</span></div>
+  <div class="favorite-list">{% for item in items %}{% set row=item.latest %}
+    <article class="favorite-card" id="favorite-{{ item.id }}" data-favorite-card="{{ item.product_id }}">
+      <div class="favorite-overview"><div class="favorite-product">{% if row and row.thumbnail %}<img src="{{ url_for('pages.collection_file',file_id=row.thumbnail) }}" alt="本条采集主图" loading="lazy">{% else %}<span class="favorite-placeholder">暂无主图</span>{% endif %}<div><h2>{{ row.title if row and row.title else '最近可用标题未记录' }}</h2><small>商品编号 {{ row.platform_product_id if row else '暂不可用' }} · {{ row.shop_name if row and row.shop_name else '店铺未记录' }}</small><p>关注于 {{ item.created_at|full_local_time }} · 加入时搜索词：{{ item.source_keyword }}</p></div></div>
+      <div class="favorite-value"><small>网页列表价</small><strong>{{ favorite_money(row.price_value) if row else '—' }}</strong><small>{{ row.price_label if row and row.price_label else '价格条件未记录' }}</small></div>
+      <div class="favorite-value"><small>{{ row.sales_group_label if row else '人数展示' }}</small><strong>{{ row.sales_text if row and row.sales_text else '未提供' }}</strong><small>采集 {{ row.captured_at|full_local_time if row else '时间不可用' }}</small><small>来源：{{ row.search_keyword if row else '暂不可用' }}</small></div></div>
+      <div class="favorite-time-state">{{ item.data_state }} · 展示采集时的数据</div>
+      <details class="favorite-comparison"><summary>查看加入时与最近采集数据</summary><div class="favorite-compare-grid"><section><h3>加入关注时</h3>{{ values(item.initial) }}</section><section><h3>最近采集</h3>{{ values(row) }}</section></div><div class="favorite-compare-notes">{% if item.comparison.new_record %}<p>{{ item.comparison.quantity }}</p><p>{{ item.comparison.price }}</p>{% else %}<p>{{ '当前与加入时采用同一条采集记录。' if item.initial and row else '依据不足，暂无法对照。' }}</p>{% endif %}</div></details>
+      <footer class="favorite-footer"><form data-favorite-note="{{ item.id }}" data-product="{{ item.product_id }}"><label>关注备注{{ input_control({'type':'text','name':'note','value':item.note,'maxlength':500,'placeholder':'例如：重点研究价格条件和商品规格'}) }}</label>{{ control_button('保存备注',{'type':'submit'}) }}</form><div class="favorite-actions">{{ source(row,'查看依据') }}{% if row %}<a class="ui-button ui-secondary" href="{{ url_for('pages.collection_product',product_id=row.platform_product_id,observation=row.id,return_to=current_location()) }}">详情资料</a><a class="ui-button ui-secondary" href="https://item.taobao.com/item.htm?id={{ row.platform_product_id }}" target="_blank" rel="noopener">打开平台商品 ↗</a>{% endif %}{{ control_button('取消关注',{'type':'button','data-remove-favorite':item.id,'data-product':item.product_id},'secondary') }}</div></footer>
+    </article>
+  {% else %}<div class="favorite-empty"><h2>{{ '当前条件没有匹配的关注商品' if filters.q or filters.keyword or filters.shop else '还没有长期关注的商品' }}</h2><p>{{ '可清除条件查看其他关注。' if filters.q or filters.keyword or filters.shop else '在搜索词分析的商品明细中点击☆，将值得研究的商品留在这里。旧临时关注不导入。' }}</p></div>{% endfor %}</div>
+  {{ pager(pagination) }}
+</div>
+<script type="application/json" id="favorite-data">{{ {'favorite_page':true,'favorite_states':favorite_states}|tojson }}</script>
+{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='favorites.js') }}" defer></script>{% endblock %}

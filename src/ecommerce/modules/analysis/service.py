@@ -63,12 +63,7 @@ def parse_filters(options):
     if not re.fullmatch(r'[1-9][0-9]{0,8}', raw_page):
         raise ValueError('页码须为正整数')
     values['page'] = int(raw_page)
-    saved = options.get('saved', '')
-    if not isinstance(saved, str) or len(saved) > 8000:
-        raise ValueError('关注商品参数过长')
-    values['saved'] = saved.split(',') if saved else []
-    if any(not re.fullmatch(r'[po]:[1-9][0-9]{0,19}', key) for key in values['saved']):
-        raise ValueError('关注商品编号无效')
+    values['saved'] = []  # 旧链接不作为长期关注依据，稍后从数据库读取当前样本状态。
     bounds = {}
     try:
         for key in ('since', 'until'):
@@ -218,6 +213,8 @@ def analyze_sample(sample, filters):
     detail = filter_detail(rows, filters, concentration, middle, shop_competition)
     shops = group_shops(detail)
     table = shops if filters['view'] == 'stores' else detail
+    if filters['view']=='saved':
+        filters['page']=min(filters['page'],max(1,(len(table)+PAGE_SIZE-1)//PAGE_SIZE))
     info = pagination(len(table), filters['page'])
     return {'filters': filters, 'stats': stats,
         'price_bins': price_bins, 'price_cross': price_cross, 'sales_groups': sales_groups,
@@ -330,4 +327,11 @@ def analysis_page(settings, **options):
         raise ValueError('采集数据库尚未启用')
     filters, bounds = parse_filters(options)
     sample = load_search_sample(settings, keyword=filters['keyword'], snapshot=filters['snapshot'], **bounds)
-    return analyze_sample(sample, filters)
+    from ecommerce.infrastructure.storage.favorites import states
+    favorites = states(settings, [row.get('product_id') for row in sample['observations']])
+    filters['saved'] = ['p:'+key for key in favorites]
+    result=analyze_sample(sample, filters)
+    visible_ids={str(row['product_id']) for row in result['all_rows'] if row['product_id'] is not None}
+    favorites={key:value for key,value in favorites.items() if key in visible_ids}
+    result['filters']['saved']=['p:'+key for key in favorites]
+    return dict(result, favorite_states=favorites)

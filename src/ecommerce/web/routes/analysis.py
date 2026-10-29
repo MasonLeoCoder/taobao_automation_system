@@ -41,7 +41,7 @@ def _parameters(filters):
     """转换业务筛选为链接参数；参数：规范化筛选；返回：可追溯的查询参数。"""
     values = {key: value for key, value in filters.items() if value not in ('', None, [])}
     values['exclude_ads'] = '1' if filters['exclude_ads'] else None
-    values['saved'] = ','.join(filters['saved']) or None
+    values.pop('saved',None)
     return values
 
 
@@ -113,7 +113,7 @@ def index():
 
     browser_data = {'points': [_point(row) for row in data['scatter']],
         'details': [_point(row) for row in [*detail_products,*shop_products]],
-        'price_bins': data['price_bins'], 'filters': data['filters']}
+        'price_bins': data['price_bins'], 'filters': data['filters'], 'favorite_states':data['favorite_states']}
     shop_scope={**values,'page':1,'finding':'shop_all','sort':'concentration','bin':None,'quantity_tier':None,
                 'region':None,'city':None,'q':None,'store':None,'table_group':'all','view':'goods'}
     return render_template('search_analysis.html', active='analysis', shop_name=settings.shop_name,

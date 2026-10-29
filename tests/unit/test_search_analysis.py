@@ -13,7 +13,7 @@ import unittest
 
 import sqlalchemy as sa
 
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v9 import build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v10 import build_metadata
 from ecommerce.modules.analysis.service import analysis_page, parse_filters
 from ecommerce.shared.config import load_settings
 from ecommerce.web.app import create_app
@@ -47,6 +47,9 @@ class SearchAnalysisTests(unittest.TestCase):
                      return_value=SimpleNamespace(engine=self.engine, tables=self.tables))
         mock.start()
         self.addCleanup(mock.stop)
+        favorite_mock = patch('ecommerce.infrastructure.storage.favorites.collection_store', return_value=SimpleNamespace(engine=self.engine, tables=self.tables))
+        favorite_mock.start()
+        self.addCleanup(favorite_mock.stop)
         self.task = 'a' * 32
         self.later_task = 'b' * 32
         self.now = datetime(2026, 10, 28, 10)
@@ -146,7 +149,7 @@ class SearchAnalysisTests(unittest.TestCase):
         """空数据正常展示；非法参数和跨搜索词快照明确拒绝。"""
         self.assertEqual(self.client.get('/analysis/searches').status_code, 200)
         for query in ['exclude_ads=yes', 'bin=7', 'price_scale=bad', 'page=0', 'snapshot=bad', 'since=bad',
-                      'since=2026-10-29&until=2026-10-28', 'group=unknown:invalid', 'saved=bad', 'finding=bad']:
+                      'since=2026-10-29&until=2026-10-28', 'group=unknown:invalid', 'finding=bad']:
             self.assertEqual(self.client.get('/analysis/searches?' + query).status_code, 400, query)
         self.assertEqual(self.client.get('/analysis/searches?snapshot=task:' + 'f' * 32).status_code, 404)
         self.app.config['SETTINGS'] = replace(self.settings, collection_backend='files')
@@ -257,6 +260,9 @@ class SearchAnalysisTests(unittest.TestCase):
         self.assertNotIn('category', result['all_rows'][0])
         self.assertNotIn('categories', result)
         self.assertNotIn('unclassified', result['stats'])
+        from ecommerce.modules.favorites.service import add
+        self.assertEqual(self.read(view='saved', saved='p:1')['pagination']['total'], 0)
+        add(self.settings,1,1)
         self.assertEqual(self.read(view='saved', saved='p:1')['pagination']['total'], 1)
         self.assertEqual(self.read(view='saved', saved='p:1', exclude_ads='1')['pagination']['total'], 0)
 

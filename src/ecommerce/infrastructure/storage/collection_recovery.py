@@ -268,6 +268,12 @@ class RecoveryStore:
                         raise ValueError('已登记的旧批次文件被修改，拒绝删除，请人工核对')
                     manifest.append({'path': relative, 'size': path.stat().st_size, 'sha256': digest_file(path), 'asset_id': asset['id'] if asset else None})
                 if batch:
+                    favorites = tables.get('product_favorites')
+                    if favorites is not None:
+                        listing = tables['list_observations']
+                        if connection.scalar(sa.select(sa.func.count()).select_from(favorites).where(favorites.c.observation_id.in_(
+                                sa.select(listing.c.id).where(listing.c.batch_id == batch['id'])))):
+                            raise ValueError('该批次仍有关联的长期关注依据，请先处理关注关系后再清理')
                     for name in PRUNE_ORDER:
                         table = tables[name]
                         counts[name] = connection.execute(table.delete().where(table.c.batch_id == batch['id'])).rowcount
