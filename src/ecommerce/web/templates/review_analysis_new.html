@@ -4,9 +4,10 @@
 {% block title %}开始评价分析{% endblock %}
 {% block content %}
 <section class="page-heading"><h1>开始评价分析</h1><p>商品 {{ product }} · 初评与追评一起理解，每组仍算一条评价。</p></section>
-<section class="panel"><h2>选择评价资料</h2>
-<form method="get">{% call field('已完成的评价批次') %}{% call select_control({'name':'batch','data-searchable-select':true}) %}{% for batch in data.history %}<option value="{{ batch.id }}" {{ 'selected' if batch.id==data.batch.id }}>批次 {{ batch.id }} · {{ batch.captured_at }} · {{ {'limit_reached':'部分样本','explicit_end':'页面可见末尾','no_reviews':'无评价'}.get(batch.coverage_status,'查看采集范围') }}</option>{% endfor %}{% endcall %}{% endcall %}{{ control_button('查看本批资料',{'type':'submit'}) }}</form>
-<p>实际输入 {{ data['items']|length }} 条；采集于 {{ data.batch.captured_at }}。覆盖：{{ {'limit_reached':'达到本次采集上限，属于部分样本','explicit_end':'已到页面可见末尾','exact_count':'按页面数量确认','unknown':'覆盖范围未确认','no_reviews':'页面确认无评价'}.get(data.batch.coverage_status,'以原始采集范围记录为准') }}，请求上限 {{ data.batch.requested_limit if data.batch.requested_limit is not none else '不限' }}。这批样本不代表平台全部评价。</p>
+<section class="panel"><h2>确认当前列表的全部评价</h2>
+<p><strong>将分析当前列表全部 {{ data['items']|length }} 条评价，包含所有分页。</strong></p>
+<p>来源批次 {{ data.batch.id }} · 采集于 {{ data.batch.captured_at }}。覆盖：{{ {'limit_reached':'达到本次采集上限，属于部分样本','explicit_end':'已到页面可见末尾','exact_count':'按页面数量确认','unknown':'覆盖范围未确认','no_reviews':'页面确认无评价'}.get(data.batch.coverage_status,'以原始采集范围记录为准') }}。这批样本不代表平台全部评价。</p>
+<p>本次来源已固定。需要换批次，请<a href="{{ url_for('pages.collection_product',product_id=product,module='reviews',reviews_batch=data.batch.id) }}#review-comments">返回评价明细选择资料</a>；其他页面切换批次不会改变本次分析。</p>
 <p>只发送评价编号、文字、规格和追评内容，不发送昵称或媒体链接。预计 {{ data.chunk_count }} 批分类＋1次报告调用。主题统计由程序计算；AI理解仍可能有误，完成后需要复核。</p>
 <form data-ra-start data-url="{{ url_for('review_analysis.start',product=product) }}" data-batch="{{ data.batch.id }}" data-hash="{{ data.input_hash }}">
 {% call field('服务商') %}{% call select_control({'name':'provider','disabled':true}) %}<option>DeepSeek</option>{% endcall %}{% endcall %}
@@ -19,6 +20,6 @@
 {{ control_button('开始分析',{'type':'submit','disabled':not data.key_configured}) }}
 {% if not data.key_configured %}<p>尚未配置密钥，请先完成<a href="{{ url_for('ai.index') }}">AI设置</a>。</p>{% endif %}
 <p class="ra-feedback" role="status"></p></form>
-<a href="{{ url_for('review_analysis.index',product=product) }}">查看分析历史</a></section>
+<a href="{{ url_for('review_analysis.index',product=product,batch=data.batch.id) }}">查看本批分析记录</a></section>
 {% endblock %}
 {% block extra_scripts %}<script src="{{ url_for('static',filename='review_analysis.js') }}" defer></script>{% endblock %}

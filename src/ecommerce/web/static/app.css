@@ -37,6 +37,8 @@
 .source-summary{margin:18px 0 22px;color:var(--muted);font-size:12px}.source-summary p{margin:6px 0}.source-summary strong{color:var(--ink);font-weight:600}
 /* 单模块后台采集与人工反馈。 */
 .module-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.review-comment-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+[data-ra-batch-links]:empty{display:none}
 .module-job-status{overflow-wrap:anywhere}
 .collection-task-bar{position:fixed;bottom:20px;left:290px;right:25px;z-index:50;background:#fff;border:1px solid #bdd8d0;box-shadow:0 8px 32px #153d3326;border-radius:14px;padding:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .collection-task-bar[hidden]{display:none}

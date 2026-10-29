@@ -93,7 +93,7 @@
     const actions = card.querySelector('.module-actions');
     let result = actions.querySelector('[data-job-result]');
     if (job.done && job.result_url) {
-      if (!result) result = [...actions.querySelectorAll('a')].find(node => new URL(node.href).searchParams.get('batch') === String(job.batch_id));
+      if (!result) result = [...actions.querySelectorAll('a')].find(node => !node.matches('[data-review-analysis]') && new URL(node.href).searchParams.get('batch') === String(job.batch_id));
       if (!result) { result = link('', job.result_url); result.dataset.jobResult = 'true'; actions.append(result); }
       result.dataset.jobResult = 'true';
       result.href = job.result_url;

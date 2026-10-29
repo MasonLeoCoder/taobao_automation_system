@@ -2,7 +2,7 @@
 import json
 import secrets
 from urllib.parse import urlsplit
-from flask import Blueprint, abort, current_app, jsonify, render_template, request, Response
+from flask import Blueprint, abort, current_app, jsonify, render_template, request, Response, redirect, url_for
 from ecommerce.modules.review_analysis import service, rules
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.infrastructure.storage.time_values import iso_value
@@ -55,9 +55,28 @@ def invalid(error):
 @review_analysis.get('/analysis/reviews/products/<product>')
 def index(product):
     """商品分析历史；参数：平台商品编号；返回：最近任务。"""
-    service.product_id(product)
+    raw = request.args.get('batch')
+    try:
+        batch = 'all' if raw == 'all' else int(raw) if raw else None
+    except ValueError:
+        raise ValueError('批次编号无效。') from None
+    data = service.history_page(settings(), product, batch)
     return render_template('review_analysis_history.html', active='collections', shop_name=settings().shop_name,
-                           product=product, tasks=repository.history(settings(), product))
+                           product=product, **data)
+
+
+@review_analysis.get('/api/analysis/reviews/products/<product>/summary')
+def batch_summary(product):
+    """读取当前已加载批次的状态，不跟随下拉框未应用值；参数：商品、批次；返回：无配置的摘要。"""
+    try:
+        batch = int(request.args.get('batch', ''))
+    except ValueError:
+        raise ValueError('请指定当前列表的评价批次。') from None
+    data = service.history_page(settings(), product, batch)
+    latest = data['latest_task']
+    return jsonify(batch_id=batch, active_id=data['active_task']['id'] if data['active_task'] else None,
+        result_id=data['latest_result']['id'] if data['latest_result'] else None,
+        latest_status=('interrupted' if latest['appears_interrupted'] else latest['status']) if latest else None)
 
 
 @review_analysis.get('/analysis/reviews/products/<product>/new')
@@ -68,6 +87,11 @@ def new(product):
         batch = int(raw) if raw else None
     except ValueError:
         raise ValueError('批次编号须为整数。') from None
+    if batch is None:
+        choices = repository.batch_choices(settings(), service.product_id(product))
+        if not choices:
+            raise LookupError('尚无评价资料，请返回商品评价明细选择资料。')
+        return redirect(url_for('review_analysis.new', product=product, batch=choices[0]['id']))
     data = service.preview(settings(), product, batch)
     return render_template('review_analysis_new.html', active='collections', shop_name=settings().shop_name, data=data, product=product)
 

@@ -1,6 +1,32 @@
 /* 启动、进度与人工修订；GET轮询不触发付费调用。 */
 (() => {
   const token = document.querySelector('meta[name="workbench-token"]')?.content;
+  const summary = document.querySelector('[data-ra-batch-summary]');
+  if (summary) {
+    const links = document.querySelector('[data-ra-batch-links]');
+    function resultLink(label, id) {
+      const link = document.createElement('a');
+      link.className = 'ui-button ui-secondary';
+      link.textContent = label;
+      link.href = '/analysis/reviews/tasks/' + encodeURIComponent(id);
+      links.append(link);
+    }
+    async function loadBatchSummary() {
+      try {
+        const response = await fetch(summary.dataset.raBatchSummary);
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        links.replaceChildren();
+        const notes = [];
+        if (data.active_id) { notes.push('本批正在分析'); resultLink('查看分析进度', data.active_id); }
+        if (data.result_id) { notes.push('本批已有分析结果'); resultLink('查看本批报告', data.result_id); }
+        if (['failed','partial','interrupted'].includes(data.latest_status)) notes.push(data.result_id ? '最新任务未完整完成，已有报告仍保留' : '最新任务未完整完成');
+        summary.textContent = notes.join('；') || '本批尚无分析结果。';
+        if (data.active_id) setTimeout(loadBatchSummary, 2500);
+      } catch (_) { summary.textContent = '暂时无法读取本批分析状态，可通过“查看分析记录”查询。'; }
+    }
+    loadBatchSummary();
+  }
   if (/^#review-\d+$/.test(location.hash)) {
     const target = document.querySelector(location.hash);
     if (target instanceof HTMLDetailsElement) target.open = true;

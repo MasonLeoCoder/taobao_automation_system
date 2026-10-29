@@ -114,6 +114,35 @@ def read(settings, task_id):
     return data
 
 
+def history_page(settings, product, batch=None):
+    """整理当前批次或全部批次记录；参数：配置、商品、批次或all；返回：任务和优先结果，不写库。"""
+    product_id(product)
+    choices = repository.batch_choices(settings, product)
+    if batch == 'all':
+        selected = None
+    elif batch is None:
+        selected = choices[0]['id'] if choices else None
+    else:
+        integer(batch, 1, 2**63 - 1, '批次编号')
+        if batch not in {b['id'] for b in choices}:
+            raise LookupError('评价批次不属于当前商品或尚未发布。')
+        selected = batch
+    tasks = repository.history(settings, product, selected) if selected is not None or batch == 'all' else []
+    for task in tasks:
+        owner = task.get('owner') or {}
+        task['appears_interrupted'] = task['status'] in {'queued', 'running'} and (
+            not owner or owner_alive(owner.get('pid'), owner.get('started_at')) is False)
+    # 优先最近完整成功的报告；新任务失败或部分完成不遮住此前的成功结果。
+    latest_result = next((t for t in tasks if t['status'] == 'succeeded' and t['has_report']), None)
+    if latest_result is None and (selected is not None or batch == 'all'):
+        latest_result = repository.latest_success(settings, product, selected)
+    if latest_result is None:
+        latest_result = next((t for t in tasks if t['has_report'] and t['processed_count'] > 0 and t['status'] not in {'queued', 'running'}), None)
+    active = next((t for t in tasks if t['status'] in {'queued', 'running'} and not t['appears_interrupted']), None)
+    return {'tasks': tasks, 'batches': choices, 'selected_batch': selected, 'all_batches': batch == 'all',
+            'latest_result': latest_result, 'active_task': active, 'latest_task': tasks[0] if tasks else None}
+
+
 def launch(settings, task_id):
     """派发独立进程，只传配置引用；参数：配置与编号；返回：无，失败明确持久保存。"""
     identifier(task_id)

@@ -130,12 +130,13 @@ class ReviewAnalysisTests(unittest.TestCase):
         self.assertEqual(data['details'],[])
         self.assertEqual(data['calls'][0]['status'],'invalid')
         self.assertIsNotNone(data['calls'][0]['response'])
+        self.assertIsNone(self.client.get('/api/analysis/reviews/products/123/summary?batch=5').json['result_id'])
 
     def test_call_budget_and_no_implicit_paid_start(self):
         """预算耗尽前不发新请求；未授权、跨站和错误来源不能创建。"""
         data=service.preview(self.settings,'123')
         values=dict(batch_id=5,model='deepseek-flash',input_hash=data['input_hash'],max_calls=10,max_tokens=200000,allow_paid=True,force=False)
-        self.assertEqual(self.client.get('/analysis/reviews/products/123/new').status_code,200)
+        self.assertEqual(self.client.get('/analysis/reviews/products/123/new',follow_redirects=True).status_code,200)
         self.assertEqual(self.client.post('/api/analysis/reviews/products/123',json=values).status_code,403)
         self.assertEqual(self.client.post('/api/analysis/reviews/products/123',json={},headers=self.headers).status_code,400)
         for changes in ({'allow_paid':False},{'max_calls':0},{'input_hash':'wrong'},{'batch_id':99},{'model':'unknown'},{'model':[]}):
@@ -223,3 +224,81 @@ class ReviewAnalysisTests(unittest.TestCase):
         args=spawn.call_args.args[0]
         self.assertIn('ecommerce.modules.review_analysis.worker',args)
         self.assertNotIn('sk-test-only',repr(spawn.call_args))
+
+    def test_history_filters_batches_and_preserves_success_after_new_failure(self):
+        """不同批次独立显示，同批新任务失败不能遮住旧成功报告，GET不调用AI。"""
+        first=self.start();self.run_mock(first)
+        failed=self.start(force=True)
+        repository.update_task(self.settings,failed,status='failed',active_key=None,message='合成失败')
+        self.put('collection_batches',id=6,product_id=1,module='reviews',visibility='published',status='complete',captured_at=datetime(2026,10,29,11))
+        self.put('review_observations',id=10,batch_id=6,position=1,content='另一批',sku_text='另一个规格',append_reviews=[])
+        preview=service.preview(self.settings,'123',6)
+        with patch('ecommerce.modules.review_analysis.service.launch'):
+            second=service.start(self.settings,'123',batch_id=6,model='deepseek-flash',input_hash=preview['input_hash'],max_calls=10,max_tokens=200000,allow_paid=True)['id']
+        repository.update_task(self.settings,second,status='failed',active_key=None)
+        with patch('ecommerce.modules.review_analysis.service.create_client') as paid:
+            current=service.history_page(self.settings,'123',5)
+            self.assertEqual({t['id'] for t in current['tasks']},{first,failed})
+            self.assertEqual(current['latest_result']['id'],first)
+            self.assertEqual(service.history_page(self.settings,'123')['selected_batch'],6)
+            self.assertEqual(len(service.history_page(self.settings,'123','all')['tasks']),3)
+            five=self.client.get('/api/analysis/reviews/products/123/summary?batch=5').json
+            six=self.client.get('/api/analysis/reviews/products/123/summary?batch=6').json
+            self.assertEqual(five['result_id'],first)
+            self.assertIsNone(six['result_id'])
+            text=self.client.get('/analysis/reviews/products/123?batch=5').get_data(as_text=True)
+            self.assertIn('查看成功报告',text)
+            self.assertIn('最新任务失败',text)
+            self.assertNotIn(second,text)
+            all_text=self.client.get('/analysis/reviews/products/123?batch=all').get_data(as_text=True)
+            self.assertIn(second,all_text)
+            paid.assert_not_called()
+        with self.assertRaises(LookupError):service.history_page(self.settings,'123',99)
+
+    def test_confirmation_fixed_batch_and_full_paginated_list(self):
+        """确认页固定明确批次，其他页码排序和最新批次不改变整批输入。"""
+        for i in range(10,33):
+            self.put('review_observations',id=i,batch_id=5,position=i,content='分页样例',sku_text='规格',append_reviews=[])
+        self.put('collection_batches',id=6,product_id=1,module='reviews',visibility='published',status='complete',captured_at=datetime(2026,10,29,11))
+        self.put('review_observations',id=40,batch_id=6,position=1,content='新批次',sku_text='规格',append_reviews=[])
+        with patch('ecommerce.modules.review_analysis.service.create_client') as paid:
+            text=self.client.get('/analysis/reviews/products/123/new?batch=5&page=2&sort=date&reviews_batch=6').get_data(as_text=True)
+            self.assertIn('全部 25 条评价，包含所有分页',text)
+            self.assertIn('data-batch="5"',text)
+            self.assertNotIn('name="batch"',text)
+            self.assertEqual(len(service.preview(self.settings,'123',5)['items']),25)
+            paid.assert_not_called()
+        store=SimpleNamespace(engine=self.engine,tables=self.tables)
+        with patch('ecommerce.infrastructure.storage.collection_browser.collection_store',return_value=store), \
+             patch('ecommerce.infrastructure.storage.collection_queries.collection_store',return_value=store):
+            page=self.client.get('/collections/products/123?module=reviews&reviews_batch=5&page=2')
+            self.assertEqual(page.status_code,200)
+            text=page.get_data(as_text=True)
+            self.assertIn('batch=5',text)
+            self.assertIn('当前列表全部 25 条评价',text)
+            self.assertEqual(text.count('data-review-analysis="start"'),1)
+
+    def test_summary_displays_active_task_from_selected_batch(self):
+        """有存活进程时展示本批进度，状态查询不创建新任务。"""
+        task=self.start()
+        repository.update_task(self.settings,task,owner={'pid':1,'started_at':'2026-10-29T00:00:00+00:00'})
+        with patch('ecommerce.modules.review_analysis.service.owner_alive',return_value=True):
+            result=self.client.get('/api/analysis/reviews/products/123/summary?batch=5').json
+        self.assertEqual(result['active_id'],task)
+        self.assertIsNone(result['result_id'])
+
+    def test_latest_success_remains_available_beyond_history_window(self):
+        """即使成功报告不在最近100次列表中，也保持可直达的成功结果入口。"""
+        from datetime import timedelta
+        from uuid import uuid4
+        task=self.start();self.run_mock(task)
+        data=repository.read(self.settings,task)
+        for index in range(101):
+            new_id=uuid4().hex
+            row={**data['task'],'id':new_id,'status':'failed','processed_count':0,'created_at':data['task']['created_at']+timedelta(minutes=index+1)}
+            self.put('analysis_tasks',**row)
+            self.put('analysis_sources',**{**data['sources'][0],'id':uuid4().hex,'analysis_id':new_id})
+        value=service.history_page(self.settings,'123',5)
+        self.assertEqual(len(value['tasks']),100)
+        self.assertNotIn(task,{row['id'] for row in value['tasks']})
+        self.assertEqual(value['latest_result']['id'],task)

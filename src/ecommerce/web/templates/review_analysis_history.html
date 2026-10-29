@@ -1,9 +1,15 @@
 {% extends 'base.html' %}
+{% from 'form_controls.html' import field,select_control,control_button %}
 {% block breadcrumb %}评价分析记录{% endblock %}
 {% block title %}评价分析记录{% endblock %}
 {% block content %}
-<section class="page-heading"><h1>评价分析记录</h1><p>商品 {{ product }} · 展示最近100次分析，打开历史结果不调用AI。</p><a href="{{ url_for('pages.collection_product',product_id=product,module='reviews') }}">返回商品评价</a></section>
-<section class="panel"><a class="ui-button ui-primary" href="{{ url_for('review_analysis.new',product=product) }}">分析评价</a>
-<div class="table-wrap"><table><thead><tr><th>创建时间</th><th>模型</th><th>状态</th><th>覆盖条数</th><th>结果</th></tr></thead><tbody>
-{% for task in tasks %}<tr><td>{{ task.created_at }}</td><td>{{ task.model }}</td><td>{{ {'queued':'待启动','running':'执行中','succeeded':'已完成','partial':'部分完成','failed':'失败','interrupted':'中断'}.get(task.status,task.status) }}</td><td>{{ task.processed_count }}/{{ task.source_count }}</td><td><a href="{{ url_for('review_analysis.result',task_id=task.id) }}">查看</a></td></tr>{% else %}<tr><td colspan="5">尚无已保存分析。</td></tr>{% endfor %}
+{% set labels={'queued':'待启动','running':'执行中','succeeded':'已完成','partial':'部分完成','failed':'失败','interrupted':'中断'} %}
+<section class="page-heading"><h1>评价分析记录</h1><p>商品 {{ product }} · {{ '全部批次' if all_batches else '当前批次 ' ~ selected_batch if selected_batch else '暂无评价批次' }} · 展示此范围最近100次分析，查看不调用AI。</p><a href="{{ url_for('pages.collection_product',product_id=product,module='reviews',reviews_batch=selected_batch) }}#review-comments">返回评价明细</a></section>
+<section class="panel"><form method="get">{% call field('记录范围') %}{% call select_control({'name':'batch','data-searchable-select':true}) %}<option value="all" {{ 'selected' if all_batches }}>全部批次</option>{% for batch in batches %}<option value="{{ batch.id }}" {{ 'selected' if selected_batch==batch.id }}>批次 {{ batch.id }} · {{ batch.captured_at }}</option>{% endfor %}{% endcall %}{% endcall %}{{ control_button('查看',{'type':'submit'}) }}</form>
+{% if selected_batch %}<a class="ui-button ui-primary" href="{{ url_for('review_analysis.new',product=product,batch=selected_batch) }}">分析评价</a>{% endif %}
+{% if active_task %}<p>{{ '所选范围中有任务正在分析' if all_batches else '本批正在分析' }}，切换资料不会改变正在运行的任务。<a href="{{ url_for('review_analysis.result',task_id=active_task.id) }}">查看进度</a></p>{% endif %}
+{% if latest_task and (latest_task.status in ['failed','partial','interrupted'] or latest_task.appears_interrupted) %}<p role="status">最新任务{{ '中断' if latest_task.appears_interrupted else labels[latest_task.status] }}。{% if latest_result %}先前保存的报告仍可查看。{% endif %}<a href="{{ url_for('review_analysis.result',task_id=latest_task.id) }}">查看最新任务</a></p>{% endif %}
+{% if latest_result %}<p><strong>最近完成的报告：</strong>批次 {{ latest_result.batch_id }} · {{ latest_result.model }} · {{ latest_result.created_at }} · {{ latest_result.processed_count }}/{{ latest_result.source_count }}条。<a class="ui-button ui-secondary" href="{{ url_for('review_analysis.result',task_id=latest_result.id) }}">查看{{ '成功报告' if latest_result.status=='succeeded' else '已保存的部分结果' }}</a></p>{% endif %}
+<div class="table-wrap"><table><thead><tr><th>创建时间</th><th>来源批次</th><th>模型</th><th>状态</th><th>评价数量</th><th>结果</th></tr></thead><tbody>
+{% for task in tasks %}<tr><td>{{ task.created_at }}</td><td>{{ task.batch_id }}</td><td>{{ task.model }}</td><td>{{ '进程已结束，待继续' if task.appears_interrupted else labels.get(task.status,task.status) }}</td><td>{{ task.processed_count }}/{{ task.source_count }}</td><td><a href="{{ url_for('review_analysis.result',task_id=task.id) }}">{{ '查看最新成功报告' if latest_result and latest_result.id==task.id and task.status=='succeeded' else '查看' }}</a></td></tr>{% else %}<tr><td colspan="6">此范围尚无分析记录。</td></tr>{% endfor %}
 </tbody></table></div></section>{% endblock %}

@@ -6,9 +6,9 @@
 {% call field('概览资料' if code=='review_summary' else '明细资料') %}{% call select_control({"name": batch_key}) %}<option value="0">{{ '本次关联运行的结果' if context_run else '最近有效资料' }}</option>{% for item in part.history %}<option value="{{ item.id }}" {{ 'selected' if part.selected and part.selected.id==item.id }}>{{ item.captured_at|full_local_time }} · 批次 {{ item.id }}</option>{% endfor %}{% endcall %}{% endcall %}{{ control_button("查看", {"type": "submit", "class": "button action-button action-neutral"}) }}
 </form>
 {% endmacro %}
-{% macro module_actions(part,code,name) %}
+{% macro module_actions(part,code,name,show_status=true) %}
 <div class="module-actions">{{ control_button((('重新采集' if part.selected else '采集') ~ (name)), {"type": "button", "class": "button action-button action-primary module-collect", "data-module": code}) }}
-{% if part.selected and part.selected.task_id %}<a class="button action-button action-history" data-job-logs href="{{ url_for('pages.logs',task_id=part.selected.task_id,return_to=current_location()) }}">查看任务日志</a>{% endif %}</div><p class="module-job-status" role="status" aria-live="polite"></p>
+{% if part.selected and part.selected.task_id %}<a class="button action-button action-history" data-job-logs href="{{ url_for('pages.logs',task_id=part.selected.task_id,return_to=current_location()) }}">查看任务日志</a>{% endif %}</div>{% if show_status %}<p class="module-job-status" role="status" aria-live="polite"></p>{% endif %}
 {% endmacro %}
 {% set overview=reviews_view.overview %}{% set comments=reviews_view.comments %}
 <section class="panel review-section" id="review-overview" data-collection-module="review_summary" data-latest-batch="{{ overview.history[0].id if overview.history else 0 }}">
@@ -26,7 +26,16 @@
 </section>
 <section class="panel review-section" id="review-comments" data-collection-module="reviews" data-latest-batch="{{ comments.history[0].id if comments.history else 0 }}">
 <h2>评价明细</h2>
-<div class="module-actions">{% if comments.selected and comments.detail.total %}<a class="ui-button ui-primary" href="{{ url_for('review_analysis.new',product=product.platform_product_id,batch=comments.selected.id) }}">分析评价</a>{% else %}<span>先采集评价后可启动分析。</span>{% endif %}<a class="ui-button ui-secondary" href="{{ url_for('review_analysis.index',product=product.platform_product_id) }}">查看分析记录</a></div>
+<div class="review-comment-actions">
+{{ module_actions(comments,'reviews','明细',false) }}
+<div class="module-actions review-analysis-actions">
+{% if comments.selected and comments.detail.total and comments.selected.status=='complete' %}<a class="ui-button ui-primary" data-review-analysis="start" href="{{ url_for('review_analysis.new',product=product.platform_product_id,batch=comments.selected.id) }}">分析评价</a>{% else %}{{ control_button('分析评价',{'type':'button','disabled':true}) }}{% endif %}
+<a class="ui-button ui-secondary" data-review-analysis="history" href="{{ url_for('review_analysis.index',product=product.platform_product_id,batch=comments.selected.id if comments.selected else none) }}">查看分析记录</a>
+</div></div>
+<p class="module-job-status" role="status" aria-live="polite"></p>
+{% if comments.selected %}<p>分析范围：当前列表全部 {{ comments.detail.total }} 条评价，包含所有分页。</p>
+<p data-ra-batch-summary="{{ url_for('review_analysis.batch_summary',product=product.platform_product_id,batch=comments.selected.id) }}" role="status" aria-live="polite">正在读取本批分析记录…</p><div data-ra-batch-links class="module-actions"></div>
+{% else %}<p>先采集评价或选择明细资料后可启动分析。</p>{% endif %}
 {{ selection_form(comments,'reviews','reviews_batch','page','review-comments') }}
 {% if comments.selected %}
 <p>{{ scope(comments.selected) }} · 批次 {{ comments.selected.id }}<br>明细采集时间：{{ comments.selected.captured_at|full_local_time }} · 本批已保存 {{ comments.detail.total }} 条，不代表平台全部评价。</p>
@@ -40,6 +49,6 @@
 </tbody></table></div>
 {{ pager(comments.detail,review_parameters) }}
 {% else %}<p class="review-empty">{{ '本次关联运行尚未保存评价明细，可选择历史资料。' if context_run else '尚无有效评价明细，可采集或选择历史资料。' }}</p>{% endif %}
-{{ module_actions(comments,'reviews','明细') }}
 </section>
 <script src="{{ url_for('static',filename='reviews.js') }}" defer></script>
+<script src="{{ url_for('static',filename='review_analysis.js') }}" defer></script>
