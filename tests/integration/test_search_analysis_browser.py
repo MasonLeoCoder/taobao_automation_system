@@ -130,7 +130,7 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         self.page.goto('http://127.0.0.1/analysis/searches?view=stores')
         module=self.page.locator('#sa-shop-concentration')
         self.assertIsNone(module.get_attribute('open'))
-        self.assertTrue(self.page.evaluate("document.querySelector('#sa-middle').nextElementSibling.id==='sa-shop-concentration'"))
+        self.assertTrue(self.page.evaluate("document.querySelector('#sa-concentration').nextElementSibling.id==='sa-shop-concentration'"))
         module.locator(':scope > summary').click()
         group=module.locator('[data-shop-key="name:B店"]')
         before=self.page.url
@@ -255,12 +255,12 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         self.assertEqual(self.errors,[])
 
     def test_middle_comparison_tier_missing_price_and_query_scope(self):
-        """腰部紧跟集中度，头腰价格覆盖独立；缺价档位钻取与查询保留固定腰部。"""
+        """腰部紧跟店铺集中度，头腰价格覆盖独立；缺价档位钻取与查询保留固定腰部。"""
         for i in range(4,64): self.fixture.observation(i,sales_count=i*100,price_value=None if i%2 else i)
         self.page.goto('http://127.0.0.1/analysis/searches?exclude_ads=1')
         waist=self.page.locator('#sa-middle')
         self.assertIsNone(waist.get_attribute('open'))
-        self.assertTrue(self.page.evaluate("document.querySelector('#sa-concentration').nextElementSibling.id==='sa-middle'"))
+        self.assertTrue(self.page.evaluate("document.querySelector('#sa-shop-concentration').nextElementSibling.id==='sa-middle'"))
         waist.locator(':scope > summary').click()
         expect(waist.locator(':scope > summary')).to_contain_text('20')
         expect(waist.locator('[data-middle-metric="price"]')).to_contain_text('10／20')

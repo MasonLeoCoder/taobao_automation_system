@@ -28,8 +28,8 @@
     <article><span>{{ '已排除广告商品' if filters.exclude_ads else '已识别广告商品' }}</span><strong>{{ stats.excluded_ads if filters.exclude_ads else stats.identified_ads }}<small>项</small></strong><small>{{ '按当前搜索词与快照统计' if filters.exclude_ads else '未命中标识 ≠ 已确认非广告' }}</small></article>
   </section>
   {% include 'search_concentration.html' %}
-  {% include 'search_middle.html' %}
   {% include 'search_shop_concentration.html' %}
+  {% include 'search_middle.html' %}
   <div class="sa-sample-line"><span>{{ filters.keyword or '未选择搜索词' }} · {{ '日期范围内每件商品取最新观察（可能混合时间）' if filters.snapshot=='range' else '单次采集，每件商品取首次观察' }} · {{ stats.batch_count }} 批 · 搜索页码 {{ stats.pages|join('、') or '未记录' }} · {{ stats.sorts|join(' / ') or '排序未记录' }}</span><a href="{{ url_for('pages.collection_keyword_products',category=filters.keyword,since=filters.since,until=filters.until,return_to=current_location()) if filters.keyword else url_for('pages.collection_searches') }}">查看原始列表 ↗</a></div>
   <section class="sa-chart-grid">
     <article class="sa-panel sa-price-panel"><div class="sa-panel-head"><div><h2>商品集中在哪些价位？</h2><p>列表入口价 · 点击柱形筛选商品明细</p></div><span class="sa-small-tag">自动分段</span></div>
