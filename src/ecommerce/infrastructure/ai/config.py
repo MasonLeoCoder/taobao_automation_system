@@ -1,5 +1,6 @@
-"""独立AI配置；只保存环境变量引用，不读取或持久化密钥值。"""
-from dataclasses import dataclass
+"""独立AI配置；本机密钥不参与对象展示或公共状态返回。"""
+from dataclasses import dataclass, field
+import os
 import re
 import tomllib
 
@@ -12,6 +13,7 @@ class AISettings:
     models: tuple = ('deepseek-flash', 'deepseek-v4-pro')
     api_key_env: str = 'DEEPSEEK_API_KEY'
     timeout_seconds: int = 20
+    api_key: str = field(default='', repr=False)
 
 
 def load_config(root):
@@ -25,6 +27,8 @@ def load_config(root):
         if not isinstance(data, dict) or set(data) - set(AISettings.__dataclass_fields__):
             raise ValueError()
         config = AISettings(**data)
+        if not isinstance(config.api_key, str):
+            raise ValueError()
         if config.provider != 'deepseek':
             raise ValueError()
         if not isinstance(config.models, (tuple, list)) or not config.models or len(config.models) > 20:
@@ -40,3 +44,8 @@ def load_config(root):
         return config
     except (OSError, ValueError, TypeError):
         raise ValueError('AI配置无效，请检查config/ai.toml；支持deepseek，默认模型须在模型列表内，超时为1～30秒。配置内容未显示。') from None
+
+
+def api_key(config):
+    """读取密钥；参数：AI配置；返回：优先本机配置，空白时回退环境变量，禁止日志输出。"""
+    return config.api_key.strip() or os.environ.get(config.api_key_env, '').strip()

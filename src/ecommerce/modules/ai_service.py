@@ -1,6 +1,5 @@
 """Web与命令行共用的AI配置状态及固定文本连接检查。"""
-import os
-from ecommerce.infrastructure.ai.config import load_config
+from ecommerce.infrastructure.ai.config import load_config, api_key
 from ecommerce.infrastructure.ai.client import create_client
 
 
@@ -8,7 +7,7 @@ def configuration(settings):
     """读取无密钥的展示信息；参数：应用配置；返回：服务商与模型状态。"""
     config = load_config(settings.root)
     return {'provider': config.provider, 'model': config.model, 'models': list(config.models),
-            'api_key_env': config.api_key_env, 'key_configured': bool(os.environ.get(config.api_key_env, '').strip()),
+            'api_key_env': config.api_key_env, 'key_configured': bool(api_key(config)),
             'timeout_seconds': config.timeout_seconds}
 
 

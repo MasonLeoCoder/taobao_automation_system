@@ -37,9 +37,29 @@ class AITests(unittest.TestCase):
             self.assertTrue(value['key_configured'])
             self.assertNotIn('private-test-secret', json.dumps(value))
         (self.root / 'config').mkdir()
-        for content in ('[ai]\napi_key="secret"', '[ai]\ntimeout_seconds=true', '[ai]\nmodels="abc"', '[ai]\nmodel="unknown"'):
+        for content in ('[ai]\nunknown_key="secret"', '[ai]\napi_key=123', '[ai]\ntimeout_seconds=true', '[ai]\nmodels="abc"', '[ai]\nmodel="unknown"'):
             (self.root / 'config/ai.toml').write_text(content)
             with self.assertRaises(ValueError): load_config(self.root)
+
+    def test_local_key_priority_refresh_and_no_leak(self):
+        """本机密钥优先、动态重读、空白回退；对象和公开状态均不泄密。"""
+        from ecommerce.infrastructure.ai.config import api_key
+        from ecommerce.modules.ai_service import configuration
+        (self.root / 'config').mkdir()
+        path = self.root / 'config/ai.toml'
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY':'environment-secret'}):
+            for key in ('local-secret-one', 'local-secret-two', ''):
+                path.write_text('[ai]\napi_key="' + key + '"', encoding='utf-8')
+                config = load_config(self.root)
+                self.assertEqual(api_key(config), key or 'environment-secret')
+                self.assertNotIn('local-secret', repr(config))
+                self.assertNotIn('local-secret', json.dumps(configuration(self.settings)))
+            path.write_text('[ai]\napi_key="local-secret"', encoding='utf-8')
+            with patch('ecommerce.infrastructure.ai.client.build_opener') as factory:
+                response = factory.return_value.open.return_value.__enter__.return_value
+                response.read.return_value = b'{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}'
+                create_client(load_config(self.root)).complete('test')
+                self.assertEqual(factory.return_value.open.call_args.args[0].get_header('Authorization'),'Bearer local-secret')
 
     def test_client_contract_and_payload(self):
         """限制官方地址、非思考短输出，返回用量和完整结果。"""

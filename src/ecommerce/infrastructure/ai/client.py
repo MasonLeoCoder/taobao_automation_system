@@ -1,6 +1,6 @@
 """AI统一文本客户端及DeepSeek适配；无自动重试、无商品读取和原始响应日志。"""
 import json
-import os
+from ecommerce.infrastructure.ai.config import api_key
 import socket
 from typing import Protocol
 from urllib.error import HTTPError, URLError
@@ -33,11 +33,11 @@ class DeepSeekClient:
 
     def complete(self, text, *, max_tokens=64):
         """单次发送文本；参数：文字和输出上限；返回脱敏结果或AIError。"""
-        key = os.environ.get(self.config.api_key_env, '').strip()
+        key = api_key(self.config)
         if not key:
-            raise AIError('尚未配置密钥，请设置本机环境变量 ' + self.config.api_key_env)
+            raise AIError('尚未配置密钥，请在本机config/ai.toml的[ai]中填写api_key。')
         if not key.isascii() or any(c.isspace() for c in key):
-            raise AIError('密钥格式无效，请检查本机环境变量。')
+            raise AIError('密钥格式无效，请检查本机AI配置。')
         if not isinstance(text, str) or not text.strip() or len(text) > 20000:
             raise AIError('文字须为1～20000个字符。')
         if type(max_tokens) is not int or not 1 <= max_tokens <= 4096:

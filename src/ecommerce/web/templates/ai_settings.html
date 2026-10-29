@@ -6,8 +6,8 @@
 <section class="page-heading"><h1>AI设置</h1><p>选择服务商和模型，检查接口是否可以正常使用。</p></section>
 <section class="panel">
   <h2>DeepSeek连接</h2>
-  <p>密钥状态：<strong>{{ '已配置' if data.key_configured else '未配置' }}</strong>。从本机环境变量 <code>{{ data.api_key_env }}</code> 读取，页面不展示密钥。</p>
-  <p>在Windows搜索“编辑账户的环境变量”，新建上述变量并填入密钥，保存后重新打开启动服务的终端并重启Web服务。</p>
+  <p>密钥状态：<strong>{{ '已配置' if data.key_configured else '未配置' }}</strong>。页面不展示密钥。</p>
+  <p>在本机 <code>config/ai.toml</code> 的 <code>[ai]</code> 下填写 <code>api_key</code>，保存后刷新页面即可。该文件已排除Git提交，只保留在本机。</p>
   <p>可选模型及默认值在 <code>config/ai.toml</code> 配置，模板为 <code>config/ai.example.toml</code>。未创建配置文件时使用默认值。</p>
   <form id="ai-check" data-token="{{ token }}">
     {% call field('服务商') %}{% call select_control({'name':'provider'}) %}<option value="deepseek">DeepSeek</option>{% endcall %}{% endcall %}

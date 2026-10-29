@@ -80,7 +80,7 @@ def start():
     try:
         data = configuration(settings)
         if not data['key_configured']:
-            raise ValueError('尚未配置密钥，请设置本机环境变量后重启Web服务。')
+            raise ValueError('尚未配置密钥，请在本机config/ai.toml的[ai]中填写api_key并刷新页面。')
         for field in ('provider', 'model'):
             if field in values and not isinstance(values[field], str):
                 raise ValueError('服务商和模型须为文字。')
