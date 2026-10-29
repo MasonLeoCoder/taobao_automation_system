@@ -5,6 +5,10 @@ import re
 import tomllib
 
 
+class AIConfigError(ValueError):
+    """可展示且不包含配置原文的配置错误。"""
+
+
 @dataclass(frozen=True)
 class AISettings:
     """调用配置；参数：服务商、默认模型、允许模型、密钥变量和超时。"""
@@ -38,10 +42,12 @@ def load_config(root):
         if config.model not in config.models:
             raise ValueError()
         if not isinstance(config.api_key_env, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,95}', config.api_key_env):
-            raise ValueError()
+            raise AIConfigError('api_key_env只能填写环境变量名称，例如DEEPSEEK_API_KEY。密钥请填写在api_key的双引号内。')
         if type(config.timeout_seconds) is not int or not 1 <= config.timeout_seconds <= 30:
             raise ValueError()
         return config
+    except AIConfigError:
+        raise
     except (OSError, ValueError, TypeError):
         raise ValueError('AI配置无效，请检查config/ai.toml；支持deepseek，默认模型须在模型列表内，超时为1～30秒。配置内容未显示。') from None
 

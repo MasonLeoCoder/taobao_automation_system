@@ -4,6 +4,9 @@
 {% block breadcrumb %}AI设置{% endblock %}
 {% block content %}
 <section class="page-heading"><h1>AI设置</h1><p>选择服务商和模型，检查接口是否可以正常使用。</p></section>
+{% if config_error %}
+<section class="panel" role="alert"><h2>AI配置需要修正</h2><p>{{ config_error }}</p><p>请修改本机 <code>config/ai.toml</code> 后刷新本页。配置原文和密钥不会在这里显示。</p></section>
+{% else %}
 <section class="panel">
   <h2>DeepSeek连接</h2>
   <p>密钥状态：<strong>{{ '已配置' if data.key_configured else '未配置' }}</strong>。页面不展示密钥。</p>
@@ -19,5 +22,6 @@
   <p id="ai-result" role="status" aria-live="polite">尚未测试。</p>
   <p>当前接入范围：配置与文字连接检查。商品详情自动分析尚未接入。</p>
 </section>
+{% endif %}
 {% endblock %}
 {% block extra_scripts %}<script src="{{ url_for('static',filename='ai_settings.js') }}" defer></script>{% endblock %}

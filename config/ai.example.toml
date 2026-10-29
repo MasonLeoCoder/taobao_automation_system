@@ -4,5 +4,6 @@ provider = "deepseek"
 api_key = ""
 model = "deepseek-flash"
 models = ["deepseek-flash", "deepseek-v4-pro"]
-api_key_env = "DEEPSEEK_API_KEY"
+# 可选环境变量回退：这里是变量名称，不是密钥。本机文件方式可直接删除此行。
+# api_key_env = "DEEPSEEK_API_KEY"
 timeout_seconds = 20

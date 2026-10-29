@@ -51,8 +51,13 @@ class ConnectionCheck:
 def index():
     """展示配置状态；参数：无；返回：页面，不访问AI接口。"""
     settings = current_app.config['SETTINGS']
+    try:
+        data = configuration(settings)
+    except ValueError as error:
+        return render_template('ai_settings.html', active='ai', shop_name=settings.shop_name,
+                               config_error=str(error))
     return render_template('ai_settings.html', active='ai', shop_name=settings.shop_name,
-                           data=configuration(settings), token=current_app.config['COLLECTION_TOKEN'])
+                           data=data, token=current_app.config['COLLECTION_TOKEN'])
 
 
 @ai.get('/api/ai/check')

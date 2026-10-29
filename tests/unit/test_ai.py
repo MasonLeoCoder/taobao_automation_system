@@ -61,6 +61,25 @@ class AITests(unittest.TestCase):
                 create_client(load_config(self.root)).complete('test')
                 self.assertEqual(factory.return_value.open.call_args.args[0].get_header('Authorization'),'Bearer local-secret')
 
+    def test_invalid_config_page_never_leaks_secret(self):
+        """错填密钥或损坏TOML时返回可读页面，不500、不泄露配置、不联网。"""
+        from ecommerce.web.app import create_app
+        app = create_app(self.settings)
+        self.addCleanup(app.extensions['ai_check'].pool.shutdown, wait=True)
+        client = app.test_client()
+        (self.root / 'config').mkdir()
+        path = self.root / 'config/ai.toml'
+        for content in ('[ai]\napi_key_env="sk-private-secret"', '[ai]\napi_key="sk-private-secret'):
+            path.write_text(content, encoding='utf-8')
+            with patch('ecommerce.infrastructure.ai.client.build_opener') as network:
+                response = client.get('/settings/ai')
+                self.assertEqual(response.status_code,200)
+                text=response.get_data(as_text=True)
+                self.assertIn('AI配置需要修正',text)
+                self.assertNotIn('sk-private-secret',text)
+                self.assertNotIn('id="ai-check"',text)
+                network.assert_not_called()
+
     def test_client_contract_and_payload(self):
         """限制官方地址、非思考短输出，返回用量和完整结果。"""
         with patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'secret'}), patch('ecommerce.infrastructure.ai.client.build_opener') as factory:
