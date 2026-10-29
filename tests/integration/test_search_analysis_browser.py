@@ -124,6 +124,76 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('.sa-rules-body')).to_contain_text('先确定商品观察，再排除广告')
         self.assertEqual(self.errors, [])
 
+    def test_shop_concentration_expand_sorted_items_and_details(self):
+        """店名原地展开、多个店铺可同时打开，子商品降序且缺价商品可查看依据。"""
+        for i in range(4,16): self.fixture.observation(i,sales_count=i*100,shop_name='A店' if i%2==0 else 'B店',price_value=None if i==15 else i)
+        self.page.goto('http://127.0.0.1/analysis/searches?view=stores')
+        module=self.page.locator('#sa-shop-concentration')
+        self.assertIsNone(module.get_attribute('open'))
+        self.assertTrue(self.page.evaluate("document.querySelector('#sa-middle').nextElementSibling.id==='sa-shop-concentration'"))
+        module.locator(':scope > summary').click()
+        group=module.locator('[data-shop-key="name:B店"]')
+        before=self.page.url
+        group.locator(':scope > summary').click()
+        self.assertEqual(self.page.url,before)
+        expect(group.locator('.sa-shop-item')).to_have_count(6)
+        self.assertEqual(group.locator('.sa-shop-item').evaluate_all('rows=>rows.map(r=>Number(r.dataset.shopItemId))'),[15,13,11,9,7,5])
+        module.locator('[data-shop-key="name:A店"] > summary').click()
+        self.assertIsNotNone(group.get_attribute('open'))
+        group.locator('[data-shop-item-id="15"] [data-analysis-detail]').click()
+        expect(self.page.locator('#sa-detail-dialog')).to_be_visible()
+        expect(self.page.locator('#sa-detail-content').get_by_text('#15',exact=True)).to_be_visible()
+        self.page.locator('[data-sa-close="sa-detail-dialog"]').click()
+        module.locator('[data-shop-drilldown="shop_cr3"]').click()
+        expect(self.page.locator('#sa-detail-form>span')).to_contain_text('14 项商品')
+        self.assertIn('finding=shop_cr3',self.page.locator('#sa-export').get_attribute('href'))
+        self.assertEqual(self.errors,[])
+
+    def test_shop_concentration_mobile_help_and_original_drilldown(self):
+        """手机优先显示商品/人数/店内占比；公共提示和其他价位钻取不受影响。"""
+        for i in range(4,16): self.fixture.observation(i,sales_count=i*100,shop_name='A店' if i%2==0 else 'B店')
+        self.goto()
+        module=self.page.locator('#sa-shop-concentration')
+        module.locator(':scope > summary').click()
+        module.locator('[data-shop-key="name:B店"] > summary').click()
+        for width in (1480,390):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+        first=module.locator('[data-shop-key="name:B店"] .sa-shop-item').first
+        expect(first.locator('.sa-shop-item-share')).to_be_visible()
+        group=module.locator('[data-shop-key="name:B店"]')
+        group.locator(':scope > summary [data-shop-metric-key="share"]').click()
+        expect(self.page.get_by_role('tooltip')).to_contain_text('缺少店铺的商品不进入这个分母')
+        self.assertIsNotNone(group.get_attribute('open'))
+        self.page.keyboard.press('Escape')
+        self.page.set_viewport_size({'width':1480,'height':1000})
+        module.locator('.sa-shop-columns [data-shop-metric-key="cumulative"]').hover()
+        expect(self.page.get_by_role('tooltip')).to_contain_text('一直加到当前店铺')
+        self.page.keyboard.press('Escape')
+        module.locator('[data-shop-drilldown="shop_cr3"]').click()
+        self.page.locator('[data-price-bin]').first.click()
+        self.assertNotIn('finding=shop_',self.page.url)
+        self.assertEqual(self.errors,[])
+
+    def test_shop_concentration_missing_and_zero_states(self):
+        """没有店铺时不造未知商家，全零不造占比，覆盖与不足店铺明确提示。"""
+        with self.fixture.engine.begin() as connection:
+            connection.execute(self.fixture.tables['list_observations'].update().values(shop_name=None))
+        self.goto()
+        module=self.page.locator('#sa-shop-concentration')
+        module.locator(':scope > summary').click()
+        expect(module).to_contain_text('2件入选商品缺少店铺')
+        expect(module.locator('.sa-shop-group')).to_have_count(0)
+        expect(module.locator('[data-shop-metric="HHI"]')).to_contain_text('暂无可计算店铺')
+        for i in range(4,16): self.fixture.observation(i,sales_count=0,sales_precision='exact',shop_name='零值店')
+        self.page.goto('http://127.0.0.1/analysis/searches?exclude_ads=1')
+        module.locator(':scope > summary').click()
+        expect(module.locator('[data-shop-metric="HHI"]')).to_contain_text('人数展示值合计为0')
+        expect(module.locator('[data-shop-metric="CR10"]')).to_contain_text('店铺分组不足10组')
+        module.locator('.sa-shop-group > summary').click()
+        expect(module.locator('.sa-shop-item-share').first).to_contain_text('无法计算')
+        self.assertEqual(self.errors,[])
+
     def test_middle_metric_help_hover_focus_escape_and_safe_text(self):
         """名称和图标可悬停，说明统一且不裁切，聚焦可读、Esc关闭，文字不执行HTML。"""
         for i in range(4,34): self.fixture.observation(i,sales_count=5000,price_value=8.905)

@@ -9,6 +9,7 @@ from flask import Blueprint, abort, current_app, render_template, request, url_f
 
 from ecommerce.modules.analysis.service import analysis_page
 from ecommerce.modules.analysis.middle import MIDDLE_FINDINGS
+from ecommerce.modules.analysis.shop_concentration import SHOP_FINDINGS
 from ecommerce.infrastructure.storage.collection_queries import public
 
 analysis = Blueprint('analysis', __name__)
@@ -89,11 +90,15 @@ def index():
     """展示真实搜索词样本分析；参数：URL筛选；返回：概况、图表和分页明细。"""
     data = _read()
     settings = current_app.config['SETTINGS']
-    if data['filters']['view'] != 'stores':
-        from ecommerce.infrastructure.storage.search_analysis import attach_previews
-        from ecommerce.modules.collection.queries import inspect_thumbnails
-        attach_previews(settings, data['table_rows'])
-        inspect_thumbnails(settings, data['table_rows'])
+    from ecommerce.infrastructure.storage.search_analysis import attach_previews
+    from ecommerce.modules.collection.queries import inspect_thumbnails
+    detail_products=data['table_rows'] if data['filters']['view']!='stores' else []
+    shop_products=[row for group in data['shop_concentration']['groups'] for row in group['members']]
+    unique={row['id']:row for row in [*detail_products,*shop_products]}
+    attach_previews(settings,list(unique.values()))
+    inspect_thumbnails(settings,list(unique.values()))
+    for row in [*detail_products,*shop_products]:
+        row.update({key:unique[row['id']][key] for key in ('thumbnail','thumbnail_file','thumbnail_message','source_page') if key in unique[row['id']]})
     values = _parameters(data['filters'])
 
     def analysis_url(**overrides):
@@ -107,13 +112,17 @@ def index():
         return url_for('analysis.index', **{**values, 'page': 1, **overrides})
 
     browser_data = {'points': [_point(row) for row in data['scatter']],
-        'details': [_point(row) for row in data['table_rows']] if data['filters']['view'] != 'stores' else [],
+        'details': [_point(row) for row in [*detail_products,*shop_products]],
         'price_bins': data['price_bins'], 'filters': data['filters']}
+    shop_scope={**values,'page':1,'finding':'shop_all','sort':'concentration','bin':None,'quantity_tier':None,
+                'region':None,'city':None,'q':None,'store':None,'table_group':'all','view':'goods'}
     return render_template('search_analysis.html', active='analysis', shop_name=settings.shop_name,
         analysis_url=analysis_url, analysis_money=_money, analysis_number=_number, export_url=url_for('analysis.export', **{**values, 'page': 1}),
         analysis_compact_number=_compact_number, analysis_stat_money=_stat_money,
         middle_export_url=url_for('analysis.export',**{**values,'page':1,'finding':'middle','sort':'concentration',
             'bin':None,'quantity_tier':None,'region':None,'city':None,'q':None,'store':None,'table_group':'all','view':'goods'}),
+        shop_items_export_url=url_for('analysis.export',**shop_scope),
+        shop_summary_export_url=url_for('analysis.export_shop_summary',**shop_scope),
         browser_data=public(browser_data), **public({key: value for key, value in data.items() if key not in {'all_rows', 'detail_rows', 'scatter'}}))
 
 
@@ -146,6 +155,22 @@ def _middle_metadata(data):
     return values
 
 
+def _shop_metadata(data, force=False):
+    """补充店铺计算范围；参数：分析结果、是否为独立汇总导出；返回：CSV附加说明。"""
+    if not force and data['filters']['finding'] not in SHOP_FINDINGS:
+        return []
+    s=data['shop_concentration']
+    return ['店铺计算口径','同一前50名单按近30天收货人数展示下限分组，缺店铺单列并排除分母',
+            '前50实际商品数',s['selected_count'],'前50人数展示值合计',s['selected_total'],
+            '店铺可识别商品数',s['known_count'],'店铺缺失商品数',s['missing_count'],
+            '店铺计算分母',s['total'],'缺店铺人数展示值',s['missing_total'],
+            '商品覆盖率（%）',s['product_coverage'],'人数展示值覆盖率（%）',s['quantity_coverage'],
+            '可靠标识分组数',s['reliable_count'],'名称近似分组数',s['name_count'],
+            '店铺CR3（%）',s['metrics'][0]['value'],'店铺CR10（%）',s['metrics'][1]['value'],'店铺HHI',s['hhi'],
+            '店铺同值排序','合计降序、最靠前商品计算序号升序、分组键升序',
+            '店内占比分母','该店在前50中入选商品的展示值合计']
+
+
 @analysis.get('/analysis/searches/export.csv')
 def export():
     """导出全部已筛选明细；参数：与分析页相同；返回：UTF-8 BOM CSV，不受显示分页截断。"""
@@ -170,7 +195,7 @@ def export():
         + (['集中度筛选',{'top3':'入选样本前3件','top10':'入选样本前10件','top50':'入选样本全部商品'}[filters['finding']],
             '集中度计算口径','近30天收货人数，精确值直接使用，下界值取展示整数',
             '集中度参与件数',data['concentration']['count'],'集中度人数计算值合计',data['concentration']['total']]
-           if filters['finding'] in {'top3','top10','top50'} else [])+_middle_metadata(data))
+           if filters['finding'] in {'top3','top10','top50'} else [])+_middle_metadata(data)+_shop_metadata(data))
     if filters['view'] == 'stores':
         writer.writerow(['店铺名称', '识别依据', '样本商品数', '占当前明细商品比例（%）', '最低入口价', '最高入口价'])
         for row in data['shops']:
@@ -178,14 +203,38 @@ def export():
     else:
         writer.writerow(['观察编号', '商品内部编号', '平台商品编号（文本）', '标题', '入口价数值', '价格原文', '价格条件',
             '数量原文', '数量数值', '数量口径及周期', '数量精度', '店铺', '店铺识别依据', '地区', '广告识别', '采集时间（北京时间）',
-            '任务编号', '批次编号', '搜索页码', '原始格子位置', '范围内展示次数'])
+            '任务编号', '批次编号', '搜索页码', '原始格子位置', '范围内展示次数']
+            + (['店铺分组键','店铺计算序号','商品计算序号','店内占比（%）','店铺人数展示值合计'] if filters['finding'] in SHOP_FINDINGS else []))
+        shop_items={row['id']:[group['key'],group['rank'],row['rank'],row['shop_share'],group['total']]
+                    for group in data['shop_concentration']['groups'] for row in group['members']}
         for row in data['detail_rows']:
             writer.writerow([_csv_cell(value) for value in [row['id'], row['product_id'],
                 "'" + row['platform_product_id'] if row.get('platform_product_id') else '', row.get('title'), row['price'],
                 row.get('price_text'), row.get('price_label'), row.get('sales_text'), row.get('sales_count'), row['sales_group_label'],
                 row['precision_label'], row.get('shop_name'), row['shop_basis'], row.get('location_text'),
                 {'identified': '已识别广告', 'not_identified': '未命中标识（不等于非广告）'}.get(row.get('ad_status'), '广告未确认'),
-                row.get('captured_at'), row.get('task_id'), row['batch_id'], row.get('page_number'), row.get('slot_index'), row['occurrences']]])
+                row.get('captured_at'), row.get('task_id'), row['batch_id'], row.get('page_number'), row.get('slot_index'), row['occurrences']]
+                + (shop_items[row['id']] if filters['finding'] in SHOP_FINDINGS else [])])
     response = Response('\ufeff' + buffer.getvalue(), content_type='text/csv; charset=utf-8')
     response.headers['Content-Disposition'] = 'attachment; filename="search-analysis-' + datetime.now(BEIJING).strftime('%Y%m%d-%H%M%S-%f') + '.csv"'
+    return response
+
+
+@analysis.get('/analysis/searches/shop-summary.csv')
+def export_shop_summary():
+    """导出固定店铺汇总；参数：顶部分析范围；返回：与展开子商品可按分组键核对的CSV。"""
+    from datetime import datetime
+    from ecommerce.shared.time import BEIJING
+    data=_read(); filters=data['filters']
+    buffer=StringIO(newline=''); writer=csv.writer(buffer)
+    writer.writerow(['店铺集中度汇总','搜索词',_csv_cell(filters['keyword']),'采集范围',filters['snapshot'],
+                     '日期起',filters['since'],'日期止',filters['until'],'排除已识别广告',filters['exclude_ads'],
+                     '导出范围','固定前50中的已知店铺，明细查询不改变汇总']+_shop_metadata(data,True))
+    writer.writerow(['店铺计算序号','店铺分组键','店铺名称','识别依据','入选商品数','人数展示值合计',
+                     '样本占比（%）','累计占比（%）','单链接平均值','头部件数','腰部件数','后部件数'])
+    for group in data['shop_concentration']['groups']:
+        writer.writerow([_csv_cell(group[key]) for key in ('rank','key','name','basis','count','total','share','cumulative',
+                                                          'mean','head_count','middle_count','tail_count')])
+    response=Response('\ufeff'+buffer.getvalue(),content_type='text/csv; charset=utf-8')
+    response.headers['Content-Disposition']='attachment; filename="shop-concentration-'+datetime.now(BEIJING).strftime('%Y%m%d-%H%M%S-%f')+'.csv"'
     return response

@@ -20,6 +20,10 @@
 
 - 单次任务每件商品取首次完整观察；日期范围每件商品取最新完整观察。身份未确认按观察分别保留，先选观察再排广告，不用旧记录补位。
 
+`shop_concentration.shop_concentration`仅接受同一concentration.members，按现有shop_key分组，不擅自合并不同路由或从名单外补店铺。缺shop_key记录单独累计商品数及展示值，排除店铺指标分母；公开路由与name:近似组分别计数。店铺按合计降序、最早入选rank升序、key升序稳定排序，members按全局rank保持人数顺序，父子count/total和分段数量守恒。Decimal计算CR3/CR10、HHI、均匀参照、累计、均值、店内占比；零合计无百分比，店铺不足对应组数无CR。
+
+`finding=shop_all/shop_cr3/shop_cr10`选店铺可识别商品或前3/10组子商品，sort=concentration仍按原商品序号。明细查询/分页不改变店铺汇总及原分析，其他价位/地区/档位入口清理旧finding。独立shop-summary.csv按顶部范围导出完整分组，原export.csv仅在店铺finding的商品视图附5列关联字段，其他导出列不变。preview按观察ID去重读取原批次/位置图片，子商品可调用原侧栏查看依据，包括原主表为店铺视图的情况；没有跨观察借图，不写数据库或新增采集任务。
+
 腰部指标的通俗名称及解释统一在Web模板metric_help_definitions.html维护，卡片/对照表调用公共help_label；悬停/键盘/触屏行为由help_tooltip.js处理。Web的_stat_money仅将腰部价格统计显示两位，_compact_number将人数统计显示最多两位并去除末尾0；原业务Decimal、商品_money和CSV数值均不变。解释文案不进入本业务模块或数据库。
 
 `middle.middle_performance`只接收集中度结果，固定使用members[:10]作头部、members[10:30]作腰部，不重排或补样。整数/Decimal计算人数合计、单件均值、中位数和占前50比例，价格四分位数复用prices.quantile线性插值，各组有效人民币价格独立作分母。已知店铺以既有shop_key分组，头腰交集比例分母为腰部已知店铺数，缺失店铺及时间单列。边界使用完整有效候选的tie_count说明，档位精度不合并。
