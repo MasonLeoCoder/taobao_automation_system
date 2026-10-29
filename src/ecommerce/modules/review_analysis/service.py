@@ -16,7 +16,7 @@ from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import owner_alive, process_started_at, atomic_json
 from ecommerce.shared.exceptions import TaskBusy
-from ecommerce.modules.review_analysis import rules, planning
+from ecommerce.modules.review_analysis import rules, planning, validation
 
 
 def identifier(value):
@@ -122,36 +122,98 @@ def read(settings, task_id):
     data['detail_locations'] = {str(d['result']['id']): index // PAGE_SIZE + 1 for index, d in enumerate(data['details'])}
     data['report_stale'] = bool(data['report'] and data['report']['content']['detail_revisions'] != {d['id']: d['revision'] for d in data['details']})
     data['budget'] = repository.budget_status(task['parameters'], data['calls'])
-    data['resume_budget'] = remaining_budget(data)
+    try:
+        data['resume_budget'] = remaining_budget(data)
+    except ValueError as error:
+        data['resume_budget'] = {'blocked':str(error),'required_calls':0,'suggested_tokens':task['parameters']['max_tokens'],
+            'suggested_calls':task['parameters']['max_calls'],'supplement':{'source_ids':[],'groups':[]},'plan_hash':''}
     plan = task['parameters'].get('plan')
     data['outgoing'] = planning.requests(plan, task['rules']['classify'], [s['snapshot'] for s in data['sources']]) if plan else []
+    done = {detail['result']['id'] for detail in data['details']}
+    data['validation_issues'] = validation.pending_issues(task['parameters'], done)
+    data['normalizations'] = [change for record in task['parameters'].get('validation_history',[]) for change in record['adjustments']]
+    data['needs_local_recovery'] = needs_local_recovery(data)
     return data
+
+
+def needs_local_recovery(data):
+    """检查有原响应但尚未做逐条校验的失败调用；参数：任务；返回：是否应先本地恢复。"""
+    checked = {record['call_id'] for record in data['task']['parameters'].get('validation_history',[]) if record['policy']==validation.POLICY}
+    done = {detail['result']['id'] for detail in data['details']}
+    return any(call['kind']=='classify' and call['status'] not in {'inflight','unknown'} and call['response'] is not None
+               and call['id'] not in checked and any(uid not in done for uid in call['request']['source_ids']) for call in data['calls'])
+
+
+def continuation(data):
+    """只为未完成评价构建补处理预览，原计划不变；参数：任务；返回：完整补处理方案。"""
+    task, parameters = data['task'], data['task']['parameters']
+    done = {detail['result']['id'] for detail in data['details']}
+    pending = [source['snapshot'] for source in sorted(data['sources'],key=lambda source:source['position']) if source['review_id'] not in done]
+    plan = parameters.get('plan')
+    groups = []
+    if pending and plan:
+        instruction = task['rules']['classify'] + validation.SUPPLEMENT
+        proposed = planning.build(pending,instruction,plan['context'],plan['topic_reference'],task['rules']['report'],plan['timeout_seconds'])
+        groups = planning.requests(proposed,instruction,pending)
+    elif pending:
+        for index,group in enumerate(chunks(pending,task['rules']['classify']),1):
+            prompt = task['rules']['classify'] + json.dumps(group,ensure_ascii=False)
+            groups.append({'index':index,'source_ids':[item['id'] for item in group],'prompt':prompt,
+                           'max_output_tokens':parameters['max_output_tokens'],'reserved_tokens':planning.reserve(prompt,parameters['max_output_tokens'])})
+    report_needed = not any(call['kind']=='report' and call['status']=='succeeded' for call in data['calls'])
+    return {'version':1,'policy':validation.POLICY,'source_ids':[item['id'] for item in pending],
+            'groups':groups,'report_needed':report_needed,'required_calls':len(groups)+int(report_needed)}
 
 
 def remaining_budget(data):
     """估算继续当前任务所需额度；参数：持久任务及明细；返回：剩余预留和建议总上限。"""
     task, parameters = data['task'], data['task']['parameters']
-    done = {detail['result']['id'] for detail in data['details']}
-    sources = [source['snapshot'] for source in data['sources']]
+    supplement = continuation(data)
     if parameters.get('plan'):
         plan = parameters['plan']
-        needed = [group for group in plan['groups'] if any(uid not in done for uid in group['source_ids'])]
-        tokens = sum(group['reserved_tokens'] for group in needed)
-        count = len(needed)
         report_reserve = plan['report_reserved_tokens']
     else:
-        needed = [group for group in chunks(sources, task['rules']['classify']) if any(item['id'] not in done for item in group)]
-        tokens = sum(planning.reserve(task['rules']['classify'] + json.dumps(group, ensure_ascii=False), parameters['max_output_tokens']) for group in needed)
-        count = len(needed)
         report_reserve = len(task['rules']['report'].encode()) + 60000 + parameters['max_output_tokens'] + 256
-    if not any(call['kind'] == 'report' and call['status'] == 'succeeded' for call in data['calls']):
+    tokens = sum(group['reserved_tokens'] for group in supplement['groups'])
+    if supplement['report_needed']:
         tokens += report_reserve
-        count += 1
     budget = repository.budget_status(parameters, data['calls'])
     minimum = budget['used_tokens'] + tokens
-    return {'minimum_tokens': minimum, 'required_calls': count,
+    return {'minimum_tokens': minimum, 'required_calls': supplement['required_calls'], 'supplement':supplement,
+            'plan_hash':fingerprint(supplement),
             'suggested_tokens': max(parameters['max_tokens'], minimum + max(4096, (tokens + 9) // 10)),
-            'suggested_calls': max(parameters['max_calls'], len(data['calls']) + count)}
+            'suggested_calls': max(parameters['max_calls'], len(data['calls']) + supplement['required_calls'])}
+
+
+def recover_saved(settings, task_id):
+    """本地恢复已有返回并追加统计，不派发进程或调用AI；参数：任务编号；返回：恢复数量及问题。"""
+    identifier(task_id)
+    with shop_lock(settings.workspace / 'storage/analysis_dispatch' / task_id):
+        data = read(settings,task_id)
+        owner = data['task'].get('owner') or {}
+        if owner and owner_alive(owner.get('pid'),owner.get('started_at')) is not False:
+            raise ValueError('分析进程仍存活或身份无法确认，不能同时本地恢复。')
+        if data['task']['status']=='succeeded':
+            raise ValueError('任务已经完成，不重复恢复已有结果。')
+        by_id = {source['review_id']:source['snapshot'] for source in data['sources']}
+        added, recorded = [], False
+        for call in data['calls']:
+            if call['kind']!='classify' or call['response'] is None or call['status'] in {'inflight','unknown'}:
+                continue
+            source_ids = call['request']['source_ids']
+            assessment = validation.assess(call['response']['text'],[by_id[uid] for uid in source_ids],finish_reason=call['response']['finish_reason'])
+            outcome = repository.recover_call(settings,task_id,call['id'],assessment,fingerprint(call['response']))
+            added.extend(outcome['added_ids']); recorded = recorded or outcome['recorded']
+        current = read(settings,task_id)
+        count = len(current['details'])
+        if recorded or current['report_stale']:
+            messages = [f'本地校验已保存{count}/{current["task"]["source_count"]}条；其余待复核，本操作未调用AI。']
+            build_report(settings,task_id,issues=messages)
+        if recorded or added or current['report_stale'] or (current['task']['status']=='failed' and count):
+            repository.update_task(settings,task_id,status='partial' if count else 'failed',active_key=None,owner=None,
+                message=f'本地校验已保存{count}/{current["task"]["source_count"]}条，{current["task"]["source_count"]-count}条待处理；总报告未完成，未调用AI。')
+        return {'id':task_id,'added_count':len(added),'processed_count':count,'pending_count':current['task']['source_count']-count,
+                'issue_count':len(current['validation_issues']),'ai_calls':0}
 
 
 def history_page(settings, product, batch=None):
@@ -205,7 +267,7 @@ def launch(settings, task_id):
                                message='后台进程未能启动；未发起AI请求，可手动继续。')
 
 
-def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, max_tokens=None, max_calls=None):
+def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, max_tokens=None, max_calls=None, plan_hash=None):
     """明确恢复未完成部分；参数：任务、费用及未知请求确认；返回：任务编号。"""
     if allow_paid is not True:
         raise ValueError('继续分析需要明确允许调用费用。')
@@ -229,7 +291,11 @@ def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, ma
             for key, name in [('calls', 'analysis_calls'), ('details', 'analysis_details'), ('sources', 'analysis_sources')]:
                 table = tables[name]
                 current[key] = [dict(value) for value in conn.execute(sa.select(table).where(table.c.analysis_id == task_id)).mappings()]
+            if needs_local_recovery(current):
+                raise ValueError('已有可利用的AI返回，请先执行“重新校验已有返回”；本次未发起付费请求。')
             required = remaining_budget(current)
+            if plan_hash is not None and plan_hash != required['plan_hash']:
+                raise ValueError('剩余评价或补处理计划已变化，请刷新预览后再确认费用。')
             parameters = dict(row['parameters'])
             tokens = parameters['max_tokens'] if max_tokens is None else max_tokens
             count = parameters['max_calls'] if max_calls is None else max_calls
@@ -243,6 +309,10 @@ def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, ma
                     'before': {'max_tokens': parameters['max_tokens'], 'max_calls': parameters['max_calls']},
                     'after': {'max_tokens': tokens, 'max_calls': count}, 'reason': '用户确认追加额度并继续未完成部分'}]
                 parameters.update(max_tokens=tokens, max_calls=count)
+            supplement = {**required['supplement'],'id':uuid4().hex,'time':database_now().isoformat()+'+08:00',
+                          'plan_hash':required['plan_hash']}
+            parameters['supplement_history'] = [*parameters.get('supplement_history',[]),supplement]
+            parameters['active_supplement'] = supplement
             t = tables['analysis_tasks']
             if conn.scalar(sa.select(sa.func.count()).select_from(t).where(t.c.active_key == row['fingerprint'], t.c.id != task_id)):
                 raise ValueError('已有相同资料与规则的分析正在运行，请先查看该任务。')
@@ -300,7 +370,10 @@ def execute(settings, task_id, events):
     client = create_client(config, provider=task['provider'], model=task['model'])
     inputs = [s['snapshot'] for s in data['sources']]
     plan = task['parameters'].get('plan')
-    if plan:
+    active_supplement = task['parameters'].get('active_supplement')
+    if active_supplement:
+        groups = active_supplement['groups']
+    elif plan:
         groups = planning.requests(plan, task['rules']['classify'], inputs)
     else:
         # 旧任务继续沿用原10条/18000字符规则和已保存的提示词，不重排来源。
@@ -310,6 +383,7 @@ def execute(settings, task_id, events):
     complete_ids = {d['result']['id'] for d in data['details']}
     receipts = settings.workspace / 'output/analysis_receipts' / task_id
     receipts.mkdir(parents=True, exist_ok=True)
+    receipt_issues = []
     # 断库时已落盘的响应先补写，不重发原请求。
     for call in data['calls']:
         if call['status'] != 'inflight':
@@ -317,16 +391,23 @@ def execute(settings, task_id, events):
         receipt = receipts / (call['id'] + '.json')
         if receipt.exists():
             response = json.loads(receipt.read_text(encoding='utf-8'))
+            if call['kind'] == 'classify':
+                assessment = validation.assess(response['text'],[s for s in inputs if s['id'] in call['request']['source_ids']],
+                                               finish_reason=response['finish_reason'])
+                message = assessment['issues'][0]['message'] if assessment['issues'] else ''
+                repository.finish_call(settings,task_id,call['id'],'invalid' if assessment['issues'] else 'succeeded',response,
+                                       message,assessment=assessment)
+                complete_ids.update(result['id'] for result in assessment['results'])
+                if assessment['issues']:
+                    receipt_issues.append('已有返回含待复核问题，合格评价已保存；未自动重试。')
+                continue
             try:
                 if response['finish_reason'] != 'stop':
                     raise ValueError('返回被截断。')
-                if call['kind'] == 'classify':
-                    parsed = rules.classification(response['text'], [s for s in inputs if s['id'] in call['request']['source_ids']])
-                else:
-                    context = rules.report_context(repository.read(settings, task_id)['details'], task['rules'],
-                        source_count=task['source_count'], product_context=plan['context'] if plan else None)
-                    rules.validate_report(response['text'], context)
-                    parsed = None
+                context = rules.report_context(repository.read(settings, task_id)['details'], task['rules'],
+                    source_count=task['source_count'], product_context=plan['context'] if plan else None)
+                rules.validate_report(response['text'], context)
+                parsed = None
                 repository.finish_call(settings, task_id, call['id'], 'succeeded', response, results=parsed)
                 complete_ids.update(p['id'] for p in parsed or [])
             except ValueError as error:
@@ -351,6 +432,17 @@ def execute(settings, task_id, events):
             repository.finish_call(settings, task_id, call_id, 'unknown', None, str(error))
             raise ValueError(str(error) + ' 调用记录已保留，未自动重试；无完整响应时用量仍记为未知。') from None
         atomic_json(receipts / (call_id + '.json'), response)
+        if kind == 'classify':
+            assessment = validator(response['text']) if response['finish_reason']=='stop' else validation.assess('',[],finish_reason=response['finish_reason'])
+            assessment['source_ids'] = ids
+            message = assessment['issues'][0]['message'] if assessment['issues'] else ''
+            repository.finish_call(settings,task_id,call_id,'invalid' if assessment['issues'] else 'succeeded',response,
+                                   message,assessment=assessment)
+            complete_ids.update(result['id'] for result in assessment['results'])
+            if assessment['issues']:
+                raise ValueError(f'本次返回已保存{len(assessment["results"])}条合格评价，其他问题已列出；{message}')
+            events.emit('analysis_call_finished','逐条校验已保存',details={'analysis_id':task_id,'call_id':call_id})
+            return assessment['results']
         try:
             if response['finish_reason'] != 'stop':
                 raise ValueError('AI输出未完整结束，原始返回和用量已保存。')
@@ -365,6 +457,8 @@ def execute(settings, task_id, events):
     issues = []
     narrative = None
     try:
+        if receipt_issues:
+            raise ValueError(receipt_issues[0])
         for group in groups:
             index = group['index']
             missing = [s for s in inputs if s['id'] in group['source_ids'] and s['id'] not in complete_ids]
@@ -375,7 +469,7 @@ def execute(settings, task_id, events):
                 raise ValueError('已保存明细与固定发送分组不一致，未重复发送已完成评价。')
             prompt = group['prompt'] if plan else task['rules']['classify'] + json.dumps(missing, ensure_ascii=False)
             request('classify', index, prompt, [s['id'] for s in missing],
-                    lambda text: rules.classification(text, missing), group['max_output_tokens'])
+                    lambda text: validation.assess(text, missing), group['max_output_tokens'])
             complete_ids.update(s['id'] for s in missing)
         current = repository.read(settings, task_id)
         context = rules.report_context(current['details'], task['rules'], source_count=task['source_count'],
@@ -392,6 +486,7 @@ def execute(settings, task_id, events):
     build_report(settings, task_id, narrative=narrative, issues=issues)
     status = 'succeeded' if not issues else 'partial' if complete_ids else 'failed'
     message = '分析完成，结果尚未人工复核。' if not issues else (
-        '逐条分析完成，总报告未完成；' if len(complete_ids) == task['source_count'] else '本轮停止，已保存部分结果；') + issues[0]
+        '逐条分析完成，总报告未完成；' if len(complete_ids) == task['source_count'] else
+        '本轮停止，已保存部分结果；' if complete_ids else '本轮停止，暂无通过校验的评价；') + issues[0]
     repository.update_task(settings, task_id, status=status, active_key=None, owner=None, message=message)
     return status

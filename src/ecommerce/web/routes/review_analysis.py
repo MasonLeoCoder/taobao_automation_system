@@ -137,7 +137,17 @@ def status(task_id):
 @review_analysis.post('/api/analysis/reviews/tasks/<task_id>/resume')
 def resume(task_id):
     """明确恢复未完成部分；参数：费用及未知请求确认；返回：任务编号。"""
-    return jsonify(service.resume(settings(), task_id, **payload({'allow_paid', 'acknowledge_unknown', 'max_tokens', 'max_calls'})))
+    values=payload({'allow_paid', 'acknowledge_unknown', 'max_tokens', 'max_calls','plan_hash'}, {'plan_hash'})
+    if not isinstance(values['plan_hash'],str) or len(values['plan_hash'])!=64:
+        raise ValueError('请先查看本次补处理计划，再确认继续。')
+    return jsonify(service.resume(settings(), task_id, **values))
+
+
+@review_analysis.post('/api/analysis/reviews/tasks/<task_id>/recover')
+def recover(task_id):
+    """仅恢复已有返回，不接收费用确认或调用AI；参数：任务；返回：本地恢复结果。"""
+    payload(set())
+    return jsonify(service.recover_saved(settings(),task_id))
 
 
 @review_analysis.post('/api/analysis/reviews/tasks/<task_id>/details/<detail_id>')

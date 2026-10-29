@@ -24,8 +24,14 @@ def execute(settings, args):
     elif action == 'history':
         result = repository.history(settings, service.product_id(args.input))
     elif action == 'resume':
-        result = service.resume(settings, args.task_id, allow_paid=args.allow_paid, acknowledge_unknown=args.acknowledge_unknown,
-                                max_calls=args.max_calls, max_tokens=args.max_tokens)
+        data = service.read(settings,args.task_id)
+        if args.preview:
+            result = {'task_id':args.task_id,'needs_local_recovery':data['needs_local_recovery'],'pending_plan':data['resume_budget']}
+        else:
+            result = service.resume(settings, args.task_id, allow_paid=args.allow_paid, acknowledge_unknown=args.acknowledge_unknown,
+                                    max_calls=args.max_calls, max_tokens=args.max_tokens,plan_hash=data['resume_budget']['plan_hash'])
+    elif action == 'recover':
+        result = service.recover_saved(settings,args.task_id)
     elif action == 'recount':
         result = service.recount(settings, args.task_id)
     else:

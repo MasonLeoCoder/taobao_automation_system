@@ -136,8 +136,16 @@
     });
   });
   bind('[data-ra-resume]', form => ({allow_paid:form.elements.allow_paid.checked, acknowledge_unknown:form.elements.acknowledge_unknown.checked,
+    plan_hash:form.dataset.planHash,
     max_tokens:form.elements.increase_budget.checked ? Number(form.elements.max_tokens.value) : null,
     max_calls:form.elements.increase_budget.checked ? Number(form.elements.max_calls.value) : null}), () => location.reload());
+  document.querySelectorAll('[data-ra-recover]').forEach(button => button.addEventListener('click', async () => {
+    button.disabled = true;
+    const feedback = document.querySelector('#ra-global-feedback');
+    feedback.textContent = '正在本地校验已有返回，不调用AI…';
+    try { await post(button.dataset.raRecover,{}); location.reload(); }
+    catch(error) { feedback.textContent = error.message; button.disabled = false; }
+  }));
   bind('[data-ra-correct]', form => ({expected_revision:Number(form.dataset.revision), kind:form.elements.kind.value,
     excluded:form.elements.excluded.checked, reason:form.elements.reason.value,
     points:[...form.querySelectorAll('[data-ra-point]')].filter(row => row.querySelector('[name=keep]').checked).map(row => ({

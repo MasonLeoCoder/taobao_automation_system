@@ -18,7 +18,7 @@ def parser() -> argparse.ArgumentParser:
     kinds = analysis.add_subparsers(dest='analysis_type', required=True)
     reviews = kinds.add_parser('reviews', help='评价分析：初评与追评一起处理')
     actions = reviews.add_subparsers(dest='action', required=True)
-    for name in ('preview', 'start', 'history', 'status', 'resume', 'recount', 'export'):
+    for name in ('preview', 'start', 'history', 'status', 'resume', 'recover', 'recount', 'export'):
         command = actions.add_parser(name)
         if name in {'preview', 'start', 'history'}:
             command.add_argument('--input', required=True, help='淘宝商品编号')
@@ -36,6 +36,7 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument('--allow-paid', action='store_true', help='明确允许发送资料及AI费用')
         if name == 'resume':
             command.add_argument('--acknowledge-unknown', action='store_true', help='明确了解结果未知请求重发可能重复计费')
+            command.add_argument('--preview', action='store_true', help='只读补处理清单，不派发进程或调用AI')
         if name == 'export':
             command.add_argument('--output', required=True, help='新建JSON报告文件，不覆盖已有文件')
     ai = commands.add_parser('ai', help='AI配置状态与连接检查')

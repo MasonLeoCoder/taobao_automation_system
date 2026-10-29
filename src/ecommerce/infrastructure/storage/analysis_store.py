@@ -104,7 +104,7 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
         if parameters.get('plan') and product_context(conn, tables, identity) != parameters['plan']['context']:
             raise ValueError('商品背景已变化，请刷新发送预览后再分析。')
         digest = fingerprint({'product': identity['id'], 'batch': batch['id'], 'items': items, 'rules': rules,
-                              'parameters': {k:v for k,v in parameters.items() if k not in {'max_calls','max_tokens','config_file','budget_history','budget_mode'}},
+                              'parameters': {k:v for k,v in parameters.items() if k not in {'max_calls','max_tokens','config_file','budget_history','budget_mode','validation_history','supplement_history','active_supplement'}},
                               'provider': provider, 'model': model, 'rule_version': rule_version})
         existing = conn.execute(sa.select(t).where(t.c.fingerprint == digest).order_by(t.c.created_at.desc(), t.c.id.desc())).mappings().all()
         active = next((r for r in existing if r['active_key']), None)
@@ -224,16 +224,77 @@ def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *
         request = {'prompt': prompt, 'source_ids': source_ids, 'max_output_tokens': output_tokens or task['parameters']['max_output_tokens']}
         if task['parameters'].get('plan'):
             request.update(json_mode=json_mode, timeout_seconds=timeout_seconds)
+        if task['parameters'].get('active_supplement'):
+            request['supplement_id'] = task['parameters']['active_supplement']['id']
         conn.execute(c.insert().values(id=uid, analysis_id=identifier, kind=kind, chunk_index=index, status='inflight',
             request=request,
             response=None, usage={'reserved_tokens': reserve, 'unknown': True}, error='', started_at=database_now(), finished_at=None))
         return uid
 
 
-def finish_call(settings, identifier, call_id, status, response, error='', results=None):
-    """原子保存响应与整批校验明细；参数：任务、调用、状态、响应与结果；返回：无。"""
+def save_results(conn, tables, identifier, call_id, results, allowed_ids):
+    """仅新增同调用来源中尚未保存的合格明细；参数：事务、来源及结果；返回：新增评价编号。"""
+    d, src = tables['analysis_details'], tables['analysis_sources']
+    source_rows = conn.execute(sa.select(src.c.review_id, src.c.id).where(src.c.analysis_id == identifier)).all()
+    source_ids = {row.review_id:row.id for row in source_rows}
+    existing = set(conn.execute(sa.select(d.c.source_id).where(d.c.analysis_id == identifier)).scalars())
+    ids = [result['id'] for result in results]
+    if len(ids) != len(set(ids)) or not set(ids) <= set(allowed_ids) or not set(ids) <= set(source_ids):
+        raise ValueError('校验结果编号与本次调用来源不一致，未保存。')
+    added = []
+    for result in results:
+        if source_ids[result['id']] in existing:
+            continue
+        conn.execute(d.insert().values(id=uuid4().hex, analysis_id=identifier, source_id=source_ids[result['id']], call_id=call_id,
+            result=result, corrections=[], revision=0, review_status='unreviewed'))
+        added.append(result['id'])
+    return added
+
+
+def persist_validation(conn, tables, task, call, assessment, origin):
+    """保存不可覆盖的校验审计及合格条目；参数：事务、快照和评估；返回：新增及审计标记。"""
+    if set(assessment['source_ids']) != set(call['request']['source_ids']):
+        raise ValueError('本地校验范围与原调用不一致。')
+    src = tables['analysis_sources']
+    hashes = [(row.review_id,row.content_hash) for row in conn.execute(sa.select(src.c.review_id,src.c.content_hash)
+        .where(src.c.analysis_id == task['id'],src.c.review_id.in_(assessment['source_ids'])).order_by(src.c.position))]
+    response_hash = fingerprint(call['response'])
+    digest = fingerprint({'call_id':call['id'],'policy':assessment['policy'],'response_hash':response_hash,'sources':hashes})
+    parameters = dict(task['parameters'])
+    history = parameters.get('validation_history', [])
+    if any(record['digest'] == digest for record in history):
+        return {'added_ids':[],'recorded':False}
+    added = save_results(conn,tables,task['id'],call['id'],assessment['results'],assessment['source_ids'])
+    record = {'id':uuid4().hex,'version':1,'policy':assessment['policy'],'digest':digest,'call_id':call['id'],
+        'response_hash':response_hash,'source_hash':fingerprint(hashes),'origin':origin,
+        'time':database_now().isoformat()+'+08:00','source_ids':assessment['source_ids'],
+        'accepted_ids':[result['id'] for result in assessment['results']],'added_ids':added,
+        'issues':assessment['issues'],'adjustments':[change for change in assessment['adjustments'] if change['review_id'] in added]}
+    parameters['validation_history'] = [*history,record]
+    count = conn.scalar(sa.select(sa.func.count()).select_from(tables['analysis_details']).where(tables['analysis_details'].c.analysis_id == task['id']))
+    conn.execute(tables['analysis_tasks'].update().where(tables['analysis_tasks'].c.id == task['id']).values(
+        parameters=parameters,processed_count=count,updated_at=database_now()))
+    task['parameters'] = parameters
+    return {'added_ids':added,'recorded':True}
+
+
+def recover_call(settings, identifier, call_id, assessment, expected_response_hash):
+    """从终态原响应恢复有效条目，原调用及原始返回保持不变；参数：评估和响应指纹；返回：新增情况。"""
+    with connection(settings, True) as (conn,tables):
+        task = task_row(conn,tables,identifier,True)
+        c = tables['analysis_calls']
+        call = conn.execute(sa.select(c).where(c.c.id == call_id,c.c.analysis_id == identifier).with_for_update()).mappings().one()
+        if call['kind'] != 'classify' or call['status'] == 'inflight' or call['response'] is None:
+            raise ValueError('该调用没有可本地恢复的终态分类返回。')
+        if fingerprint(call['response']) != expected_response_hash:
+            raise ValueError('原始返回已变化，请刷新后重新校验。')
+        return persist_validation(conn,tables,task,call,assessment,'local')
+
+
+def finish_call(settings, identifier, call_id, status, response, error='', results=None, assessment=None):
+    """原子保存原始响应、逐条校验及问题审计；参数：任务、调用和评估；返回：无。"""
     with connection(settings, True) as (conn, tables):
-        task_row(conn, tables, identifier, True)
+        task = task_row(conn, tables, identifier, True)
         c, d, src, t = (tables[n] for n in ('analysis_calls', 'analysis_details', 'analysis_sources', 'analysis_tasks'))
         old = conn.execute(sa.select(c).where(c.c.id == call_id, c.c.analysis_id == identifier).with_for_update()).mappings().one()
         if old['status'] != 'inflight':
@@ -242,11 +303,10 @@ def finish_call(settings, identifier, call_id, status, response, error='', resul
         usage = {'reserved_tokens': old['usage']['reserved_tokens'], **provided,
                  'unknown': response is None or type(provided.get('total_tokens')) is not int}
         conn.execute(c.update().where(c.c.id == call_id).values(status=status, response=response, usage=usage, error=error, finished_at=database_now()))
-        if results is not None:
-            sources_by_review = {r.review_id: r.id for r in conn.execute(sa.select(src.c.review_id, src.c.id).where(src.c.analysis_id == identifier))}
-            for result in results:
-                conn.execute(d.insert().values(id=uuid4().hex, analysis_id=identifier, source_id=sources_by_review[result['id']], call_id=call_id,
-                    result=result, corrections=[], revision=0, review_status='unreviewed'))
+        if assessment is not None:
+            persist_validation(conn,tables,task,{**dict(old),'response':response},assessment,'online')
+        elif results is not None:
+            save_results(conn,tables,identifier,call_id,results,old['request']['source_ids'])
         all_usage = conn.execute(sa.select(c.c.usage).where(c.c.analysis_id == identifier)).scalars().all()
         totals = {name: sum(v.get(name, 0) for v in all_usage) for name in ('prompt_tokens', 'completion_tokens', 'total_tokens')}
         totals['unknown_calls'] = sum(bool(v.get('unknown')) for v in all_usage)

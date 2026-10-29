@@ -121,16 +121,16 @@ class ReviewAnalysisTests(unittest.TestCase):
         self.assertEqual(changed['details'][0]['result'],data['details'][0]['result'])
 
     def test_invalid_quote_stops_and_preserves_response(self):
-        """AI编造引用时整批不计入，原始响应和用量仍持久保存，无自动重试。"""
+        """AI编造引用时只隔离问题条目，合格评价与原始响应均保留，无自动重试。"""
         task=self.start(); value=self.classified(); value['reviews'][0]['points'][0]['quote']='编造的不存在内容'
         client=self.run_mock(task,[self.response(value)])
         data=repository.read(self.settings,task)
         self.assertEqual(client.complete.call_count,1)
-        self.assertEqual(data['task']['status'],'failed')
-        self.assertEqual(data['details'],[])
+        self.assertEqual(data['task']['status'],'partial')
+        self.assertEqual([detail['result']['id'] for detail in data['details']],[9])
         self.assertEqual(data['calls'][0]['status'],'invalid')
         self.assertIsNotNone(data['calls'][0]['response'])
-        self.assertIsNone(self.client.get('/api/analysis/reviews/products/123/summary?batch=5').json['result_id'])
+        self.assertEqual(self.client.get('/api/analysis/reviews/products/123/summary?batch=5').json['result_id'],task)
 
     def test_call_budget_and_no_implicit_paid_start(self):
         """预算耗尽前不发新请求；未授权、跨站和错误来源不能创建。"""

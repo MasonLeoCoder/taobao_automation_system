@@ -188,3 +188,43 @@ class ReviewAnalysisBrowserTests(unittest.TestCase):
         self.assertGreaterEqual(requests[0]['max_tokens'], parameters['max_tokens'])
         self.assertEqual(len(repository.read(self.fixture.settings, task)['details']), 2)
         self.assertEqual(self.errors, [])
+
+    def test_local_recovery_and_remaining_review_preview(self):
+        """本地恢复无需费用勾选，保留原响应，恢复后只预览剩余编号。"""
+        from ecommerce.infrastructure.storage import analysis_store as repository
+        from ecommerce.modules.review_analysis import service
+        with patch('ecommerce.modules.review_analysis.service.create_client'):
+            task=self.fixture.start()
+        call=repository.begin_call(self.fixture.settings,task,'classify',1,'原请求',[8,9],1000)
+        value=self.fixture.classified();value['reviews'][0]['points'][0]['quote']='不存在的拼接内容'
+        response=self.fixture.response(value)
+        repository.finish_call(self.fixture.settings,task,call,'invalid',response,'旧版整组拒收')
+        repository.update_task(self.fixture.settings,task,status='failed',active_key=None,owner=None)
+        service.build_report(self.fixture.settings,task,issues=['旧版失败'])
+        def recover(route):
+            """仅桥接临时应用本地恢复；参数：请求；返回：隔离响应。"""
+            result=self.fixture.client.post('/api/analysis/reviews/tasks/'+task+'/recover',json=route.request.post_data_json,
+                                            headers=self.fixture.headers)
+            route.fulfill(status=result.status_code,json=result.json)
+            result.close()
+        self.page.route('**/api/analysis/reviews/tasks/'+task+'/recover',recover)
+        self.page.goto('http://127.0.0.1/analysis/reviews/tasks/'+task)
+        expect(self.page.locator('[data-ra-resume]')).to_have_count(0)
+        button=self.page.locator('[data-ra-recover]')
+        expect(button).to_be_enabled()
+        with self.page.expect_navigation():
+            button.click()
+        expect(self.page.locator('[data-ra-recover]')).to_be_disabled()
+        expect(self.page.get_by_role('heading',name='待复核问题',exact=True)).to_be_visible()
+        form=self.page.locator('[data-ra-resume]')
+        expect(form).to_contain_text('仅补处理剩余 1 条评价')
+        expect(form.locator('[name=allow_paid]')).not_to_be_checked()
+        form.locator('details').first.locator('summary').first.click()
+        expect(form).to_contain_text('剩余编号：8')
+        self.page.set_viewport_size({'width':390,'height':844})
+        self.assertTrue(self.page.evaluate('() => document.documentElement.scrollWidth <= innerWidth + 1'))
+        data=repository.read(self.fixture.settings,task)
+        self.assertEqual(data['calls'][0]['response'],response)
+        self.assertEqual(len(data['calls']),1)
+        self.assertEqual(len(data['details']),1)
+        self.assertEqual(self.errors,[])

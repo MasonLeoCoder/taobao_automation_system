@@ -10,7 +10,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from ecommerce.shared.config import load_settings
 from ecommerce.infrastructure.storage.mysql import create_mysql_engine
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v12 import build_metadata, NEW_TABLES
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v13 import build_metadata, NEW_TABLES
 from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.modules.review_analysis import service
@@ -103,6 +103,35 @@ class MySQLAnalysisTests(unittest.TestCase):
                     self.assertEqual(len(continued['calls']), 2)
                     self.assertEqual(continued['task']['parameters']['budget_history'][0]['after']['max_calls'], 2)
                     self.assertEqual(report_client.complete.call_count, 1)
+                    other=conn.execute(tables['review_observations'].insert().values(batch_id=b,position=2,review_key=token+'recover',
+                        identity_method='fingerprint_occurrence',identity_exact=False,content='满意',append_reviews=[],sku_text='合成规格')).inserted_primary_key[0]
+                    current=service.preview(settings,product,b)
+                    recovered=service.start(settings,product,batch_id=b,model=current['model'],input_hash=current['input_hash'],
+                        allow_paid=True,force=True)['id']
+                    bad_response={'text':json.dumps({'reviews':[{'id':r,'kind':'specific','points':[{
+                        'topic':'粘性','sentiment':'negative','segment':'append:1','quote':'不存在的拼接引文'}]},
+                        {'id':other,'kind':'general','points':[]}]},ensure_ascii=False),'finish_reason':'stop','usage':{'total_tokens':20}}
+                    bad_call=repository.begin_call(settings,recovered,'classify',1,'模拟原始请求',[r,other],1000)
+                    repository.finish_call(settings,recovered,bad_call,'invalid',bad_response,'模拟旧版整组拒收')
+                    repository.update_task(settings,recovered,status='failed',active_key=None,owner=None)
+                    with patch('ecommerce.modules.review_analysis.service.create_client') as no_ai:
+                        restored=service.recover_saved(settings,recovered)
+                        self.assertEqual(restored['processed_count'],1)
+                        self.assertEqual(service.recover_saved(settings,recovered)['added_count'],0)
+                        no_ai.assert_not_called()
+                    self.assertEqual(repository.read(settings,recovered)['calls'][0]['response'],bad_response)
+                    remaining=service.read(settings,recovered)['resume_budget']
+                    self.assertEqual(remaining['supplement']['source_ids'],[r])
+                    service.resume(settings,recovered,allow_paid=True,max_calls=3,plan_hash=remaining['plan_hash'])
+                    supplemental=Mock();supplemental.complete.side_effect=[result['calls'][0]['response'],result['calls'][1]['response']]
+                    with patch('ecommerce.modules.review_analysis.service.create_client',return_value=supplemental):
+                        self.assertEqual(service.execute(settings,recovered,Mock()),'succeeded')
+                    recovered_data=repository.read(settings,recovered)
+                    self.assertEqual(len(recovered_data['details']),2)
+                    self.assertEqual(recovered_data['calls'][1]['request']['source_ids'],[r])
+                    self.assertEqual(recovered_data['calls'][0]['status'],'invalid')
+                    self.assertEqual(recovered_data['calls'][0]['response'],bad_response)
+                    self.assertEqual(supplemental.complete.call_count,2)
                     print('Verify-only analysis flow passed; synthetic task '+task+' rolled back; AI mocked.')
             finally:
                 transaction.rollback()
