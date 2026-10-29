@@ -743,6 +743,25 @@ class SearchAnalysisBrowserTests(unittest.TestCase):
         expect(self.page.locator('#sa-snapshot')).to_have_value('range')
         self.assertEqual(self.errors, [])
 
+    def test_keyword_repeated_trigger_toggle(self):
+        """同一搜索词下拉反复点击开关后，候选仍可见且能够选择。"""
+        self.add_keywords('手机壳')
+        self.goto()
+        trigger = self.page.locator('.ss-trigger')
+        popup = self.page.locator('.ss-popover')
+        for _ in range(3):
+            trigger.click()
+            expect(popup).to_be_visible()
+            expect(trigger).to_have_attribute('aria-expanded', 'true')
+            trigger.click()
+            expect(popup).to_be_hidden()
+            expect(trigger).to_have_attribute('aria-expanded', 'false')
+        trigger.click()
+        popup.locator('.ss-input').fill('手机')
+        popup.get_by_role('option', name='手机壳', exact=True).click()
+        expect(self.page.locator('#sa-keyword')).to_have_value('手机壳')
+        self.assertEqual(self.errors, [])
+
     def test_keyword_empty_clear_escape_and_keyboard(self):
         """无匹配及清空不改变已选词，Esc还原焦点，方向键和回车可选择。"""
         self.add_keywords('手机', '手机壳')

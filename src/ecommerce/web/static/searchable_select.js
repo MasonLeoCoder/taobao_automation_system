@@ -127,13 +127,17 @@
     }
     function close(restoreFocus = false) {
       if (!opened) return;
-      if (nativePopover && popup.matches(':popover-open')) popup.hidePopover(); else popup.hidden = true;
+      // 浏览器可能已自动收起原生浮层；hidden仅用于兼容分支，避免遮住下次展开。
+      if (nativePopover) {
+        if (popup.matches(':popover-open')) popup.hidePopover();
+      } else popup.hidden = true;
       closed(restoreFocus);
     }
     function open(query = '') {
       if (select.disabled) return;
       input.value = query; opened = true;
-      if (nativePopover) popup.showPopover(); else popup.hidden = false;
+      popup.hidden = false;
+      if (nativePopover) popup.showPopover();
       trigger.setAttribute('aria-expanded', 'true'); input.setAttribute('aria-expanded', 'true');
       render(); input.focus({preventScroll:true}); position();
     }
@@ -162,7 +166,8 @@
     list.addEventListener('pointerdown', event => { if (event.target.closest('[role="option"]')) event.preventDefault(); });
     list.addEventListener('pointermove', event => { const row = event.target.closest('[role="option"]'); if (row) setActive(Number(row.dataset.index)); });
     list.addEventListener('click', event => { const row = event.target.closest('[role="option"]'); if (row) choose(Number(row.dataset.index)); });
-    popup.addEventListener('toggle', event => { if (event.newState === 'closed' && opened) closed(); });
+    // toggle异步派发，以实际状态为准，避免旧的关闭通知影响已重新打开的浮层。
+    popup.addEventListener('toggle', () => { if (nativePopover && !popup.matches(':popover-open') && opened) closed(); });
     document.addEventListener('focusin', event => { if (opened && !popup.contains(event.target) && !trigger.contains(event.target)) close(); }, globalOptions);
     document.addEventListener('pointerdown', event => { if (opened && !popup.contains(event.target) && !trigger.contains(event.target)) close(); }, globalOptions);
     document.addEventListener('keydown', event => { if (opened && event.key === 'Escape' && !composing) { event.preventDefault(); close(true); } }, globalOptions);
