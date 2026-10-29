@@ -63,7 +63,34 @@ def preview(settings, product, batch_id=None):
         history = [dict(r) for r in conn.execute(sa.select(b.c.id, b.c.captured_at, b.c.coverage_status, b.c.requested_limit)
             .where(b.c.product_id == identity['id'], b.c.module == 'reviews', b.c.visibility == 'published', b.c.status == 'complete')
             .order_by(b.c.captured_at.desc(), b.c.id.desc())).mappings()]
-    return {'product': identity, 'batch': batch, 'items': items, 'history': history}
+        context = product_context(conn, tables, identity)
+    return {'product': identity, 'batch': batch, 'items': items, 'history': history, 'context': context}
+
+
+def product_context(conn, tables, identity):
+    """读取有来源的商品背景，不从标题猜类目；参数：连接、表和商品；返回：允许发送的背景。"""
+    context = {'platform_product_id': identity['platform_product_id'], 'title': identity.get('display_title') or None,
+               'title_source_batch_id': identity.get('title_source_batch_id'), 'category': None, 'category_source_batch_id': None}
+    b, info = tables['collection_batches'], tables.get('product_info_observations')
+    if info is not None:
+        rows = conn.execute(sa.select(info).join(b, info.c.batch_id == b.c.id).where(
+            info.c.product_id == identity['id'], b.c.visibility == 'published', b.c.status == 'complete')
+            .order_by(info.c.captured_at.desc(), info.c.id.desc())).mappings()
+        for row in rows:
+            if row['title'] and (row['field_states'] or {}).get('title') == 'provided':
+                context.update(title=row['title'], title_source_batch_id=row['batch_id'])
+                break
+    p = tables.get('parameter_observations')
+    if p is not None:
+        rows = conn.execute(sa.select(p).join(b, p.c.batch_id == b.c.id).where(
+            b.c.product_id == identity['id'], b.c.visibility == 'published', b.c.status == 'complete',
+            p.c.name.in_(['类目', '商品类目'])).order_by(b.c.captured_at.desc(), b.c.id.desc())).mappings().all()
+        if rows:
+            latest = rows[0]['batch_id']
+            values = {row['value'] for row in rows if row['batch_id'] == latest and row['value']}
+            if len(values) == 1:
+                context.update(category=values.pop(), category_source_batch_id=latest)
+    return context
 
 
 def create(settings, product, batch_id, rules, parameters, provider, model, rule_version, expected_hash, force=False):
@@ -74,8 +101,10 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
         identity, batch, items = sources(conn, tables, product, batch_id)
         if fingerprint(items) != expected_hash:
             raise ValueError('资料已变化，请刷新确认后再分析。')
+        if parameters.get('plan') and product_context(conn, tables, identity) != parameters['plan']['context']:
+            raise ValueError('商品背景已变化，请刷新发送预览后再分析。')
         digest = fingerprint({'product': identity['id'], 'batch': batch['id'], 'items': items, 'rules': rules,
-                              'parameters': {k:v for k,v in parameters.items() if k not in {'max_calls','max_tokens','config_file'}},
+                              'parameters': {k:v for k,v in parameters.items() if k not in {'max_calls','max_tokens','config_file','budget_history','budget_mode'}},
                               'provider': provider, 'model': model, 'rule_version': rule_version})
         existing = conn.execute(sa.select(t).where(t.c.fingerprint == digest).order_by(t.c.created_at.desc(), t.c.id.desc())).mappings().all()
         active = next((r for r in existing if r['active_key']), None)
@@ -167,17 +196,36 @@ def update_task(settings, identifier, **values):
                      .values(**values, updated_at=database_now()))
 
 
-def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve):
+def charged_usage(usage, version=1):
+    """核算已占额度；参数：用量及预算版本；返回：确认实际量或未知预留量。"""
+    if version >= 2 and usage.get('unknown') is False and type(usage.get('total_tokens')) is int:
+        return usage['total_tokens']
+    return max(usage.get('reserved_tokens', 0), usage.get('total_tokens', 0))
+
+
+def budget_status(parameters, calls):
+    """汇总任务额度；参数：固定参数与调用；返回：用量、剩余额度及调用次数。"""
+    used = sum(charged_usage(call['usage'], parameters.get('budget_version', 1)) for call in calls)
+    return {'used_tokens': used, 'remaining_tokens': parameters['max_tokens'] - used,
+            'used_calls': len(calls), 'remaining_calls': parameters['max_calls'] - len(calls)}
+
+
+def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *, output_tokens=None, json_mode=False, timeout_seconds=None):
     """在联网前保存请求并扣除预算；参数：任务、请求和保守用量；返回：调用编号。"""
     with connection(settings, True) as (conn, tables):
         task = task_row(conn, tables, identifier, True)
         c = tables['analysis_calls']
-        calls = conn.execute(sa.select(c.c.usage).where(c.c.analysis_id == identifier)).scalars().all()
-        if len(calls) >= task['parameters']['max_calls'] or sum(max(v.get('reserved_tokens', 0), v.get('total_tokens', 0)) for v in calls) + reserve > task['parameters']['max_tokens']:
-            raise ValueError('本次调用次数或保守用量预算不足；未发出新请求。')
+        calls = conn.execute(sa.select(c).where(c.c.analysis_id == identifier)).mappings().all()
+        budget = budget_status(task['parameters'], calls)
+        held = task['parameters'].get('plan', {}).get('report_reserved_tokens', 0) if kind == 'classify' else 0
+        if budget['remaining_calls'] < 1 or budget['remaining_tokens'] < reserve + held:
+            raise ValueError('本次调用次数或AI用量上限不足；未发出新请求，已保存结果保留。可明确增加额度后继续。')
         uid = uuid4().hex
+        request = {'prompt': prompt, 'source_ids': source_ids, 'max_output_tokens': output_tokens or task['parameters']['max_output_tokens']}
+        if task['parameters'].get('plan'):
+            request.update(json_mode=json_mode, timeout_seconds=timeout_seconds)
         conn.execute(c.insert().values(id=uid, analysis_id=identifier, kind=kind, chunk_index=index, status='inflight',
-            request={'prompt': prompt, 'source_ids': source_ids, 'max_output_tokens': task['parameters']['max_output_tokens']},
+            request=request,
             response=None, usage={'reserved_tokens': reserve, 'unknown': True}, error='', started_at=database_now(), finished_at=None))
         return uid
 
@@ -190,7 +238,9 @@ def finish_call(settings, identifier, call_id, status, response, error='', resul
         old = conn.execute(sa.select(c).where(c.c.id == call_id, c.c.analysis_id == identifier).with_for_update()).mappings().one()
         if old['status'] != 'inflight':
             raise ValueError('调用记录已完成，禁止重复提交。')
-        usage = {'reserved_tokens': old['usage']['reserved_tokens'], 'unknown': response is None, **((response or {}).get('usage') or {})}
+        provided = (response or {}).get('usage') or {}
+        usage = {'reserved_tokens': old['usage']['reserved_tokens'], **provided,
+                 'unknown': response is None or type(provided.get('total_tokens')) is not int}
         conn.execute(c.update().where(c.c.id == call_id).values(status=status, response=response, usage=usage, error=error, finished_at=database_now()))
         if results is not None:
             sources_by_review = {r.review_id: r.id for r in conn.execute(sa.select(src.c.review_id, src.c.id).where(src.c.analysis_id == identifier))}

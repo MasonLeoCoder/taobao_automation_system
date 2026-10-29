@@ -8,7 +8,7 @@ def configuration(settings):
     config = load_config(settings.root)
     return {'provider': config.provider, 'model': config.model, 'models': list(config.models),
             'api_key_env': config.api_key_env, 'key_configured': bool(api_key(config)),
-            'timeout_seconds': config.timeout_seconds}
+            'timeout_seconds': config.timeout_seconds, 'analysis_timeout_seconds': config.analysis_timeout_seconds}
 
 
 def check_connection(settings, *, provider=None, model=None):

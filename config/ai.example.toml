@@ -7,3 +7,5 @@ models = ["deepseek-flash", "deepseek-v4-pro"]
 # 可选环境变量回退：这里是变量名称，不是密钥。本机文件方式可直接删除此行。
 # api_key_env = "DEEPSEEK_API_KEY"
 timeout_seconds = 20
+# 评价分析每次请求的等待上限，单位秒，可选30～600；默认180，下一次新建分析生效。
+analysis_timeout_seconds = 180

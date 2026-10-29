@@ -17,6 +17,7 @@ class AISettings:
     models: tuple = ('deepseek-flash', 'deepseek-v4-pro')
     api_key_env: str = 'DEEPSEEK_API_KEY'
     timeout_seconds: int = 20
+    analysis_timeout_seconds: int = 180
     api_key: str = field(default='', repr=False)
 
 
@@ -45,11 +46,13 @@ def load_config(root):
             raise AIConfigError('api_key_env只能填写环境变量名称，例如DEEPSEEK_API_KEY。密钥请填写在api_key的双引号内。')
         if type(config.timeout_seconds) is not int or not 1 <= config.timeout_seconds <= 30:
             raise ValueError()
+        if type(config.analysis_timeout_seconds) is not int or not 30 <= config.analysis_timeout_seconds <= 600:
+            raise ValueError()
         return config
     except AIConfigError:
         raise
     except (OSError, ValueError, TypeError):
-        raise ValueError('AI配置无效，请检查config/ai.toml；支持deepseek，默认模型须在模型列表内，超时为1～30秒。配置内容未显示。') from None
+        raise ValueError('AI配置无效，请检查config/ai.toml；支持deepseek，默认模型须在模型列表内，连接检查超时1～30秒，分析超时30～600秒。配置内容未显示。') from None
 
 
 def api_key(config):

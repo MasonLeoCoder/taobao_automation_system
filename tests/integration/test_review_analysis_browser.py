@@ -119,3 +119,72 @@ class ReviewAnalysisBrowserTests(unittest.TestCase):
             opener.click()
             expect(dialog.locator('[data-ra-start]')).to_be_visible()
         self.assertEqual(self.errors, [])
+
+    def test_preview_auto_budget_and_insufficient_manual_limit(self):
+        """发送预览可读，默认预算不需填写，手动不足在提交前提示且不发送请求。"""
+        dialog = self.open_review_dialog()
+        expect(dialog).to_contain_text('共 2 次请求')
+        expect(dialog.locator('[name=max_tokens]')).to_be_disabled()
+        preview = dialog.locator('details').filter(has=self.page.locator('summary', has_text='查看发送内容')).first
+        preview.locator('summary').first.click()
+        group = preview.locator('details').first
+        group.locator('summary').click()
+        expect(group.locator('pre')).to_contain_text('刚买很好用')
+        expect(group.locator('pre')).to_contain_text('用了几天粘不住')
+        for width in (390, 1440):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            bounds = group.locator('pre').evaluate('(node) => ({height:node.clientHeight,width:node.getBoundingClientRect().width,parent:node.parentElement.getBoundingClientRect().width})')
+            self.assertLessEqual(bounds['height'], 360)
+            self.assertLessEqual(bounds['width'], bounds['parent'] + 1)
+            self.assertTrue(self.page.evaluate('() => document.documentElement.scrollWidth <= innerWidth + 1'))
+        self.assertNotIn('不可发送的昵称', preview.inner_text())
+        self.assertNotIn('sk-test-only', preview.inner_text())
+        advanced = dialog.locator('details').filter(has=self.page.locator('summary', has_text='高级设置')).first
+        advanced.locator('summary').first.click()
+        advanced.locator('[name=manual_budget]').check()
+        tokens = advanced.locator('[name=max_tokens]')
+        expect(tokens).to_be_enabled()
+        tokens.fill('1')
+        expect(advanced.locator('[data-ra-budget-feedback]')).to_contain_text('还差')
+        self.assertFalse(tokens.evaluate('(node) => node.validity.valid'))
+        advanced.locator('[name=manual_budget]').uncheck()
+        expect(tokens).to_be_disabled()
+        requests = []
+        self.page.route('**/api/analysis/reviews/products/123', lambda route: (
+            requests.append(route.request.post_data_json), route.fulfill(json={'url':'/analysis/reviews/products/123?batch=5'})))
+        dialog.locator('[name=allow_paid]').check()
+        with self.page.expect_navigation():
+            dialog.get_by_role('button', name='开始分析', exact=True).click()
+        self.assertEqual(len(requests), 1)
+        self.assertIsNone(requests[0]['max_tokens'])
+        self.assertIsNone(requests[0]['max_calls'])
+        self.assertTrue(requests[0]['plan_hash'])
+        self.assertEqual(self.errors, [])
+
+    def test_partial_result_explicit_budget_increase(self):
+        """结果页明确追加额度后才提交新上限，不重新发送已保存评价。"""
+        from ecommerce.infrastructure.storage import analysis_store as repository
+        with patch('ecommerce.modules.review_analysis.service.create_client'):
+            task = self.fixture.start()
+        parameters = dict(repository.read(self.fixture.settings, task)['task']['parameters'])
+        with self.fixture.engine.begin() as conn:
+            conn.execute(self.fixture.tables['analysis_tasks'].update().values(parameters={**parameters,'max_calls':1}))
+        self.fixture.run_mock(task, [self.fixture.response(self.fixture.classified())])
+        self.page.goto('http://127.0.0.1/analysis/reviews/tasks/' + task)
+        expect(self.page.locator('#ra-progress')).to_contain_text('总报告未完成')
+        form = self.page.locator('[data-ra-resume]')
+        expect(form.locator('[name=max_calls]')).to_be_disabled()
+        form.locator('[name=increase_budget]').check()
+        expect(form.locator('[name=max_calls]')).to_be_enabled()
+        expect(form.locator('[name=max_calls]')).to_have_value('2')
+        requests = []
+        self.page.route('**/api/analysis/reviews/tasks/' + task + '/resume', lambda route: (
+            requests.append(route.request.post_data_json), route.fulfill(json={'id':task})))
+        form.locator('[name=allow_paid]').check()
+        with self.page.expect_navigation():
+            form.get_by_role('button', name='继续未完成部分', exact=True).click()
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]['max_calls'], 2)
+        self.assertGreaterEqual(requests[0]['max_tokens'], parameters['max_tokens'])
+        self.assertEqual(len(repository.read(self.fixture.settings, task)['details']), 2)
+        self.assertEqual(self.errors, [])

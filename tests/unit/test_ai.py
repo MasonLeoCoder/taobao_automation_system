@@ -37,7 +37,7 @@ class AITests(unittest.TestCase):
             self.assertTrue(value['key_configured'])
             self.assertNotIn('private-test-secret', json.dumps(value))
         (self.root / 'config').mkdir()
-        for content in ('[ai]\nunknown_key="secret"', '[ai]\napi_key=123', '[ai]\ntimeout_seconds=true', '[ai]\nmodels="abc"', '[ai]\nmodel="unknown"'):
+        for content in ('[ai]\nunknown_key="secret"', '[ai]\napi_key=123', '[ai]\ntimeout_seconds=true', '[ai]\nanalysis_timeout_seconds=601', '[ai]\nmodels="abc"', '[ai]\nmodel="unknown"'):
             (self.root / 'config/ai.toml').write_text(content)
             with self.assertRaises(ValueError): load_config(self.root)
 
@@ -107,6 +107,19 @@ class AITests(unittest.TestCase):
                 with self.assertRaises(AIError) as caught: create_client(AISettings()).complete('测试')
                 self.assertNotIn('private-test-secret', str(caught.exception))
                 self.assertEqual(factory.return_value.open.call_count,1)
+
+    def test_analysis_json_output_limit_and_timeout(self):
+        """评价分析使用JSON模式、较大输出及独立等待上限；未联网。"""
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY':'secret'}), patch('ecommerce.infrastructure.ai.client.build_opener') as factory:
+            response = factory.return_value.open.return_value.__enter__.return_value
+            response.read.return_value = b'{"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}],"usage":{"total_tokens":9}}'
+            create_client(AISettings()).complete('JSON ' + '样例'*15000, max_tokens=32768, json_mode=True, timeout_seconds=180)
+            request = factory.return_value.open.call_args.args[0]
+            payload = json.loads(request.data)
+            self.assertEqual(payload['response_format'], {'type':'json_object'})
+            self.assertEqual(payload['max_tokens'], 32768)
+            self.assertEqual(factory.return_value.open.call_args.kwargs['timeout'], 180)
+            self.assertEqual(factory.return_value.open.call_count, 1)
 
     def test_web_authorization_validation_and_background(self):
         """GET无调用，POST需令牌、同源、计费勾选和合法模型；轮询返回摘要。"""

@@ -105,8 +105,8 @@ def new(product):
 @review_analysis.post('/api/analysis/reviews/products/<product>')
 def start(product):
     """确认后提交分析；参数：商品和JSON；返回：任务地址。"""
-    values = payload({'batch_id', 'model', 'input_hash', 'max_calls', 'max_tokens', 'allow_paid', 'force'},
-                     {'batch_id', 'model', 'input_hash', 'max_calls', 'max_tokens'})
+    values = payload({'batch_id', 'model', 'input_hash', 'plan_hash', 'max_calls', 'max_tokens', 'allow_paid', 'force'},
+                     {'batch_id', 'model', 'input_hash'})
     result = service.start(settings(), product, **values)
     return jsonify(**result, url='/analysis/reviews/tasks/' + result['id']), 202
 
@@ -137,7 +137,7 @@ def status(task_id):
 @review_analysis.post('/api/analysis/reviews/tasks/<task_id>/resume')
 def resume(task_id):
     """明确恢复未完成部分；参数：费用及未知请求确认；返回：任务编号。"""
-    return jsonify(service.resume(settings(), task_id, **payload({'allow_paid', 'acknowledge_unknown'})))
+    return jsonify(service.resume(settings(), task_id, **payload({'allow_paid', 'acknowledge_unknown', 'max_tokens', 'max_calls'})))
 
 
 @review_analysis.post('/api/analysis/reviews/tasks/<task_id>/details/<detail_id>')

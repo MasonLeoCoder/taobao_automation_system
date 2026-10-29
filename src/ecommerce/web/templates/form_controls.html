@@ -50,3 +50,7 @@
 {% set help_attrs=dict(attrs,**{'type':'button','data-ui-help-text':description}) %}
 <button{{ attributes(help_attrs,'ui-help-label') }}><span>{{ label }}</span><span class="ui-help-icon" aria-hidden="true">ⓘ</span></button>
 {%- endmacro %}
+
+{% macro text_preview(value) -%}
+<pre class="ui-text-preview">{{ value }}</pre>
+{%- endmacro %}

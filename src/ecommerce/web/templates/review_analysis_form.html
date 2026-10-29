@@ -1,5 +1,5 @@
-{% from 'form_controls.html' import field, select_control, input_control, control_button %}
-<form class="ui-confirm-form" data-ra-start data-url="{{ url_for('review_analysis.start',product=product) }}" data-batch="{{ data.batch.id }}" data-hash="{{ data.input_hash }}">
+{% from 'form_controls.html' import field, select_control, input_control, control_button, text_preview %}
+<form class="ui-confirm-form" data-ra-start data-url="{{ url_for('review_analysis.start',product=product) }}" data-batch="{{ data.batch.id }}" data-hash="{{ data.input_hash }}" data-plan-hash="{{ data.plan_hash }}">
 <div class="ui-confirm-body">
   <section class="ui-source-card" aria-label="本次评价来源">
     <div class="ui-source-heading"><span>本次分析范围</span><span class="ui-status-pill">来源已固定</span></div>
@@ -11,12 +11,20 @@
   <section class="ui-confirm-settings">
     <div class="ui-form-heading"><h3>分析设置</h3><span class="ui-provider-pill">DeepSeek</span></div>
     {% call field('分析模型') %}{% call select_control({'name':'model','data-searchable-select':true,'data-select-label':'分析模型','data-trigger-label':'分析模型','data-search-label':'查找模型'}) %}{% for model in data.models %}<option value="{{ model }}" {{ 'selected' if model==data.model }}>{{ model }}</option>{% endfor %}{% endcall %}{% endcall %}
-    <p class="ui-form-note">预计 {{ data.chunk_count }} 批分类 + 1次报告整理。主题数量由程序统计，分析完成后可查看原文依据。</p>
+    <p class="ui-form-note">预计 {{ data.chunk_count }} 组逐条分析 + 1次报告整理，共 {{ data.planned_calls }} 次请求。按输入及预计返回长度合并分组，初评与追评一起发送。</p>
+    <p class="ui-form-note">用量保护已开启，默认自动计算并预留报告额度。主题数量由程序统计，分析完成后可查看原文依据。</p>
   </section>
+  <details class="ui-advanced-settings"><summary><span>查看发送内容</span><small>规则、背景与完整评价分组</small></summary><div class="ui-advanced-body">
+    <p class="ui-form-note">以下为逐条分析实际发送文字，接口同时使用当前所选模型、JSON返回模式及各组输出上限。仅发送评价编号、规格、初评、追评及有来源的商品背景；密钥不在预览内。主题参考允许扩展，不代表确认商品类目。</p>
+    {% for group in data.outgoing %}<details><summary>第 {{ group.index }} 组 · {{ group.source_ids|length }} 条评价 · 返回上限 {{ group.max_output_tokens }} Token</summary><p class="ui-form-note">按原列表顺序发送，每条编号见下方资料中的id。</p>{{ text_preview(group.prompt) }}</details>{% endfor %}
+    <details><summary>报告整理要求</summary>{{ text_preview(data.report_template) }}<p class="ui-form-note">报告的实际统计和筛选引文在逐条分析完成后生成，届时保存供查看；此处不是报告实际输入的完整预览。</p></details>
+  </div></details>
   <details class="ui-advanced-settings"><summary><span>高级设置</span><small>预算与重新分析</small></summary><div class="ui-advanced-body">
-    {% call field('调用次数上限') %}{{ input_control({'name':'max_calls','type':'number','min':data.planned_calls,'max':200,'value':data.default_calls,'required':true}) }}{% endcall %}
-    {% call field('保守token预算') %}{{ input_control({'name':'max_tokens','type':'number','min':data.reserved_tokens,'max':5000000,'value':data.reserved_tokens+30000,'required':true}) }}{% endcall %}
-    <p class="ui-form-note">按请求输入和输出上限保守预留，失败和未知请求也占预算；达到上限后停止。预算不是费用金额。</p>
+    <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'manual_budget'}) }}<span>手动设置用量限制<small>默认自动计算，无需填写；手动设置不足会在开始前提示。</small></span></label>
+    {% call field('调用次数上限') %}{{ input_control({'name':'max_calls','type':'number','min':data.planned_calls,'max':200,'value':data.default_calls,'data-ra-default':data.default_calls,'required':true,'disabled':true}) }}{% endcall %}
+    {% call field('本次AI用量上限') %}{{ input_control({'name':'max_tokens','type':'number','min':1,'max':5000000,'value':data.default_tokens,'data-ra-default':data.default_tokens,'required':true,'disabled':true,'data-ra-minimum':data.reserved_tokens}) }}{% endcall %}
+    <p class="ui-form-note">最低预留 {{ data.reserved_tokens }} Token，自动上限 {{ data.default_tokens }} Token，含全部分组、报告及余量。输入为保守估算，完整用量确认后按实际结算；未知请求保留预留量。不是人民币金额，实际费用以服务商账单为准，不自动提高上限或重试。</p>
+    <p class="ra-feedback" data-ra-budget-feedback role="status" aria-live="polite"></p>
     <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'force'}) }}<span>重新分析，另建记录<small>默认优先复用相同资料与设置的已有结果。</small></span></label>
   </div></details>
   <label class="ui-consent-row ui-payment-consent">{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }}<span>允许发送本批评价并承担AI调用费用<small>发送评价文字、规格及追评，不发送昵称或媒体链接。实际费用以DeepSeek账单为准。</small></span></label>

@@ -107,12 +107,37 @@
     });
   }
   function bindStart(root = document) {
+    root.querySelectorAll('[data-ra-start]').forEach(form => {
+      if (form.dataset.raBudgetBound) return;
+      form.dataset.raBudgetBound = 'true';
+      const manual = form.elements.manual_budget, tokens = form.elements.max_tokens, calls = form.elements.max_calls;
+      function budgetFeedback() {
+        tokens.disabled = calls.disabled = !manual.checked;
+        if (!manual.checked) { tokens.value = tokens.dataset.raDefault; calls.value = calls.dataset.raDefault; }
+        const minimum = Number(tokens.dataset.raMinimum), current = Number(tokens.value);
+        const message = manual.checked && Number.isFinite(current) && current < minimum
+          ? `本次用量上限不足：至少需预留 ${minimum}，当前设置 ${current}，还差 ${minimum-current}；尚未发送评价。` : '';
+        tokens.setCustomValidity(message);
+        form.querySelector('[data-ra-budget-feedback]').textContent = message;
+      }
+      manual.addEventListener('change', budgetFeedback); tokens.addEventListener('input', budgetFeedback); budgetFeedback();
+    });
     bind('[data-ra-start]', form => ({batch_id:Number(form.dataset.batch), input_hash:form.dataset.hash,
-    model:form.elements.model.value, max_calls:Number(form.elements.max_calls.value), max_tokens:Number(form.elements.max_tokens.value),
+    plan_hash:form.dataset.planHash, model:form.elements.model.value,
+    max_calls:form.elements.manual_budget.checked ? Number(form.elements.max_calls.value) : null,
+    max_tokens:form.elements.manual_budget.checked ? Number(form.elements.max_tokens.value) : null,
     allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked}), result => location.assign(result.url), root);
   }
   bindStart();
-  bind('[data-ra-resume]', form => ({allow_paid:form.elements.allow_paid.checked, acknowledge_unknown:form.elements.acknowledge_unknown.checked}), () => location.reload());
+  document.querySelectorAll('[data-ra-resume]').forEach(form => {
+    const extra = form.elements.increase_budget;
+    extra.addEventListener('change', () => {
+      form.elements.max_tokens.disabled = form.elements.max_calls.disabled = !extra.checked;
+    });
+  });
+  bind('[data-ra-resume]', form => ({allow_paid:form.elements.allow_paid.checked, acknowledge_unknown:form.elements.acknowledge_unknown.checked,
+    max_tokens:form.elements.increase_budget.checked ? Number(form.elements.max_tokens.value) : null,
+    max_calls:form.elements.increase_budget.checked ? Number(form.elements.max_calls.value) : null}), () => location.reload());
   bind('[data-ra-correct]', form => ({expected_revision:Number(form.dataset.revision), kind:form.elements.kind.value,
     excluded:form.elements.excluded.checked, reason:form.elements.reason.value,
     points:[...form.querySelectorAll('[data-ra-point]')].filter(row => row.querySelector('[name=keep]').checked).map(row => ({

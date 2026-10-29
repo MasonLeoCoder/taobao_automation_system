@@ -10,7 +10,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from ecommerce.shared.config import load_settings
 from ecommerce.infrastructure.storage.mysql import create_mysql_engine
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v11 import build_metadata, NEW_TABLES
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v12 import build_metadata, NEW_TABLES
 from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.modules.review_analysis import service
@@ -54,6 +54,8 @@ class MySQLAnalysisTests(unittest.TestCase):
                     task = service.start(settings, product, batch_id=b, model=preview['model'], input_hash=preview['input_hash'],
                         max_calls=10, max_tokens=300000, allow_paid=True)['id']
                     initial = repository.read(settings, task)
+                    self.assertEqual(len(initial['task']['parameters']['plan']['groups']), 1)
+                    self.assertTrue(initial['task']['parameters']['plan']['json_mode'])
                     t = tables['analysis_tasks']; row = dict(initial['task'])
                     with self.assertRaises(sa.exc.IntegrityError), conn.begin_nested():
                         conn.execute(t.insert().values(**{**row, 'id':uuid4().hex}))
@@ -70,6 +72,7 @@ class MySQLAnalysisTests(unittest.TestCase):
                         self.assertEqual(service.execute(settings,task,Mock()),'succeeded')
                     result = service.read(settings, task)
                     self.assertEqual(result['task']['usage']['total_tokens'],30)
+                    self.assertEqual(result['budget']['used_tokens'], 30)
                     self.assertEqual(result['report']['content']['statistics']['topics'][0]['counts']['negative'],1)
                     detail = result['details'][0]
                     service.correct(settings,task,detail['id'],expected_revision=0,kind='specific',
@@ -80,6 +83,26 @@ class MySQLAnalysisTests(unittest.TestCase):
                     self.assertEqual(client.complete.call_count,2)
                     after = {n:conn.scalar(sa.select(sa.func.count()).select_from(tables[n])) for n in NEW_TABLES}
                     self.assertEqual({n:after[n]-before[n] for n in NEW_TABLES},dict(zip(NEW_TABLES,[1,1,2,1,2])))
+                    second = service.start(settings, product, batch_id=b, model=preview['model'], input_hash=preview['input_hash'],
+                        allow_paid=True, force=True)['id']
+                    params = dict(repository.read(settings, second)['task']['parameters'])
+                    conn.execute(t.update().where(t.c.id == second).values(parameters={**params,'max_calls':1}))
+                    partial_client = Mock()
+                    partial_client.complete.return_value = result['calls'][0]['response']
+                    with patch('ecommerce.modules.review_analysis.service.create_client', return_value=partial_client):
+                        self.assertEqual(service.execute(settings, second, Mock()), 'partial')
+                    with self.assertRaisesRegex(ValueError, '额度不足'):
+                        service.resume(settings, second, allow_paid=True)
+                    service.resume(settings, second, allow_paid=True, max_calls=2)
+                    report_client = Mock()
+                    report_client.complete.return_value = result['calls'][1]['response']
+                    with patch('ecommerce.modules.review_analysis.service.create_client', return_value=report_client):
+                        self.assertEqual(service.execute(settings, second, Mock()), 'succeeded')
+                    continued = repository.read(settings, second)
+                    self.assertEqual(len(continued['details']), 1)
+                    self.assertEqual(len(continued['calls']), 2)
+                    self.assertEqual(continued['task']['parameters']['budget_history'][0]['after']['max_calls'], 2)
+                    self.assertEqual(report_client.complete.call_count, 1)
                     print('Verify-only analysis flow passed; synthetic task '+task+' rolled back; AI mocked.')
             finally:
                 transaction.rollback()

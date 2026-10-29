@@ -242,6 +242,8 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-advanced-body{display:grid;gap:12px;padding:4px 14px 16px}
 .ui-advanced-body .ui-form-note{margin:0}
 .ui-advanced-body .ui-field{margin:0}
+.ui-text-preview{box-sizing:border-box;min-width:0;max-width:100%;max-height:360px;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-surface-soft);color:var(--control-text)}
+.ui-advanced-body,.ui-advanced-body>details{min-width:0}
 .ui-consent-row{display:flex;align-items:flex-start;gap:10px;margin:0;font-size:13px;line-height:1.7;color:var(--control-text);cursor:pointer}
 .ui-consent-row .ui-choice{flex:none;margin:2px 0 0}
 .ui-consent-row small{display:block;margin-top:3px;color:var(--control-label);font-size:11px;line-height:1.7}

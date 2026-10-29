@@ -1,7 +1,9 @@
 # 评价分析
 
-Web和CLI共用service，后台worker独立进程复用TaskEvents日志与进程身份，不持有浏览器资料锁。rules负责保存提示快照、严格编号与初评/追评原文验证、同义映射及整数统计；存储在infrastructure/storage/analysis_store，使用0011/schema_v11通用五表。
+Web和CLI共用service，后台worker独立进程复用TaskEvents日志与进程身份，不持有浏览器资料锁。rules负责版本化提示、严格编号与初评/追评原文验证、同义映射及整数统计；planning按输入与预计输出合并评价并固定完整发送清单，纯本地计算。存储在infrastructure/storage/analysis_store，当前0012/schema_v12沿用0011通用五表，仅更新版本与预算原生备注。
 
 GET和导出只读；创建前明确费用并保存整批快照，最多1000条，不发送昵称媒体。调用先落库inflight再联网，响应收据先落本机后事务写入原始返回和校验分类；失败停止，恢复先补写收据，跳过已有阶段，无自动重试。预算按字节+输出量保守预留，不估价，未知用量单列。密钥只在执行时读本机配置，不进入任务参数、请求快照或日志。
 
 主题词典未覆盖的名称保留原名，UI提示复核，不假称语义去重完整。人工修订原结果不变，修正及报告都保留版本；本地重统计移除旧综合文字，不重新调用AI。示例只在独立库/模拟AI验证，真实付费验收待用户明确范围。见使用指南和评价分析实施记录。
+
+新任务reviews-v2、rules.schema_version=2、parameters.budget_version=2，按固定plan恢复，分类请求使用JSON模式；旧无plan任务继续原10条/18000字符及输出4096的规则。新版预算确认用量后释放未用预留，报告额度提前保留；未知用量不释放。追加额度须明确计费确认并追加budget_history，原分组/提示不变。报告schema_version=2另记report_complete与unprocessed_count。完整协议维护在数据库字段取值说明，禁止改变JSON含义而不更新文档。

@@ -15,16 +15,17 @@ def execute(settings, args):
         if action == 'preview':
             result = {'product': args.input, 'batch_id': data['batch']['id'], 'source_count': len(data['items']),
                       'planned_calls': data['planned_calls'], 'reserved_tokens': data['reserved_tokens'],
-                      'input_hash': data['input_hash'], 'models': list(data['models'])}
+                      'recommended_tokens': data['default_tokens'], 'plan_hash': data['plan_hash'], 'plan': data['plan'],
+                      'report_template': data['report_template'], 'input_hash': data['input_hash'], 'models': list(data['models'])}
         else:
             result = service.start(settings, args.input, batch_id=data['batch']['id'], model=args.model or load_config(settings.root).model,
-                input_hash=data['input_hash'], max_calls=args.max_calls if args.max_calls is not None else data['default_calls'],
-                max_tokens=args.max_tokens if args.max_tokens is not None else data['reserved_tokens'] + 30000,
+                input_hash=data['input_hash'], plan_hash=data['plan_hash'], max_calls=args.max_calls, max_tokens=args.max_tokens,
                 allow_paid=args.allow_paid, force=args.force)
     elif action == 'history':
         result = repository.history(settings, service.product_id(args.input))
     elif action == 'resume':
-        result = service.resume(settings, args.task_id, allow_paid=args.allow_paid, acknowledge_unknown=args.acknowledge_unknown)
+        result = service.resume(settings, args.task_id, allow_paid=args.allow_paid, acknowledge_unknown=args.acknowledge_unknown,
+                                max_calls=args.max_calls, max_tokens=args.max_tokens)
     elif action == 'recount':
         result = service.recount(settings, args.task_id)
     else:

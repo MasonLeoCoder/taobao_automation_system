@@ -16,7 +16,7 @@ from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import owner_alive, process_started_at, atomic_json
 from ecommerce.shared.exceptions import TaskBusy
-from ecommerce.modules.review_analysis import rules
+from ecommerce.modules.review_analysis import rules, planning
 
 
 def identifier(value):
@@ -63,32 +63,42 @@ def preview(settings, product, batch_id=None):
         integer(batch_id, 1, 2**63 - 1, '批次编号')
     data = repository.preview(settings, product, batch_id)
     config = load_config(settings.root)
-    groups = chunks(data['items'], rules.CLASSIFY)
-    reserve = sum(len((rules.CLASSIFY + json.dumps(chunk, ensure_ascii=False)).encode()) + 4096 + 256 for chunk in groups)
-    # 报告最多15000字符，按每字符最多4字节及请求开销预留；不是费用承诺。
-    reserve += len(rules.REPORT.encode()) + 60000 + 4096 + 256
-    data.update(input_hash=fingerprint(data['items']), chunk_count=len(groups), planned_calls=len(groups) + 1,
-                default_calls=len(groups) + 3, reserved_tokens=reserve, models=config.models, model=config.model,
+    snapshot = rules.snapshot()
+    plan = planning.build(data['items'], snapshot['classify'], data['context'], rules.topic_reference(data['context']),
+                          snapshot['report'], config.analysis_timeout_seconds)
+    outgoing = planning.requests(plan, snapshot['classify'], data['items'])
+    data.update(input_hash=fingerprint(data['items']), plan_hash=fingerprint({'plan': plan, 'rules': snapshot}),
+                plan=plan, outgoing=outgoing, report_template=snapshot['report'], chunk_count=len(plan['groups']),
+                planned_calls=plan['planned_calls'], default_calls=plan['planned_calls'],
+                reserved_tokens=plan['minimum_tokens'], default_tokens=plan['recommended_tokens'], models=config.models, model=config.model,
                 provider=config.provider, key_configured=bool(api_key(config)))
     return data
 
 
-def start(settings, product, *, batch_id, model, input_hash, max_calls, max_tokens, allow_paid=False, force=False):
+def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max_tokens=None, allow_paid=False, force=False, plan_hash=None):
     """确认后创建及派发分析；参数：来源、模型、预算和授权；返回：任务编号与复用标记。"""
     if allow_paid is not True:
         raise ValueError('请明确允许本次AI调用费用。')
     if type(force) is not bool:
         raise ValueError('重新分析选项无效。')
     data = preview(settings, product, batch_id)
+    if plan_hash is not None and plan_hash != data['plan_hash']:
+        raise ValueError('发送计划或分析要求已变化，请刷新预览后再开始。')
     config = load_config(settings.root)
     if not isinstance(model, str) or model not in config.models:
         raise ValueError('请选择已配置的模型。')
     create_client(config, model=model)
     if not data['key_configured']:
         raise ValueError('请先在本机AI设置中配置密钥。')
+    automatic = max_tokens is None and max_calls is None
+    max_calls = data['default_calls'] if max_calls is None else max_calls
+    max_tokens = data['default_tokens'] if max_tokens is None else max_tokens
     integer(max_calls, data['planned_calls'], 200, '调用次数上限')
-    integer(max_tokens, data['reserved_tokens'], 5000000, '保守token预算')
-    parameters = {'batch_size': 10, 'max_output_tokens': 4096, 'max_calls': max_calls, 'max_tokens': max_tokens,
+    if type(max_tokens) is int and max_tokens < data['reserved_tokens']:
+        raise ValueError(f'本次AI用量上限不足：至少需预留{data["reserved_tokens"]}，当前设置{max_tokens}，还差{data["reserved_tokens"]-max_tokens}；未发送评价。')
+    integer(max_tokens, data['reserved_tokens'], planning.MAX_TASK_TOKENS, '本次AI用量上限')
+    parameters = {'plan': data['plan'], 'budget_version': 2, 'budget_mode': 'auto' if automatic else 'manual',
+                  'budget_history': [], 'max_output_tokens': planning.MAX_OUTPUT_TOKENS, 'max_calls': max_calls, 'max_tokens': max_tokens,
                   'config_file': settings.mysql.credentials_file or str(settings.root / 'config/settings.toml')}
     row, created = repository.create(settings, product, batch_id, rules.snapshot(), parameters, config.provider, model,
                                       rules.VERSION, input_hash, force=force)
@@ -111,7 +121,37 @@ def read(settings, task_id):
     from ecommerce.shared.pagination import PAGE_SIZE
     data['detail_locations'] = {str(d['result']['id']): index // PAGE_SIZE + 1 for index, d in enumerate(data['details'])}
     data['report_stale'] = bool(data['report'] and data['report']['content']['detail_revisions'] != {d['id']: d['revision'] for d in data['details']})
+    data['budget'] = repository.budget_status(task['parameters'], data['calls'])
+    data['resume_budget'] = remaining_budget(data)
+    plan = task['parameters'].get('plan')
+    data['outgoing'] = planning.requests(plan, task['rules']['classify'], [s['snapshot'] for s in data['sources']]) if plan else []
     return data
+
+
+def remaining_budget(data):
+    """估算继续当前任务所需额度；参数：持久任务及明细；返回：剩余预留和建议总上限。"""
+    task, parameters = data['task'], data['task']['parameters']
+    done = {detail['result']['id'] for detail in data['details']}
+    sources = [source['snapshot'] for source in data['sources']]
+    if parameters.get('plan'):
+        plan = parameters['plan']
+        needed = [group for group in plan['groups'] if any(uid not in done for uid in group['source_ids'])]
+        tokens = sum(group['reserved_tokens'] for group in needed)
+        count = len(needed)
+        report_reserve = plan['report_reserved_tokens']
+    else:
+        needed = [group for group in chunks(sources, task['rules']['classify']) if any(item['id'] not in done for item in group)]
+        tokens = sum(planning.reserve(task['rules']['classify'] + json.dumps(group, ensure_ascii=False), parameters['max_output_tokens']) for group in needed)
+        count = len(needed)
+        report_reserve = len(task['rules']['report'].encode()) + 60000 + parameters['max_output_tokens'] + 256
+    if not any(call['kind'] == 'report' and call['status'] == 'succeeded' for call in data['calls']):
+        tokens += report_reserve
+        count += 1
+    budget = repository.budget_status(parameters, data['calls'])
+    minimum = budget['used_tokens'] + tokens
+    return {'minimum_tokens': minimum, 'required_calls': count,
+            'suggested_tokens': max(parameters['max_tokens'], minimum + max(4096, (tokens + 9) // 10)),
+            'suggested_calls': max(parameters['max_calls'], len(data['calls']) + count)}
 
 
 def history_page(settings, product, batch=None):
@@ -165,7 +205,7 @@ def launch(settings, task_id):
                                message='后台进程未能启动；未发起AI请求，可手动继续。')
 
 
-def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False):
+def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, max_tokens=None, max_calls=None):
     """明确恢复未完成部分；参数：任务、费用及未知请求确认；返回：任务编号。"""
     if allow_paid is not True:
         raise ValueError('继续分析需要明确允许调用费用。')
@@ -185,8 +225,30 @@ def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False):
                 calls.c.status.in_(['inflight', 'unknown'])))
             if unknown and acknowledge_unknown is not True:
                 raise ValueError('存在结果未知请求，可能已计费；请明确确认重发风险后继续。')
+            current = {'task': row}
+            for key, name in [('calls', 'analysis_calls'), ('details', 'analysis_details'), ('sources', 'analysis_sources')]:
+                table = tables[name]
+                current[key] = [dict(value) for value in conn.execute(sa.select(table).where(table.c.analysis_id == task_id)).mappings()]
+            required = remaining_budget(current)
+            parameters = dict(row['parameters'])
+            tokens = parameters['max_tokens'] if max_tokens is None else max_tokens
+            count = parameters['max_calls'] if max_calls is None else max_calls
+            integer(tokens, parameters['max_tokens'], planning.MAX_TASK_TOKENS, '追加后的AI用量上限')
+            integer(count, parameters['max_calls'], 200, '追加后的调用次数上限')
+            if tokens < required['minimum_tokens'] or count < len(current['calls']) + required['required_calls']:
+                raise ValueError(f'继续所需额度不足：总用量上限至少{required["minimum_tokens"]}，总调用次数至少{len(current["calls"])+required["required_calls"]}；未启动新请求。')
+            if tokens != parameters['max_tokens'] or count != parameters['max_calls']:
+                history = parameters.get('budget_history', [])
+                parameters['budget_history'] = [*history, {'time': database_now().isoformat() + '+08:00',
+                    'before': {'max_tokens': parameters['max_tokens'], 'max_calls': parameters['max_calls']},
+                    'after': {'max_tokens': tokens, 'max_calls': count}, 'reason': '用户确认追加额度并继续未完成部分'}]
+                parameters.update(max_tokens=tokens, max_calls=count)
+            t = tables['analysis_tasks']
+            if conn.scalar(sa.select(sa.func.count()).select_from(t).where(t.c.active_key == row['fingerprint'], t.c.id != task_id)):
+                raise ValueError('已有相同资料与规则的分析正在运行，请先查看该任务。')
             conn.execute(tables['analysis_tasks'].update().where(tables['analysis_tasks'].c.id == task_id).values(
-                status='queued', active_key=row['fingerprint'], owner=None, message='用户明确继续，等待执行。', updated_at=database_now()))
+                status='queued', active_key=row['fingerprint'], owner=None, parameters=parameters,
+                message='用户明确继续，等待执行。', updated_at=database_now()))
         launch(settings, task_id)
     return {'id': task_id}
 
@@ -195,11 +257,13 @@ def build_report(settings, task_id, narrative=None, issues=None):
     """从持久明细构建报告，不调用AI；参数：任务、已校验文字、问题；返回：报告版本。"""
     data = repository.read(settings, task_id)
     task = data['task']
-    content = {'schema_version': 1, 'statistics': rules.statistics(data['details'], task['rules']),
+    content = {'schema_version': 2 if task['parameters'].get('plan') else 1, 'statistics': rules.statistics(data['details'], task['rules']),
         'findings': (narrative or {}).get('findings', []), 'suggestions': (narrative or {}).get('suggestions', []),
         'issues': issues or [], 'detail_revisions': {d['id']: d['revision'] for d in data['details']},
         'coverage': {'source_count': task['source_count'], 'processed_count': len(data['details']),
-                     'complete': len(data['details']) == task['source_count']},
+                     'unprocessed_count': task['source_count'] - len(data['details']),
+                     'complete': len(data['details']) == task['source_count'],
+                     'report_complete': narrative is not None and len(data['details']) == task['source_count']},
         'review_status': 'partially_corrected' if any(d['corrections'] for d in data['details']) else 'unreviewed'}
     return repository.save_report(settings, task_id, content)
 
@@ -235,7 +299,14 @@ def execute(settings, task_id, events):
     config = replace(load_config(settings.root), model=task['model'])
     client = create_client(config, provider=task['provider'], model=task['model'])
     inputs = [s['snapshot'] for s in data['sources']]
-    groups = chunks(inputs, task['rules']['classify'])
+    plan = task['parameters'].get('plan')
+    if plan:
+        groups = planning.requests(plan, task['rules']['classify'], inputs)
+    else:
+        # 旧任务继续沿用原10条/18000字符规则和已保存的提示词，不重排来源。
+        groups = [{'index': index, 'source_ids': [item['id'] for item in group],
+                   'max_output_tokens': task['parameters']['max_output_tokens']}
+                  for index, group in enumerate(chunks(inputs, task['rules']['classify']), 1)]
     complete_ids = {d['result']['id'] for d in data['details']}
     receipts = settings.workspace / 'output/analysis_receipts' / task_id
     receipts.mkdir(parents=True, exist_ok=True)
@@ -252,7 +323,8 @@ def execute(settings, task_id, events):
                 if call['kind'] == 'classify':
                     parsed = rules.classification(response['text'], [s for s in inputs if s['id'] in call['request']['source_ids']])
                 else:
-                    context = rules.report_context(repository.read(settings, task_id)['details'], task['rules'])
+                    context = rules.report_context(repository.read(settings, task_id)['details'], task['rules'],
+                        source_count=task['source_count'], product_context=plan['context'] if plan else None)
                     rules.validate_report(response['text'], context)
                     parsed = None
                 repository.finish_call(settings, task_id, call['id'], 'succeeded', response, results=parsed)
@@ -262,15 +334,19 @@ def execute(settings, task_id, events):
         else:
             repository.finish_call(settings, task_id, call['id'], 'unknown', None, '原进程中断且无可恢复响应，结果和费用未知。')
 
-    def request(kind, index, prompt, ids, validator):
+    def request(kind, index, prompt, ids, validator, output):
         """先记录再请求并保存收据；参数：用途、分批、提示、编号和校验器；返回：已校验结果。"""
-        if len(prompt) > 20000:
+        if len(prompt) > (planning.MAX_INPUT_CHARACTERS if plan else 20000):
             raise ValueError('本批请求过长，未发送。')
-        reserve = len(prompt.encode()) + task['parameters']['max_output_tokens'] + 256
-        call_id = repository.begin_call(settings, task_id, kind, index, prompt, ids, reserve)
+        reserve = planning.reserve(prompt, output)
+        call_id = repository.begin_call(settings, task_id, kind, index, prompt, ids, reserve,
+            output_tokens=output, json_mode=bool(plan), timeout_seconds=plan['timeout_seconds'] if plan else None)
         events.emit('analysis_call_started', '开始分析调用', details={'analysis_id': task_id, 'call_id': call_id, 'kind': kind, 'index': index})
         try:
-            response = client.complete(prompt, max_tokens=task['parameters']['max_output_tokens'], require_complete=False)
+            options = {'max_tokens': output, 'require_complete': False}
+            if plan:
+                options.update(json_mode=True, timeout_seconds=plan['timeout_seconds'])
+            response = client.complete(prompt, **options)
         except AIError as error:
             repository.finish_call(settings, task_id, call_id, 'unknown', None, str(error))
             raise ValueError(str(error) + ' 调用记录已保留，未自动重试；无完整响应时用量仍记为未知。') from None
@@ -289,26 +365,33 @@ def execute(settings, task_id, events):
     issues = []
     narrative = None
     try:
-        for index, group in enumerate(groups, 1):
-            missing = [s for s in group if s['id'] not in complete_ids]
+        for group in groups:
+            index = group['index']
+            missing = [s for s in inputs if s['id'] in group['source_ids'] and s['id'] not in complete_ids]
             if not missing:
                 continue
             repository.update_task(settings, task_id, message=f'正在分析第{index}/{len(groups)}批，已保存{len(complete_ids)}条。')
-            request('classify', index, task['rules']['classify'] + json.dumps(missing, ensure_ascii=False),
-                    [s['id'] for s in missing], lambda text: rules.classification(text, missing))
+            if plan and len(missing) != len(group['source_ids']):
+                raise ValueError('已保存明细与固定发送分组不一致，未重复发送已完成评价。')
+            prompt = group['prompt'] if plan else task['rules']['classify'] + json.dumps(missing, ensure_ascii=False)
+            request('classify', index, prompt, [s['id'] for s in missing],
+                    lambda text: rules.classification(text, missing), group['max_output_tokens'])
             complete_ids.update(s['id'] for s in missing)
         current = repository.read(settings, task_id)
-        context = rules.report_context(current['details'], task['rules'])
+        context = rules.report_context(current['details'], task['rules'], source_count=task['source_count'],
+                                       product_context=plan['context'] if plan else None)
         previous = next((c for c in reversed(current['calls']) if c['kind'] == 'report' and c['status'] == 'succeeded'), None)
         if previous:
             narrative = rules.validate_report(previous['response']['text'], context)
         else:
             narrative = request('report', 0, task['rules']['report'] + json.dumps(context, ensure_ascii=False), [],
-                                lambda text: rules.validate_report(text, context))
+                                lambda text: rules.validate_report(text, context),
+                                plan['report_output_tokens'] if plan else task['parameters']['max_output_tokens'])
     except ValueError as error:
         issues.append(str(error))
     build_report(settings, task_id, narrative=narrative, issues=issues)
     status = 'succeeded' if not issues else 'partial' if complete_ids else 'failed'
-    repository.update_task(settings, task_id, status=status, active_key=None, owner=None,
-        message='分析完成，结果尚未人工复核。' if not issues else '本轮停止，已保存结果可查看；' + issues[0])
+    message = '分析完成，结果尚未人工复核。' if not issues else (
+        '逐条分析完成，总报告未完成；' if len(complete_ids) == task['source_count'] else '本轮停止，已保存部分结果；') + issues[0]
+    repository.update_task(settings, task_id, status=status, active_key=None, owner=None, message=message)
     return status

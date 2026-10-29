@@ -13,7 +13,8 @@ class AIError(Exception):
 
 class TextClient(Protocol):
     """统一文本调用契约，后续服务商实现相同方法。"""
-    def complete(self, text: str, *, max_tokens: int = 64) -> dict:
+    def complete(self, text: str, *, max_tokens: int = 64, require_complete: bool = True,
+                 json_mode: bool = False, timeout_seconds: int | None = None) -> dict:
         """提交文字及输出上限；返回服务商、模型、文字、用量与完成原因。"""
         ...
 
@@ -31,25 +32,31 @@ class DeepSeekClient:
         """初始化；参数：校验后的配置及所选模型；返回：无。"""
         self.config, self.model = config, model
 
-    def complete(self, text, *, max_tokens=64, require_complete=True):
+    def complete(self, text, *, max_tokens=64, require_complete=True, json_mode=False, timeout_seconds=None):
         """单次发送文本；参数：文字和输出上限；返回脱敏结果或AIError。"""
         key = api_key(self.config)
         if not key:
             raise AIError('尚未配置密钥，请在本机config/ai.toml的[ai]中填写api_key。')
         if not key.isascii() or any(c.isspace() for c in key):
             raise AIError('密钥格式无效，请检查本机AI配置。')
-        if not isinstance(text, str) or not text.strip() or len(text) > 20000:
-            raise AIError('文字须为1～20000个字符。')
-        if type(max_tokens) is not int or not 1 <= max_tokens <= 4096:
-            raise AIError('输出上限须为1～4096。')
-        body = json.dumps({'model': self.model, 'messages': [{'role': 'user', 'content': text}],
-                           'thinking': {'type': 'disabled'}, 'stream': False, 'max_tokens': max_tokens}).encode()
+        if not isinstance(text, str) or not text.strip() or len(text) > 60000:
+            raise AIError('文字须为1～60000个字符。')
+        if type(max_tokens) is not int or not 1 <= max_tokens <= 65536:
+            raise AIError('输出上限须为1～65536。')
+        timeout = self.config.timeout_seconds if timeout_seconds is None else timeout_seconds
+        if type(json_mode) is not bool or type(timeout) is not int or not 1 <= timeout <= 600:
+            raise AIError('请求格式或等待上限无效。')
+        payload = {'model': self.model, 'messages': [{'role': 'user', 'content': text}],
+                   'thinking': {'type': 'disabled'}, 'stream': False, 'max_tokens': max_tokens}
+        if json_mode:
+            payload['response_format'] = {'type': 'json_object'}
+        body = json.dumps(payload).encode()
         request = Request('https://api.deepseek.com/chat/completions', data=body,
                           headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
         try:
-            with build_opener(NoRedirect(), HTTPSHandler()).open(request, timeout=self.config.timeout_seconds) as response:
-                raw = response.read(1024 * 1024 + 1)
-            if len(raw) > 1024 * 1024:
+            with build_opener(NoRedirect(), HTTPSHandler()).open(request, timeout=timeout) as response:
+                raw = response.read(4 * 1024 * 1024 + 1)
+            if len(raw) > 4 * 1024 * 1024:
                 raise AIError('接口响应超过安全大小限制。')
             data = json.loads(raw)
             choice = data['choices'][0]

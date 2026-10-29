@@ -20,7 +20,7 @@
     {{ control_button('测试连接',{'type':'submit','id':'ai-start','disabled':not data.key_configured}) }}
   </form>
   <p id="ai-result" role="status" aria-live="polite">尚未测试。</p>
-  <p>当前接入范围：配置与文字连接检查。商品详情自动分析尚未接入。</p>
+  <p>评价分析已接入商品评价明细的“分析评价”，需单独确认发送与费用。新建评价分析的每次请求等待上限为{{ data.analysis_timeout_seconds }}秒，与本页短文本连接测试分开。</p>
 </section>
 {% endif %}
 {% endblock %}
