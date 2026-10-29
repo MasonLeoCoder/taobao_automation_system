@@ -20,6 +20,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(pages)
     from ecommerce.web.routes.analysis import analysis
     app.register_blueprint(analysis)
+    from ecommerce.web.routes.ai import ai, ConnectionCheck
+    app.extensions['ai_check'] = ConnectionCheck()
+    app.register_blueprint(ai)
     import secrets
     app.config['COLLECTION_TOKEN']=secrets.token_hex(32)
     from ecommerce.web.routes.favorites import favorites

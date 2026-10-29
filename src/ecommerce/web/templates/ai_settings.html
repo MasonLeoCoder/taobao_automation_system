@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% from 'form_controls.html' import field, select_control, input_control, control_button %}
+{% block title %}AI设置{% endblock %}
+{% block breadcrumb %}AI设置{% endblock %}
+{% block content %}
+<section class="page-heading"><h1>AI设置</h1><p>选择服务商和模型，检查接口是否可以正常使用。</p></section>
+<section class="panel">
+  <h2>DeepSeek连接</h2>
+  <p>密钥状态：<strong>{{ '已配置' if data.key_configured else '未配置' }}</strong>。从本机环境变量 <code>{{ data.api_key_env }}</code> 读取，页面不展示密钥。</p>
+  <p>在Windows搜索“编辑账户的环境变量”，新建上述变量并填入密钥，保存后重新打开启动服务的终端并重启Web服务。</p>
+  <p>可选模型及默认值在 <code>config/ai.toml</code> 配置，模板为 <code>config/ai.example.toml</code>。未创建配置文件时使用默认值。</p>
+  <form id="ai-check" data-token="{{ token }}">
+    {% call field('服务商') %}{% call select_control({'name':'provider'}) %}<option value="deepseek">DeepSeek</option>{% endcall %}{% endcall %}
+    {% call field('模型') %}{% call select_control({'name':'model','data-searchable-select':true}) %}{% for model in data.models %}<option value="{{ model }}" {{ 'selected' if model==data.model }}>{{ model }}</option>{% endfor %}{% endcall %}{% endcall %}
+    <p><label>{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }} 允许发送一次固定短文本进行连接测试，可能产生少量费用。</label></p>
+    <p>测试不发送商品资料，不自动重试。等待上限约{{ data.timeout_seconds }}秒。结果仅在当前服务运行期间保留。</p>
+    {{ control_button('测试连接',{'type':'submit','id':'ai-start','disabled':not data.key_configured}) }}
+  </form>
+  <p id="ai-result" role="status" aria-live="polite">尚未测试。</p>
+  <p>当前接入范围：配置与文字连接检查。商品详情自动分析尚未接入。</p>
+</section>
+{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='ai_settings.js') }}" defer></script>{% endblock %}

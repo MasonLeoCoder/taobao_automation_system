@@ -14,6 +14,11 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description="电商自动化工作台 · 单店铺")
     root.add_argument("--config", help="配置路径，相对项目根目录解析")
     commands = root.add_subparsers(dest="command")
+    ai = commands.add_parser('ai', help='AI配置状态与连接检查')
+    ai.add_argument('action', choices=('status', 'check'))
+    ai.add_argument('--provider', choices=('deepseek',))
+    ai.add_argument('--model', help='config/ai.toml中已配置的模型')
+    ai.add_argument('--allow-paid', action='store_true', help='明确允许一次可能计费的固定短文本连接测试')
     account = commands.add_parser("account", help="店铺账号与会话")
     account.add_argument("action", choices=("login", "check"))
     account.add_argument("--platform", choices=("qianniu", "taobao"), default="qianniu",
@@ -126,6 +131,14 @@ def main(argv: list[str] | None = None) -> int:
         settings = load_settings(args.config)
         prepare_workspace(settings)
         setup_logging(settings)
+        if args.command == 'ai':
+            from ecommerce.modules.ai_service import configuration, check_connection
+            if args.action == 'check' and not args.allow_paid:
+                raise ValueError('连接测试可能产生少量费用，请加 --allow-paid 明确启动；只查看配置使用 ai status')
+            result = configuration(settings) if args.action == 'status' else check_connection(
+                settings, provider=args.provider, model=args.model)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "database":
             from ecommerce.cli.commands.database import execute as execute_database
             return execute_database(settings,args)

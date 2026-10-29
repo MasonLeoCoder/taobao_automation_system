@@ -24,6 +24,7 @@
     <a class="{{ 'active' if active == 'analysis' }}" href="{{ url_for('analysis.index') }}">搜索词分析</a>
     <a class="{{ 'active' if active == 'favorites' }}" href="{{ url_for('favorites.index') }}">我的关注</a>
   </nav>
+  <nav aria-label="设置"><a class="{{ 'active' if active == 'ai' }}" href="{{ url_for('ai.index') }}">AI设置</a></nav>
   <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。<small>基础架构 · v0.2</small></div>
 </aside>
 <main id="main">

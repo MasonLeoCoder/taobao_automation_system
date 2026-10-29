@@ -1,6 +1,7 @@
 .venv/
 workspace/
 config/settings.toml
+config/ai.toml
 *.egg-info/
 build/
 dist/
