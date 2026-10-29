@@ -7,16 +7,19 @@ import sys
 from ecommerce.infrastructure.tasks.ownership import process_started_at
 from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
 from ecommerce.modules.collection.web_collection import run_collection, validate_job
-from ecommerce.shared.config import Settings, MySQLSettings
+from ecommerce.shared.config import Settings,mysql_settings_from_payload,mysql_connection_target
 
 
-def settings_from_payload(values):
-    """还原固定配置，不读取旧派发文件；参数：数据库配置快照；返回：配置。"""
+def settings_from_payload(values, *, mysql=None):
+    """还原业务配置并绑定当前凭据；参数：快照、可选当前连接；返回：配置。"""
     values=dict(values)
     for key in ('root','workspace','session_path','profile_path','taobao_session_path','taobao_profile_path','qianniu_session_path','qianniu_profile_path'):
         if values.get(key) is not None:
             values[key]=Path(values[key])
-    values['mysql']=MySQLSettings(**values['mysql'])
+    previous=mysql_settings_from_payload(values['mysql'])
+    if mysql is not None and mysql_connection_target(previous)!=mysql_connection_target(mysql):
+        raise ValueError('采集申请数据库与当前连接目标不匹配')
+    values['mysql']=mysql if mysql is not None else previous
     return Settings(**values)
 
 
@@ -25,12 +28,12 @@ def execute(workspace, identifier, claim_token, *, bootstrap=None):
     if bootstrap is None:
         values=json.loads(os.environ['ECOMMERCE_JOB_BOOTSTRAP'])
         bootstrap=Settings(Path(values['root']),Path(values['workspace']),Path(workspace)/'unused-session',
-            Path(workspace)/'unused-profile',mysql=MySQLSettings(**values['mysql']),task_backend='mysql',collection_backend='mysql')
+            Path(workspace)/'unused-profile',mysql=mysql_settings_from_payload(values['mysql']),task_backend='mysql',collection_backend='mysql')
     persistence=CollectionJobStore(bootstrap)
     row=persistence.read(identifier)
     if row.get('claim_token')!=claim_token or row['dispatch_state']!='claimed' or row['stop_requested']:
         return
-    settings=settings_from_payload(row['config'])
+    settings=settings_from_payload(row['config'],mysql=bootstrap.mysql)
     if settings.workspace.resolve()!=Path(workspace).resolve() or settings.mysql!=bootstrap.mysql:
         raise ValueError('采集申请工作空间或数据库不匹配')
     if not persistence.bind_process(identifier,claim_token,os.getpid(),process_started_at(os.getpid()),replace_owner=True):

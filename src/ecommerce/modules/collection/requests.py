@@ -1,5 +1,5 @@
 """命令行采集登记同一数据库申请，空闲时同步执行，繁忙时保留排队。"""
-from dataclasses import asdict
+from ecommerce.shared.config import settings_payload
 import json
 import os
 from uuid import uuid4
@@ -22,7 +22,7 @@ def execute(settings, name, action, options, *, runner, resume_task_id=None, res
     row={'id':uuid4().hex,'product_id':product_id,'module':'selected' if product_id else 'list',
          'mode':options['mode'],'options':options,'modules':modules,'skipped_modules':[],
          'execution_key':execution_key(settings),'created_at':now(),
-         'config':json.loads(json.dumps(asdict(settings),default=str))}
+         'config':settings_payload(settings)}
     if resume_task_id:
         row.update(resume_task_id=resume_task_id,resume_revision=resume_revision)
     store=CollectionJobStore(settings)

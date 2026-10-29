@@ -1,5 +1,4 @@
 """数据库采集申请入口；本地目录仅保留进程日志和跨进程锁。"""
-from dataclasses import asdict
 import json
 import os
 import re
@@ -10,6 +9,7 @@ from pathlib import Path
 from ecommerce.infrastructure.tasks.ownership import owner_alive
 from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
 from ecommerce.infrastructure.storage.database import now
+from ecommerce.shared.config import mysql_settings_payload
 
 
 def directory(settings):
@@ -50,7 +50,7 @@ def launch(settings, identifier, claim_token):
     """启动无终端后台进程；参数：配置、派发编号；返回：进程对象，不执行浏览器逻辑。"""
     directory(settings).mkdir(parents=True,exist_ok=True)
     environment=os.environ.copy()
-    environment['ECOMMERCE_JOB_BOOTSTRAP']=json.dumps({'mysql':asdict(settings.mysql),'root':str(settings.root),'workspace':str(settings.workspace)})
+    environment['ECOMMERCE_JOB_BOOTSTRAP']=json.dumps({'mysql':mysql_settings_payload(settings.mysql),'root':str(settings.root),'workspace':str(settings.workspace)})
     log=directory(settings)/f'{identifier}.log'
     with log.open('ab') as output:
         return subprocess.Popen([sys.executable,'-m','ecommerce.modules.collection.web_worker',

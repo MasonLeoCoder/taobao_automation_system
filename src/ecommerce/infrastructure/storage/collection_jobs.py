@@ -108,6 +108,8 @@ class CollectionJobStore:
 
     def submit(self, row, *, submission_key=None, origin='web'):
         """原子保存固定申请并合并重复提交；参数：申请、提交编号、来源；返回：申请编号。"""
+        from ecommerce.shared.config import mysql_settings_from_payload
+        mysql_settings_from_payload(row['config']['mysql'])
         j = self.tables['collection_jobs']
         identifier(row['id'])
         if submission_key is not None:

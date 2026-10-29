@@ -1,5 +1,4 @@
 """仅迁移当前正式派发目录的申请描述，不导入商品资料、不制造恢复计划。"""
-from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
@@ -7,7 +6,7 @@ import sqlalchemy as sa
 from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore, identifier, JobConflict
 from ecommerce.infrastructure.storage.time_values import database_now, database_time
 from ecommerce.infrastructure.tasks.ownership import execution_key
-from ecommerce.shared.config import Settings, MySQLSettings
+from ecommerce.shared.config import Settings,mysql_settings_from_payload,mysql_connection_target,settings_payload
 
 
 def migrate_dispatch_files(settings):
@@ -32,13 +31,13 @@ def migrate_dispatch_files(settings):
         if row.get('id')!=path.stem:
             raise JobConflict('派发文件编号不一致，未迁移')
         config=dict(row['config'])
-        mysql=MySQLSettings(**config['mysql'])
-        if mysql!=settings.mysql or Path(config['workspace']).resolve()!=settings.workspace.resolve():
+        mysql=mysql_settings_from_payload(config['mysql'])
+        if mysql_connection_target(mysql)!=mysql_connection_target(settings.mysql) or Path(config['workspace']).resolve()!=settings.workspace.resolve():
             raise JobConflict('派发数据库或工作空间不匹配，未迁移')
         for name in ('root','workspace','session_path','profile_path','taobao_session_path','taobao_profile_path','qianniu_session_path','qianniu_profile_path'):
             if config.get(name) is not None:
                 config[name]=Path(config[name])
-        config['mysql']=mysql
+        config['mysql']=settings.mysql
         original=Settings(**config)
         if execution_key(original.for_platform('taobao'))!=key:
             raise JobConflict('派发配置与浏览器资源不一致，未迁移')
@@ -61,7 +60,7 @@ def migrate_dispatch_files(settings):
                         or legacy.get('options')!=row.get('options')):
                     raise JobConflict('旧队列与派发文件范围冲突，保留暂停并等待核对')
                 payload['legacy_queue']=legacy
-            payload['config']=json.loads(json.dumps(asdict(original),default=str))
+            payload['config']=settings_payload(original)
             payload.update(legacy_source_sha256=digest,legacy_state=row['state'] if row['state'] in {
                 'succeeded','failed','cancelled','needs_attention','interrupted','verification_pending'} else 'interrupted')
             values={'payload':payload,'message':row.get('message'),'owner_pid':row.get('owner_pid'),

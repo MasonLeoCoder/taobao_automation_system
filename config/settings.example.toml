@@ -32,9 +32,9 @@ host = "127.0.0.1"
 port = 8000
 
 [storage]
-# 新环境先保持旧任务源；正式导入核对通过后才设为 mysql，避免指向空库。
+# 新环境默认本地记录；显式升级MySQL并配置账号后再切换。
 task_backend = "sqlite"
-# 采集历史导入并核对后才改为 mysql；启用时 task_backend 也必须为 mysql。
+# 启用MySQL采集时，task_backend也必须为mysql；不自动导入已有文件。
 collection_backend = "files"
 
 [mysql]
@@ -42,8 +42,9 @@ collection_backend = "files"
 host = "127.0.0.1"
 port = 3306
 database = "taobao_automation_verify"
-user = "taobao_app"
-password_env = "ECOMMERCE_MYSQL_PASSWORD"
-migration_user = "taobao_migrator"
-migration_password_env = "ECOMMERCE_MYSQL_MIGRATION_PASSWORD"
+# 日常读写和结构升级共用此账号；本机主配置使用root管理员。
+user = "root"
+password = "" # 复制为本地配置后填写密码；显式空值会阻止连接。
+# 如使用环境变量，删除上面的password项后再配置这一个变量。
+# password_env = "ECOMMERCE_MYSQL_PASSWORD"
 connect_timeout = 5

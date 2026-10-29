@@ -31,11 +31,11 @@ class MySQLFoundationTests(unittest.TestCase):
             self.assertEqual(settings.mysql.port,3307)
             self.assertEqual(settings.database,root/'workspace/storage/database/ecommerce.sqlite3')
 
-    def test_bad_and_plaintext_secret_config_rejected(self):
-        """拒绝远程、非法标识、布尔端口和明文密码配置；参数：无；返回：无。"""
+    def test_invalid_connection_config_rejected(self):
+        """拒绝远程、非法标识、错误密码类型和无效变量名；参数：无；返回：无。"""
         for value in ({'host':'example.com'},{'port':True},{'database':'db;DROP DATABASE other'},
-                      {'user':'bad-user'},{'password':'must_not_be_stored'},{'connect_timeout':0},{'password_env':'bad env'},
-                      {'user':'root'},{'migration_user':'taobao_app'},{'user':'a'*33}):
+                      {'user':'bad-user'},{'password':True},{'connect_timeout':0},{'password_env':'bad env'},
+                      {'user':''},{'credentials_file':'untrusted.toml'},{'user':'a'*33}):
             with self.subTest(keys=list(value)),self.assertRaises(ValueError):
                 load_mysql_settings(value)
 

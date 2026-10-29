@@ -11,7 +11,7 @@ from sqlalchemy.engine import URL
 
 from ecommerce.infrastructure.storage.mysql_migrations.schema_v10 import REVISION, PREVIOUS_REVISION, build_metadata
 from ecommerce.infrastructure.storage.mysql_checks import check_expression_tree
-from ecommerce.shared.config import MySQLSettings
+from ecommerce.shared.config import MySQLSettings,mysql_password
 
 log = logging.getLogger(__name__)
 
@@ -33,12 +33,12 @@ def safe_error(error):
 
 
 def create_mysql_engine(settings: MySQLSettings, *, migration=False):
-    """建立小容量连接池；参数：本机配置、是否使用迁移账号；返回：Engine。"""
-    env_name = settings.migration_password_env if migration else settings.password_env
-    password = os.environ.get(env_name)
-    if not password:
-        raise MySQLStorageError(f"未设置密码环境变量 {env_name}；请在配置环境变量后的新终端运行")
-    url = URL.create("mysql+pymysql",username=settings.migration_user if migration else settings.user,
+    """以同一账号建立连接池；参数：配置、保留的迁移调用标志；返回：Engine。"""
+    try:
+        password=mysql_password(settings)
+    except ValueError as error:
+        raise MySQLStorageError(str(error)) from None
+    url = URL.create("mysql+pymysql",username=settings.user,
                      password=password,host=settings.host,port=settings.port,database=settings.database,query={"charset":"utf8mb4"})
     engine = sa.create_engine(url,pool_size=2,max_overflow=1,pool_pre_ping=True,pool_recycle=1800,
         hide_parameters=True,connect_args={"connect_timeout":settings.connect_timeout,"read_timeout":10,"write_timeout":10})

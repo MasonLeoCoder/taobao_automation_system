@@ -1,5 +1,5 @@
 """关键词、任意商品详情及补采的网页派发、状态和定向反馈。"""
-from dataclasses import asdict,replace
+from dataclasses import replace
 from datetime import datetime
 import json
 import re
@@ -145,7 +145,8 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
         raise ValueError('该商品九个模块均有有效完成结果，无需采集')
     if options is None:
         options=normalize_request({'mode':'detail','input':product_id,'modules':selected['modules']})
-    config=json.loads(json.dumps(asdict(settings),default=str))
+    from ecommerce.shared.config import settings_payload
+    config=settings_payload(settings)
     row={'id':identifier or uuid4().hex,'product_id':product_id,'module':module,'database':settings.mysql.database,
          'mode':mode,**selected,'options':options,'execution_key':execution_key(platform),'created_at':now(),'config':config}
     if resume_task_id:

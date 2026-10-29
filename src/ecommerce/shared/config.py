@@ -3,7 +3,7 @@
 import os
 import math
 import tomllib
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
 DEFAULT_TAOBAO_TIMING = {
@@ -14,24 +14,25 @@ DEFAULT_TAOBAO_TIMING = {
 
 @dataclass(frozen=True)
 class MySQLSettings:
-    """本机 MySQL 基础配置；密码仅通过指定环境变量读取，不进入配置对象。"""
+    """本机MySQL单账号配置；文件凭据延迟读取，内存密码不参与对象展示。"""
 
     host: str = "127.0.0.1"
     port: int = 3306
     database: str = "taobao_automation_verify"
     user: str = "taobao_app"
+    password: str | None = field(default=None, repr=False)
     password_env: str = "ECOMMERCE_MYSQL_PASSWORD"
-    migration_user: str = "taobao_migrator"
-    migration_password_env: str = "ECOMMERCE_MYSQL_MIGRATION_PASSWORD"
     connect_timeout: int = 5
+    credentials_file: str | None = field(default=None, repr=False)
 
 
 def load_mysql_settings(values: dict) -> MySQLSettings:
-    """校验本机数据库配置；参数：TOML mysql 分区；返回：不含密码的配置。"""
+    """校验本机单账号配置；参数：TOML mysql分区；返回：密码展示被隐藏的配置。"""
     import re
     if not isinstance(values, dict):
         raise ValueError("mysql 必须为配置分区")
-    supported = set(MySQLSettings.__dataclass_fields__)
+    values = {key:value for key,value in values.items() if key not in {'migration_user','migration_password_env'}}
+    supported = set(MySQLSettings.__dataclass_fields__) - {'credentials_file'}
     if set(values) - supported:
         raise ValueError("mysql 存在不支持的配置项")
     result = MySQLSettings(**values)
@@ -41,16 +42,68 @@ def load_mysql_settings(values: dict) -> MySQLSettings:
         raise ValueError("mysql.port 必须为 1–65535 的整数")
     if type(result.connect_timeout) is not int or not 1 <= result.connect_timeout <= 30:
         raise ValueError("mysql.connect_timeout 必须为 1–30 的整数秒")
-    for name in ("database", "user", "migration_user"):
+    for name in ("database", "user"):
         maximum=48 if name=="database" else 32
         if not isinstance(getattr(result, name), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,"+str(maximum-1)+r"}", getattr(result, name)):
             raise ValueError(f"mysql.{name} 仅支持字母开头的英文数字下划线，最长{maximum}字符")
-    if result.user.lower()=="root" or result.user==result.migration_user:
-        raise ValueError("MySQL 程序账号须为非 root 专用账号，并与迁移账号分开")
-    for name in ("password_env", "migration_password_env"):
+    if result.password is not None and not isinstance(result.password,str):
+        raise ValueError('mysql.password必须为文本；密码值未显示')
+    for name in ("password_env",):
         if not isinstance(getattr(result, name), str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", getattr(result, name)):
             raise ValueError(f"mysql.{name} 必须为大写环境变量名")
     return result
+
+
+def mysql_settings_payload(settings: MySQLSettings) -> dict:
+    """生成无密码的连接引用；参数：数据库配置；返回：可用于任务及子进程的快照。"""
+    if settings.password is not None and not settings.credentials_file:
+        raise ValueError('后台采集的数据库密码需要保存在本地配置文件中，再由任务引用')
+    return {item.name:getattr(settings,item.name) for item in fields(settings) if item.name!='password'}
+
+
+def mysql_settings_from_payload(values: dict) -> MySQLSettings:
+    """恢复连接引用并兼容旧双账号快照；参数：快照；返回：无内存密码的配置。"""
+    if not isinstance(values,dict):
+        raise ValueError('任务数据库配置格式无效')
+    values=dict(values)
+    if values.pop('password',None) is not None or values.pop('migration_password',None) is not None:
+        raise ValueError('任务配置不得包含数据库明文密码')
+    reference=values.pop('credentials_file',None)
+    if reference is not None and (not isinstance(reference,str) or not Path(reference).is_absolute()):
+        raise ValueError('数据库凭据引用须为本地配置文件的绝对路径')
+    return replace(load_mysql_settings(values),credentials_file=reference)
+
+
+def mysql_connection_target(settings: MySQLSettings) -> tuple:
+    """返回稳定数据库归属；参数：数据库配置；返回：主机、端口与库名，不含凭据。"""
+    return settings.host,settings.port,settings.database
+
+
+def mysql_password(settings: MySQLSettings) -> str:
+    """读取同一套连接密码；参数：数据库配置；返回：密码，不用于日志或快照。"""
+    password=settings.password
+    if password is None and settings.credentials_file:
+        try:
+            values=tomllib.loads(Path(settings.credentials_file).read_text(encoding='utf-8-sig')).get('mysql',{})
+            current=load_mysql_settings(values)
+        except (OSError,ValueError,TypeError):
+            raise ValueError('数据库本地凭据配置无法读取，请检查配置文件；密码值未显示') from None
+        if (current.host,current.port,current.user)!=(settings.host,settings.port,settings.user):
+            raise ValueError('数据库账号或地址已改变，请重新加载本地配置')
+        password=current.password
+    if password is None:
+        password=os.environ.get(settings.password_env)
+    if not password:
+        raise ValueError('未配置MySQL密码：请在本机配置文件的[mysql].password填写，或设置'+settings.password_env)
+    return password
+
+
+def settings_payload(settings) -> dict:
+    """生成不含密码值的固定业务配置；参数：应用配置；返回：JSON兼容的配置引用。"""
+    import json
+    values=asdict(settings)
+    values['mysql']=mysql_settings_payload(settings.mysql)
+    return json.loads(json.dumps(values,default=str))
 
 
 @dataclass(frozen=True)
@@ -134,7 +187,10 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
     config = resolve(selected or "config/settings.toml")
     if selected and not config.is_file():
         raise ValueError(f"配置文件不存在：{config}")
-    values = tomllib.loads(config.read_text(encoding="utf-8-sig")) if config.exists() else {}
+    try:
+        values = tomllib.loads(config.read_text(encoding="utf-8-sig")) if config.exists() else {}
+    except tomllib.TOMLDecodeError:
+        raise ValueError('配置文件TOML格式无效，请在本机检查；配置内容未显示') from None
     storage=values.get('storage',{})
     if (not isinstance(storage,dict) or set(storage)-{'task_backend','collection_backend'}
             or storage.get('task_backend','sqlite') not in {'sqlite','mysql'}
@@ -188,6 +244,8 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
                         resolve(taobao["session_path"]) if "session_path" in taobao else None,
                         resolve(taobao["profile_path"]) if "profile_path" in taobao else None, timing, taobao_channel, taobao_mode,
                         load_mysql_settings(values.get("mysql", {})),storage.get('task_backend','sqlite'),storage.get('collection_backend','files'))
+    if config.is_file():
+        settings=replace(settings,mysql=replace(settings.mysql,password=None,credentials_file=str(config)))
     module_timeouts=taobao.get('module_timeouts',{})
     if (not isinstance(module_timeouts,dict) or set(module_timeouts)-set(settings.collection_module_timeouts)
             or any(type(v) is not int or v<1000 for v in module_timeouts.values())):
