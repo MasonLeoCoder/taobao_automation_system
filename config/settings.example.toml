@@ -1,50 +1,65 @@
-# 相对路径统一基于项目根目录，可通过 ECOMMERCE_ROOT 覆盖根目录。
-workspace = "workspace"
-shop_name = "我的店铺"
+# 项目配置模板：程序默认读取 config/settings.toml，不自动读取本文件。
+# 仅首次部署时复制为 settings.toml，再在本机填写 MySQL 密码。
+# 后续更新项目时逐项补充配置，保留已有密码和本机值，不覆盖整个实际配置。
+# 修改后重启 CLI 任务和 Web 服务，再运行 python main.py database check 只读核对。
+# 相对路径均基于项目根目录；可用 ECOMMERCE_ROOT 指定根目录。
+workspace = "workspace" # 运行资料目录；未配置时也使用 workspace。
+shop_name = "我的店铺" # 店铺显示名称；未配置时也使用此值。
 
 [browser]
-headless = false
-timeout_ms = 60000
-# 未设置时优先兼容根目录 state.json 和 storage/taobao_browser_profile。
+headless = false # 是否隐藏浏览器窗口；可选 true/false，默认 false。
+timeout_ms = 60000 # 页面操作超时，正整数毫秒，默认 60000。
+# 千牛独立登录资料；省略时自动选择默认路径，并兼容存在的旧资料。
 # session_path = "workspace/storage/sessions/qianniu.json"
 # profile_path = "workspace/storage/browser_profiles/qianniu"
 
 [taobao]
-# 可选使用已安装的系统 Chrome 或 Edge 做兼容性对照；默认使用自带 Chromium。
-# browser_channel = "chrome" # chrome 或 msedge；不影响千牛
-# browser_mode = "native_cdp" # 普通启动连接模式，需要 chrome、可见窗口；默认 playwright
-# 淘宝买家端独立登录，不复用千牛及旧版资料；以下为默认路径。
+browser_channel = "chrome" # 本模板使用已安装的 Chrome；可选 chrome/msedge，省略用自带 Chromium。
+browser_mode = "native_cdp" # 本模板使用普通 Chrome 连接；可选 native_cdp/playwright，省略默认 playwright。
+# native_cdp 要求 browser_channel="chrome" 且 headless=false；新机器需安装 Chrome。
+# 淘宝与千牛使用独立登录资料；以下为省略配置时的默认路径。
 # session_path = "workspace/storage/sessions/taobao.json"
 # profile_path = "workspace/storage/browser_profiles/taobao"
 
 [taobao.pacing]
-# 页面就绪后附加的随机间隔（秒）；仅用于显式调用对应动作的采集步骤。
-before_search = [2, 4] # 填写关键词后、点击搜索前
-search = [2, 4]
-scroll = [1.5, 3]
-page = [4, 8]
-keyword = [8, 15]
-question = [4, 8] # 问大家逐题操作间隔
-question_rest = [30, 60] # 每10题或连续操作5分钟休息；等待可暂停/停止
+# 页面就绪后的随机间隔，单位秒，格式 [最小值, 最大值]；以下均为代码默认值。
+before_search = [2, 4] # 填写关键词后、点击搜索前。
+search = [2, 4] # 搜索结果就绪后。
+scroll = [1.5, 3] # 分段滚动之间。
+page = [4, 8] # 翻页后。
+keyword = [8, 15] # 多关键词之间。
+question = [4, 8] # 问大家逐题操作之间。
+question_rest = [30, 60] # 每 10 题或连续操作 5 分钟后的休息。
+
+[taobao.module_timeouts]
+# 各详情模块无进展超时，整数毫秒且至少 1000；以下均为默认值 120000。
+basic_info = 120000 # 商品基本信息。
+video = 120000 # 视频。
+main_images = 120000 # 主图。
+skus = 120000 # SKU 规格。
+parameters = 120000 # 商品参数。
+detail_images = 120000 # 详情图片。
+review_summary = 120000 # 评价概览。
+reviews = 120000 # 评价明细。
+questions = 120000 # 问大家。
 
 [web]
-host = "127.0.0.1"
-port = 8000
+host = "127.0.0.1" # 仅本机访问；可选 127.0.0.1/localhost/::1，默认 127.0.0.1。
+port = 8000 # 监听端口，整数 1～65535，默认 8000；CLI --port 可覆盖。
 
 [storage]
-# 新环境默认本地记录；显式升级MySQL并配置账号后再切换。
-task_backend = "sqlite"
-# 启用MySQL采集时，task_backend也必须为mysql；不自动导入已有文件。
-collection_backend = "files"
+# 本模板启用 MySQL；缺少配置时的代码兼容默认值仍为 sqlite/files。
+task_backend = "mysql" # 任务与日志；可选 mysql/sqlite。
+collection_backend = "mysql" # 结构化采集；可选 mysql/files，mysql 要求任务存储也为 mysql。
+# 新机器先安装 MySQL、准备账号和数据库，再显式升级结构；已有文件不会自动导入。
 
 [mysql]
-# 新环境的独立验证配置；本项目本机实际配置已使用正式库 taobao_automation。
-host = "127.0.0.1"
-port = 3306
-database = "taobao_automation_verify"
-# 日常读写和结构升级共用此账号；本机主配置使用root管理员。
-user = "root"
-password = "" # 复制为本地配置后填写密码；显式空值会阻止连接。
-# 如使用环境变量，删除上面的password项后再配置这一个变量。
+host = "127.0.0.1" # 本机数据库；可选 127.0.0.1/localhost/::1，默认 127.0.0.1。
+port = 3306 # 数据库端口，整数 1～65535，默认 3306。
+database = "taobao_automation" # 正式库；独立合成测试在本地副本中改为 taobao_automation_verify。
+user = "root" # 日常读写、后台采集与结构升级共用的账号；本机使用已有 root。
+password = "" # 仅在本地 settings.toml 填写；显式空值会阻止连接。
+connect_timeout = 5 # 连接超时，整数秒 1～30，默认 5。
+# 如需环境变量兼容模式，删除 password 项后再启用下面这一项。
 # password_env = "ECOMMERCE_MYSQL_PASSWORD"
-connect_timeout = 5
+# credentials_file 是程序内部引用，不能手工加入本配置。

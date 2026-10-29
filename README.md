@@ -25,6 +25,12 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e .
 .venv\Scripts\python.exe -m playwright install chromium
 .venv\Scripts\python.exe main.py --help
+```
+
+首次部署先安装MySQL和Chrome，按[配置说明](docs/操作参考/环境与会话配置.md#配置与路径)创建实际配置并填写本机密码、准备数据库账号，再执行`.venv\Scripts\python.exe main.py database upgrade`显式建立当前表结构。已有当前结构时跳过升级；在项目根目录核对后启动Web：
+
+```cmd
+.venv\Scripts\python.exe main.py database check
 .venv\Scripts\python.exe main.py web --port 8000
 ```
 
@@ -34,11 +40,11 @@ python -m venv .venv
 
 ## 数据与配置
 
-默认配置为 `config/settings.toml`，新环境可参考 `config/settings.example.toml`。`--config` 放在子命令之前，相对路径统一按项目根目录解析，敏感值通过环境变量提供。
+默认读取`config/settings.toml`。`config/settings.example.toml`是MySQL正式库部署模板，首次部署时复制，再在本机填写管理员密码；已有实际配置时逐项更新，保留密码和本机值。两份文件的配置项、分组和排列对应，模板密码为空，本机配置不提交Git。`--config`放在子命令之前，相对路径统一按项目根目录解析。复制及核对步骤见[环境与会话配置](docs/操作参考/环境与会话配置.md#配置与路径)，单账号密码读取规则见[MySQL单账号配置](docs/操作参考/MySQL单账号配置.md)。
 
 本机正式库为 `taobao_automation`，独立验证库为 `taobao_automation_verify`；任务和结构化采集以MySQL为准。时间字段、命令行和网页统一北京时间（UTC+08:00）。图片、视频、HTML、原始JSON/CSV保留为文件，模块SQLite用于执行期缓存与导出核对。
 
-新环境默认sqlite/files；使用MySQL前显式升级并配置后端，已有文件不自动导入。数据库与补写操作见[完整命令参考](docs/操作参考/命令参考.md#mysql-任务与日志cmd)。2026-10-23曾按用户要求清空旧数据及备份，之后测试已产生新记录；[重置基线](docs/历史记录/从零测试说明.md)仅记录清空时点，不代表当前为空库。
+模板显式启用MySQL、正式库taobao_automation及Chrome/native_cdp；新机器需安装MySQL和Chrome、准备数据库账号并填写密码，首次启动采集或Web前显式执行database upgrade。缺少配置时的代码兼容默认值仍为sqlite/files，不自动建库或导入已有文件。修改配置后，先正常结束当前采集，再重新运行CLI任务或重启Web，执行`python main.py database check`只读核对连接、版本和结构。独立测试使用workspace内的本地副本，库名改为taobao_automation_verify，不直接使用正式模板执行verify。数据库与补写操作见[完整命令参考](docs/操作参考/命令参考.md#mysql-任务与日志cmd)。2026-10-23曾按用户要求清空旧数据及备份，之后测试已产生新记录；[重置基线](docs/历史记录/从零测试说明.md)仅记录清空时点，不代表当前为空库。
 
 数据库参考分工：
 
