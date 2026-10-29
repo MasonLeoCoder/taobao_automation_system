@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block breadcrumb %}评价分析记录{% endblock %}
+{% block title %}评价分析记录{% endblock %}
+{% block content %}
+<section class="page-heading"><h1>评价分析记录</h1><p>商品 {{ product }} · 展示最近100次分析，打开历史结果不调用AI。</p><a href="{{ url_for('pages.collection_product',product_id=product,module='reviews') }}">返回商品评价</a></section>
+<section class="panel"><a class="ui-button ui-primary" href="{{ url_for('review_analysis.new',product=product) }}">分析评价</a>
+<div class="table-wrap"><table><thead><tr><th>创建时间</th><th>模型</th><th>状态</th><th>覆盖条数</th><th>结果</th></tr></thead><tbody>
+{% for task in tasks %}<tr><td>{{ task.created_at }}</td><td>{{ task.model }}</td><td>{{ {'queued':'待启动','running':'执行中','succeeded':'已完成','partial':'部分完成','failed':'失败','interrupted':'中断'}.get(task.status,task.status) }}</td><td>{{ task.processed_count }}/{{ task.source_count }}</td><td><a href="{{ url_for('review_analysis.result',task_id=task.id) }}">查看</a></td></tr>{% else %}<tr><td colspan="5">尚无已保存分析。</td></tr>{% endfor %}
+</tbody></table></div></section>{% endblock %}

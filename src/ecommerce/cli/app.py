@@ -14,6 +14,29 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description="电商自动化工作台 · 单店铺")
     root.add_argument("--config", help="配置路径，相对项目根目录解析")
     commands = root.add_subparsers(dest="command")
+    analysis = commands.add_parser('analysis', help='持久化商品分析')
+    kinds = analysis.add_subparsers(dest='analysis_type', required=True)
+    reviews = kinds.add_parser('reviews', help='评价分析：初评与追评一起处理')
+    actions = reviews.add_subparsers(dest='action', required=True)
+    for name in ('preview', 'start', 'history', 'status', 'resume', 'recount', 'export'):
+        command = actions.add_parser(name)
+        if name in {'preview', 'start', 'history'}:
+            command.add_argument('--input', required=True, help='淘宝商品编号')
+        else:
+            command.add_argument('--task-id', required=True, help='分析编号，不是采集任务编号')
+        if name in {'preview', 'start'}:
+            command.add_argument('--batch-id', type=int, help='整批评价来源，默认最新完整发布批次')
+        if name == 'start':
+            command.add_argument('--model', help='已配置模型，默认使用AI配置')
+            command.add_argument('--max-calls', type=int, help='调用次数上限，默认预计次数加2')
+            command.add_argument('--max-tokens', type=int, help='保守token预算，含未知调用的预留')
+            command.add_argument('--force', action='store_true', help='明确另建分析，不复用已完成结果')
+        if name in {'start', 'resume'}:
+            command.add_argument('--allow-paid', action='store_true', help='明确允许发送资料及AI费用')
+        if name == 'resume':
+            command.add_argument('--acknowledge-unknown', action='store_true', help='明确了解结果未知请求重发可能重复计费')
+        if name == 'export':
+            command.add_argument('--output', required=True, help='新建JSON报告文件，不覆盖已有文件')
     ai = commands.add_parser('ai', help='AI配置状态与连接检查')
     ai.add_argument('action', choices=('status', 'check'))
     ai.add_argument('--provider', choices=('deepseek',))
@@ -131,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
         settings = load_settings(args.config)
         prepare_workspace(settings)
         setup_logging(settings)
+        if args.command == 'analysis':
+            from ecommerce.cli.commands.analysis import execute
+            return execute(settings, args)
         if args.command == 'ai':
             from ecommerce.modules.ai_service import configuration, check_connection
             if args.action == 'check' and not args.allow_paid:

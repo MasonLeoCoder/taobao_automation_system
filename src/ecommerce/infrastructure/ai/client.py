@@ -31,7 +31,7 @@ class DeepSeekClient:
         """初始化；参数：校验后的配置及所选模型；返回：无。"""
         self.config, self.model = config, model
 
-    def complete(self, text, *, max_tokens=64):
+    def complete(self, text, *, max_tokens=64, require_complete=True):
         """单次发送文本；参数：文字和输出上限；返回脱敏结果或AIError。"""
         key = api_key(self.config)
         if not key:
@@ -54,13 +54,15 @@ class DeepSeekClient:
             data = json.loads(raw)
             choice = data['choices'][0]
             content = choice['message']['content']
-            if not isinstance(content, str) or not content.strip() or choice.get('finish_reason') != 'stop':
+            if not isinstance(content, str) or (require_complete and (not content.strip() or choice.get('finish_reason') != 'stop')):
                 raise AIError('模型未完整返回文字，连接检查未通过。')
             usage = data.get('usage', {})
             if not isinstance(usage, dict):
                 raise AIError('接口用量格式无效。')
             return {'provider': 'deepseek', 'model': self.model, 'text': content.replace(key, '[已隐藏]'),
-                    'finish_reason': 'stop', 'usage': {name: value for name in
+                    'finish_reason': choice.get('finish_reason'),
+                    'response_id': str(data.get('id', ''))[:200], 'returned_model': str(data.get('model', self.model))[:100],
+                    'usage': {name: value for name in
                     ('prompt_tokens', 'completion_tokens', 'total_tokens')
                     if type(value := usage.get(name)) is int and value >= 0}}
         except HTTPError as error:

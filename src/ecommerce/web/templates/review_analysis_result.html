@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block breadcrumb %}评价分析结果{% endblock %}
+{% from 'form_controls.html' import field, select_control, input_control, control_button %}
+{% block title %}评价分析结果{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='review_analysis.css') }}">{% endblock %}
+{% block content %}
+<section class="page-heading"><h1>评价分析结果</h1><p>商品 {{ data.product.platform_product_id }} · {{ task.model }} · 规则 {{ task.rule_version }}</p><a href="{{ url_for('review_analysis.index',product=data.product.platform_product_id) }}">分析历史</a> · <a href="{{ url_for('pages.collection_product',product_id=data.product.platform_product_id,module='reviews') }}">商品评价</a></section>
+<section class="panel" data-ra-task="{{ task.id }}" data-ra-active="{{ 'true' if task.status in ['queued','running'] and not task.appears_interrupted else 'false' }}">
+<h2>进度与范围</h2><p id="ra-progress" role="status">{{ task.message }} · 已保存 {{ task.processed_count }}/{{ task.source_count }} 条</p>
+<p>分析编号：{{ task.id }}；创建于 {{ task.created_at }}。当前页面读取已保存结果，不重新请求AI。</p>
+{% if data.sources %}<p>来源批次 {{ data.sources[0].batch_id }} · 采集于 {{ data.sources[0].scope.captured_at }} · 覆盖 {{ {'limit_reached':'达到采集上限，属于部分样本','explicit_end':'页面可见末尾','unknown':'未确认'}.get(data.sources[0].scope.coverage_status,'以原始采集记录为准') }}。</p>{% endif %}
+<p>已知用量：{{ task.usage.get('total_tokens',0) }} tokens；结果未知请求：{{ task.usage.get('unknown_calls',0) }} 次。实际费用以服务商账单为准。</p>
+{% if task.appears_interrupted %}<p role="alert">原后台进程已结束，本次执行已中断，未自动重发。</p>{% endif %}
+{% if task.status not in ['queued','running','succeeded'] or task.appears_interrupted %}
+<form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}"><p><label>{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }} 允许继续处理未完成部分并产生费用。</label></p><p><label>{{ input_control({'type':'checkbox','name':'acknowledge_unknown'}) }} 若有结果未知请求，已了解重发可能重复计费。</label></p>{{ control_button('继续未完成部分',{'type':'submit'}) }}<p class="ra-feedback" role="status"></p></form>{% endif %}
+<a href="{{ url_for('review_analysis.export',task_id=task.id) }}">下载完整JSON报告与依据</a> · <a href="{{ url_for('review_analysis.export',task_id=task.id,format='html') }}">下载可阅读的HTML报告</a>
+{% if task.status not in ['queued','running'] %}{{ control_button('重新统计（不调用AI）',{'type':'button','data-ra-recount':url_for('review_analysis.recount',task_id=task.id)}) }}{% endif %}
+<p id="ra-global-feedback" role="status"></p></section>
+{% if data.report %}{% set report=data.report.content %}
+{% if data.report_stale %}<section class="panel" role="alert"><p>明细已修订，当前报告尚未同步，请点击“重新统计”。旧报告保留原来的依据版本。</p></section>{% endif %}
+<section class="panel"><h2>报告版本 {{ data.report.version }}</h2><p>覆盖 {{ report.coverage.processed_count }}/{{ report.coverage.source_count }} 条；{{ '完整处理' if report.coverage.complete else '部分完成' }}。{{ '包含人工修订，仍需整体复核' if report.review_status=='partially_corrected' else '尚未人工复核' }}。</p>
+{% for issue in report.issues %}<p role="alert">{{ issue }}</p>{% endfor %}
+<p>分类数量：{% for kind,count in report.statistics.kinds.items() %}{{ kinds.get(kind,kind) }} {{ count }}条；{% endfor %}排除 {{ report.statistics.excluded_count }}条。主题可交叉，不代表总体买家比例。</p>
+<div class="table-wrap"><table class="ra-stat-table"><thead><tr><th>主题</th><th>涉及条数</th><th>正面</th><th>负面</th><th>正负并存</th><th>中性</th><th>待确认</th></tr></thead><tbody>{% for t in report.statistics.topics %}<tr><td>{{ t.topic }}<details><summary>查看评价依据</summary>{% for sentiment,ids in t.evidence_ids.items() %}<p>{{ names[sentiment] }}：{% for id in ids %}<a href="?page={{ data.detail_locations.get(id|string,1) }}#review-{{ id }}">{{ id }}</a> {% endfor %}</p>{% endfor %}</details></td><td>{{ t.count }}</td>{% for sentiment in ['positive','negative','mixed','neutral','unclear'] %}<td>{{ t.counts[sentiment] }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+<details><summary>尚未纳入同义词典的主题（保留原名，可能需要合并）</summary><p>{{ report.statistics.unmapped_topics|join('、') }}</p></details>
+{% for key,label in [('findings','主要发现'),('suggestions','改进建议')] %}<h3>{{ label }}</h3>{% for finding in report[key] %}<h4>{{ finding.title }}</h4><p>{{ finding.text }}</p><ul>{% for e in finding.evidence %}<li><a href="?page={{ data.detail_locations.get(e.id|string,1) }}#review-{{ e.id }}">评价 {{ e.id }}</a>（{{ e.segment }}）：{{ e.quote }}</li>{% endfor %}</ul>{% else %}<p>尚无有效综合文字，可先查看主题统计与逐条依据。</p>{% endfor %}{% endfor %}
+<details><summary>历史报告版本</summary>{% for old in data.reports %}<p>版本 {{ old.version }} · {{ old.created_at }} · 覆盖 {{ old.content.coverage.processed_count }}/{{ old.content.coverage.source_count }}条</p>{% endfor %}<p>完整历史内容包含在JSON导出中。</p></details></section>{% endif %}
+<section class="panel"><h2>调用记录</h2><div class="table-wrap"><table class="ra-call-table"><thead><tr><th>用途 / 批次</th><th>状态</th><th>已知用量</th><th>说明</th></tr></thead><tbody>{% for call in data.calls %}<tr><td>{{ '逐条分类' if call.kind=='classify' else '综合报告' }} / {{ call.chunk_index }}</td><td>{{ {'inflight':'请求进行中或原进程未确认','succeeded':'已校验保存','invalid':'校验不通过','unknown':'结果未知'}.get(call.status,call.status) }}</td><td>{{ call.usage.get('total_tokens','未知') }}</td><td>{{ call.error }}</td></tr>{% else %}<tr><td colspan="4">尚未请求AI。</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><h2>逐条依据与人工修正</h2><p>只修改分类、主题或倾向，不改写原评价。修改后保留原始AI结果，并生成新的本地统计报告。</p>
+{% for detail in data.detail_page %}{% set src=data.source_by_id[detail.source_id].snapshot %}{% set effective=detail.effective %}
+<details id="review-{{ src.id }}"><summary>评价 {{ src.id }} · {{ kinds[effective.kind] }} · {{ '已排除' if effective.get('excluded') else '已人工修正' if detail.corrections else '未复核' }}</summary>
+<p>规格：{{ src.sku }}</p><p>初评：{{ src.text }}</p>{% for append in src.appends %}<p>追评 {{ append.segment }}：{{ append.text }}</p>{% endfor %}
+<form data-ra-correct data-url="{{ url_for('review_analysis.correct',task_id=task.id,detail_id=detail.id) }}" data-revision="{{ detail.revision }}">
+{% call field('分类') %}{% call select_control({'name':'kind'}) %}{% for kind,label in kinds.items() %}<option value="{{ kind }}" {{ 'selected' if kind==effective.kind }}>{{ label }}</option>{% endfor %}{% endcall %}{% endcall %}
+{% for point in effective.points %}<fieldset data-ra-point data-segment="{{ point.segment }}" data-quote="{{ point.quote }}"><legend>依据 {{ loop.index }}：{{ point.quote }}（{{ point.segment }}）</legend>
+<label>{{ input_control({'type':'checkbox','name':'keep','checked':true}) }} 保留此主题依据</label>
+{% call field('主题') %}{{ input_control({'name':'topic','value':point.topic,'maxlength':80,'required':true}) }}{% endcall %}
+{% call field('倾向') %}{% call select_control({'name':'sentiment'}) %}{% for key,label in names.items() %}<option value="{{ key }}" {{ 'selected' if key==point.sentiment }}>{{ label }}</option>{% endfor %}{% endcall %}{% endcall %}</fieldset>{% endfor %}
+<p><label>{{ input_control({'type':'checkbox','name':'excluded','checked':effective.get('excluded',false)}) }} 将整条排除出统计</label></p>
+{% call field('修正原因') %}{{ input_control({'name':'reason','maxlength':500,'required':true}) }}{% endcall %}
+{{ control_button('保存修正并重新统计',{'type':'submit','disabled':task.status in ['queued','running']}) }}<p class="ra-feedback" role="status"></p></form>
+<details><summary>原始分类与修正记录</summary><pre>{{ detail.result|tojson(indent=2) }}</pre>{% for change in detail.corrections %}<p>{{ change.time }} · {{ change.reason }}</p><pre>{{ change.after|tojson(indent=2) }}</pre>{% endfor %}</details></details>{% else %}<p>尚无已校验明细。</p>{% endfor %}
+<p>第 {{ page }} 页 / 共 {{ info.pages }} 页</p>{% if page>1 %}<a href="?page={{ page-1 }}">上一页</a>{% endif %}{% if page<info.pages %}<a href="?page={{ page+1 }}">下一页</a>{% endif %}</section>
+{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='review_analysis.js') }}" defer></script>{% endblock %}

@@ -26,6 +26,7 @@
 </section>
 <section class="panel review-section" id="review-comments" data-collection-module="reviews" data-latest-batch="{{ comments.history[0].id if comments.history else 0 }}">
 <h2>评价明细</h2>
+<div class="module-actions">{% if comments.selected and comments.detail.total %}<a class="ui-button ui-primary" href="{{ url_for('review_analysis.new',product=product.platform_product_id,batch=comments.selected.id) }}">分析评价</a>{% else %}<span>先采集评价后可启动分析。</span>{% endif %}<a class="ui-button ui-secondary" href="{{ url_for('review_analysis.index',product=product.platform_product_id) }}">查看分析记录</a></div>
 {{ selection_form(comments,'reviews','reviews_batch','page','review-comments') }}
 {% if comments.selected %}
 <p>{{ scope(comments.selected) }} · 批次 {{ comments.selected.id }}<br>明细采集时间：{{ comments.selected.captured_at|full_local_time }} · 本批已保存 {{ comments.detail.total }} 条，不代表平台全部评价。</p>

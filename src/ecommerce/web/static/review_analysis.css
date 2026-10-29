@@ -1,0 +1,8 @@
+/* 仅约束长文本与表单布局，控件外观沿用全站公共组件。 */
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+[data-ra-correct] fieldset { min-width: 0; }
+[data-ra-correct] legend { max-width: 100%; overflow-wrap: anywhere; }
+[data-ra-task] p, #ra-progress { overflow-wrap: anywhere; }
+.ra-stat-table { min-width: 760px; }
+.ra-stat-table td:first-child { min-width: 160px; }
+.ra-call-table { min-width: 560px; }

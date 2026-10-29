@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评价分析报告</title>
+<body><main><h1>商品 {{ data.product.platform_product_id }} 评价分析</h1>
+<p>分析编号 {{ data.task.id }} · 模型 {{ data.task.model }} · 规则 {{ data.task.rule_version }} · 保存时间 {{ data.task.updated_at }}</p>
+<p>来源 {{ data.task.source_count }} 条，已校验 {{ data.task.processed_count }} 条；仅代表采集样本，尚需人工复核。</p>
+{% if data.report %}{% set report=data.report.content %}<h2>报告版本 {{ data.report.version }}</h2>
+{% for issue in report.issues %}<p>{{ issue }}</p>{% endfor %}
+<h2>主题统计</h2><table border="1" cellpadding="8"><thead><tr><th>主题</th><th>涉及条数</th><th>正面</th><th>负面</th><th>正负并存</th><th>中性</th><th>待确认</th></tr></thead><tbody>{% for t in report.statistics.topics %}<tr><td>{{ t.topic }}</td><td>{{ t.count }}</td>{% for kind in ['positive','negative','mixed','neutral','unclear'] %}<td>{{ t.counts[kind] }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+{% for key,label in [('findings','主要发现'),('suggestions','改进建议')] %}<h2>{{ label }}</h2>{% for finding in report[key] %}<h3>{{ finding.title }}</h3><p>{{ finding.text }}</p>{% for e in finding.evidence %}<p><a href="#review-{{ e.id }}">评价 {{ e.id }}</a>（{{ e.segment }}）：{{ e.quote }}</p>{% endfor %}{% else %}<p>暂无有效综合文字。</p>{% endfor %}{% endfor %}{% endif %}
+<h2>来源原文</h2>{% for source in data.sources %}<article id="review-{{ source.review_id }}"><h3>评价 {{ source.review_id }}</h3><p>批次 {{ source.batch_id }} · 规格 {{ source.snapshot.sku }}</p><p>{{ source.snapshot.text }}</p>{% for append in source.snapshot.appends %}<p>追评 {{ append.segment }}：{{ append.text }}</p>{% endfor %}</article>{% endfor %}
+<p>本文件由已保存的MySQL结果导出，导出不调用AI。完整分类、修订与历史版本可另行导出JSON。</p></main></body></html>
