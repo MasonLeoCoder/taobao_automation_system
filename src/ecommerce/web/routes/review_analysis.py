@@ -49,6 +49,9 @@ def invalid(error):
     """展示安全业务错误；参数：异常；返回：明确错误页或JSON。"""
     if request.method == 'POST':
         return jsonify(error=str(error)), 409 if isinstance(error, TaskBusy) else 400
+    if request.args.get('dialog') == '1':
+        return Response(render_template('review_analysis_dialog_error.html', message=str(error)),
+            status=404 if isinstance(error, LookupError) else 400, headers={'X-Review-Analysis-Fragment':'1'})
     return render_template('review_analysis_error.html', active='collections', shop_name=settings().shop_name, message=str(error)), 404 if isinstance(error, LookupError) else 400
 
 
@@ -93,6 +96,9 @@ def new(product):
             raise LookupError('尚无评价资料，请返回商品评价明细选择资料。')
         return redirect(url_for('review_analysis.new', product=product, batch=choices[0]['id']))
     data = service.preview(settings(), product, batch)
+    if request.args.get('dialog') == '1':
+        return Response(render_template('review_analysis_form.html', data=data, product=product, dialog_mode=True),
+                        headers={'X-Review-Analysis-Fragment':'1'})
     return render_template('review_analysis_new.html', active='collections', shop_name=settings().shop_name, data=data, product=product)
 
 

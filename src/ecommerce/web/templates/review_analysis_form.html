@@ -1,0 +1,27 @@
+{% from 'form_controls.html' import field, select_control, input_control, control_button %}
+<form class="ui-confirm-form" data-ra-start data-url="{{ url_for('review_analysis.start',product=product) }}" data-batch="{{ data.batch.id }}" data-hash="{{ data.input_hash }}">
+<div class="ui-confirm-body">
+  <section class="ui-source-card" aria-label="本次评价来源">
+    <div class="ui-source-heading"><span>本次分析范围</span><span class="ui-status-pill">来源已固定</span></div>
+    <div class="ui-source-count"><strong>{{ data['items']|length }}</strong><span>条评价</span></div>
+    <p class="ui-source-caption">将分析当前列表全部 {{ data['items']|length }} 条评价，包含所有分页。</p>
+    <dl class="ui-source-meta"><div><dt>来源批次</dt><dd>{{ data.batch.id }}</dd></div><div><dt>采集时间</dt><dd>{{ data.batch.captured_at.strftime('%Y-%m-%d %H:%M') if data.batch.captured_at else '未记录' }}</dd></div></dl>
+    <p class="ui-source-product">商品 {{ product }} · 初评与追评一起分析</p>
+  </section>
+  <section class="ui-confirm-settings">
+    <div class="ui-form-heading"><h3>分析设置</h3><span class="ui-provider-pill">DeepSeek</span></div>
+    {% call field('分析模型') %}{% call select_control({'name':'model','data-searchable-select':true,'data-select-label':'分析模型','data-trigger-label':'分析模型','data-search-label':'查找模型'}) %}{% for model in data.models %}<option value="{{ model }}" {{ 'selected' if model==data.model }}>{{ model }}</option>{% endfor %}{% endcall %}{% endcall %}
+    <p class="ui-form-note">预计 {{ data.chunk_count }} 批分类 + 1次报告整理。主题数量由程序统计，分析完成后可查看原文依据。</p>
+  </section>
+  <details class="ui-advanced-settings"><summary><span>高级设置</span><small>预算与重新分析</small></summary><div class="ui-advanced-body">
+    {% call field('调用次数上限') %}{{ input_control({'name':'max_calls','type':'number','min':data.planned_calls,'max':200,'value':data.default_calls,'required':true}) }}{% endcall %}
+    {% call field('保守token预算') %}{{ input_control({'name':'max_tokens','type':'number','min':data.reserved_tokens,'max':5000000,'value':data.reserved_tokens+30000,'required':true}) }}{% endcall %}
+    <p class="ui-form-note">按请求输入和输出上限保守预留，失败和未知请求也占预算；达到上限后停止。预算不是费用金额。</p>
+    <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'force'}) }}<span>重新分析，另建记录<small>默认优先复用相同资料与设置的已有结果。</small></span></label>
+  </div></details>
+  <label class="ui-consent-row ui-payment-consent">{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }}<span>允许发送本批评价并承担AI调用费用<small>发送评价文字、规格及追评，不发送昵称或媒体链接。实际费用以DeepSeek账单为准。</small></span></label>
+  {% if not data.key_configured %}<p class="ui-form-notice">尚未配置密钥，请先完成<a href="{{ url_for('ai.index') }}">AI设置</a>。</p>{% endif %}
+  <p class="ra-feedback ui-form-feedback" role="status" aria-live="polite"></p>
+</div>
+<footer class="ui-confirm-footer"><span class="ui-form-note">仅分析已采集样本</span><div class="ui-confirm-buttons">{% if dialog_mode %}{{ control_button('取消',{'type':'button','data-ra-close':true},'secondary') }}{% else %}<a class="ui-button ui-secondary" href="{{ url_for('pages.collection_product',product_id=product,module='reviews',reviews_batch=data.batch.id) }}#review-comments">返回评价明细</a>{% endif %}{{ control_button('开始分析',{'type':'submit','disabled':not data.key_configured}) }}</div></footer>
+</form>

@@ -1,6 +1,54 @@
 /* 启动、进度与人工修订；GET轮询不触发付费调用。 */
 (() => {
   const token = document.querySelector('meta[name="workbench-token"]')?.content;
+  const modal = document.querySelector('#review-analysis-dialog');
+  if (modal) {
+    const content = modal.querySelector('[data-ra-modal-content]');
+    let opener, loading, sequence = 0;
+    const submitting = () => modal.querySelector('[data-ra-start]')?.dataset.raSubmitting === 'true';
+    function clearContent() {
+      content.dispatchEvent(new CustomEvent('ui:controls-remove', {bubbles:true}));
+      content.replaceChildren();
+    }
+    function closeModal() { if (!submitting()) modal.close(); }
+    modal.addEventListener('cancel', event => { if (submitting()) event.preventDefault(); });
+    modal.addEventListener('click', event => {
+      if (event.target.closest('[data-ra-close]')) closeModal();
+      else if (event.target === modal) {
+        const r = modal.getBoundingClientRect();
+        if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeModal();
+      }
+    });
+    modal.addEventListener('close', () => {
+      sequence++; loading?.abort(); clearContent();
+      opener?.focus({preventScroll:true});
+    });
+    document.addEventListener('click', async event => {
+      const trigger = event.target.closest('[data-review-analysis="start"]');
+      if (!trigger || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      if (modal.open) return;
+      opener = trigger;
+      clearContent();
+      const status = document.createElement('p'); status.className = 'ui-modal-message'; status.setAttribute('role','status'); status.textContent = '正在读取本批评价资料…';
+      content.append(status); content.setAttribute('aria-busy','true'); modal.showModal();
+      const current = ++sequence;
+      loading = new AbortController();
+      try {
+        const url = new URL(trigger.href, location.href); url.searchParams.set('dialog','1');
+        const response = await fetch(url, {cache:'no-store', signal:loading.signal});
+        if (response.headers.get('X-Review-Analysis-Fragment') !== '1') throw new Error();
+        const text = await response.text();
+        if (!modal.open || current !== sequence) return;
+        // 仅接收同源、明确标记的服务器模板片段，模板中的资料均自动转义。
+        content.innerHTML = text;
+        content.dispatchEvent(new CustomEvent('ui:controls-added', {bubbles:true}));
+        bindStart(content);
+      } catch (error) {
+        if (error.name !== 'AbortError' && modal.open && current === sequence) status.textContent = '暂时无法读取评价资料，请关闭后重试。';
+      } finally { if (current === sequence) content.removeAttribute('aria-busy'); }
+    });
+  }
   const summary = document.querySelector('[data-ra-batch-summary]');
   if (summary) {
     const links = document.querySelector('[data-ra-batch-links]');
@@ -37,20 +85,33 @@
     if (!response.ok) throw new Error(result.error || '操作失败，请刷新查看状态。');
     return result;
   }
-  function bind(selector, values, success) {
-    document.querySelectorAll(selector).forEach(form => form.addEventListener('submit', async event => {
+  function bind(selector, values, success, root = document) {
+    root.querySelectorAll(selector).forEach(form => {
+      if (form.dataset.raBound) return;
+      form.dataset.raBound = 'true';
+      form.addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
+      form.addEventListener('submit', async event => {
       event.preventDefault();
+      if (form.dataset.raSubmitting === 'true') return;
       const button = form.querySelector('button[type=submit]');
       const feedback = form.querySelector('.ra-feedback');
+      const label = button.textContent;
+      const closeButtons = form.closest('dialog')?.querySelectorAll('[data-ra-close]') || [];
+      form.dataset.raSubmitting = 'true'; closeButtons.forEach(b => b.disabled = true);
       button.disabled = true;
-      feedback.textContent = '正在保存…';
+      button.textContent = '正在提交…'; feedback.textContent = '正在提交，请稍候…';
       try { const result = await post(form.dataset.url, values(form)); success(result); }
-      catch (error) { feedback.textContent = error.message; button.disabled = false; }
-    }));
+      catch (error) { feedback.textContent = error.message; button.disabled = false; button.textContent = label; }
+      finally { form.dataset.raSubmitting = 'false'; closeButtons.forEach(b => b.disabled = false); }
+      });
+    });
   }
-  bind('[data-ra-start]', form => ({batch_id:Number(form.dataset.batch), input_hash:form.dataset.hash,
+  function bindStart(root = document) {
+    bind('[data-ra-start]', form => ({batch_id:Number(form.dataset.batch), input_hash:form.dataset.hash,
     model:form.elements.model.value, max_calls:Number(form.elements.max_calls.value), max_tokens:Number(form.elements.max_tokens.value),
-    allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked}), result => location.assign(result.url));
+    allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked}), result => location.assign(result.url), root);
+  }
+  bindStart();
   bind('[data-ra-resume]', form => ({allow_paid:form.elements.allow_paid.checked, acknowledge_unknown:form.elements.acknowledge_unknown.checked}), () => location.reload());
   bind('[data-ra-correct]', form => ({expected_revision:Number(form.dataset.revision), kind:form.elements.kind.value,
     excluded:form.elements.excluded.checked, reason:form.elements.reason.value,

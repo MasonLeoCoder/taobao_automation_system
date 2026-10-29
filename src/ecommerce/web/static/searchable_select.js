@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   let sequence = 0;
+  const instances = new WeakMap();
   const normalize = value => value.normalize('NFKC').toLocaleLowerCase().trim();
 
   function element(tag, className = '', text = '') {
@@ -22,6 +23,8 @@
   }
 
   function enhance(select) {
+    if (instances.has(select)) return;
+    const controller = new AbortController(), globalOptions = {signal:controller.signal};
     const id = 'searchable-select-' + (++sequence);
     const fieldLabel = select.dataset.selectLabel || select.getAttribute('aria-label') || '选项';
     const triggerLabel = select.dataset.triggerLabel || fieldLabel;
@@ -57,7 +60,7 @@
     const footer = element('div', 'ss-footer');
     footer.append(element('span', '', select.dataset.footerText || '点击选项完成选择'), element('span', 'ss-keyboard-hint', '↑↓ 选择  ·  Enter 确认'));
     popup.append(heading, searchBox, resultStatus, list, empty, footer);
-    document.body.append(popup);
+    (select.closest('dialog') || document.body).append(popup);
     select.after(trigger); select.hidden = true;
     let opened = false, active = -1, matches = [], composing = false;
 
@@ -160,15 +163,18 @@
     list.addEventListener('pointermove', event => { const row = event.target.closest('[role="option"]'); if (row) setActive(Number(row.dataset.index)); });
     list.addEventListener('click', event => { const row = event.target.closest('[role="option"]'); if (row) choose(Number(row.dataset.index)); });
     popup.addEventListener('toggle', event => { if (event.newState === 'closed' && opened) closed(); });
-    document.addEventListener('focusin', event => { if (opened && !popup.contains(event.target) && !trigger.contains(event.target)) close(); });
-    document.addEventListener('pointerdown', event => { if (opened && !popup.contains(event.target) && !trigger.contains(event.target)) close(); });
-    document.addEventListener('keydown', event => { if (opened && event.key === 'Escape' && !composing) { event.preventDefault(); close(true); } });
-    window.addEventListener('resize', position);
-    window.addEventListener('scroll', event => { if (!popup.contains(event.target)) position(); }, true);
-    if (window.visualViewport) { visualViewport.addEventListener('resize', position); visualViewport.addEventListener('scroll', position); }
+    document.addEventListener('focusin', event => { if (opened && !popup.contains(event.target) && !trigger.contains(event.target)) close(); }, globalOptions);
+    document.addEventListener('pointerdown', event => { if (opened && !popup.contains(event.target) && !trigger.contains(event.target)) close(); }, globalOptions);
+    document.addEventListener('keydown', event => { if (opened && event.key === 'Escape' && !composing) { event.preventDefault(); close(true); } }, globalOptions);
+    window.addEventListener('resize', position, globalOptions);
+    window.addEventListener('scroll', event => { if (!popup.contains(event.target)) position(); }, {capture:true,...globalOptions});
+    if (window.visualViewport) { visualViewport.addEventListener('resize', position, globalOptions); visualViewport.addEventListener('scroll', position, globalOptions); }
     select.addEventListener('change', updateValue);
     select.form?.addEventListener('reset', () => queueMicrotask(() => { close(); updateValue(); }));
     updateValue();
+    instances.set(select, () => { close(); controller.abort(); popup.remove(); trigger.remove(); select.hidden = false; instances.delete(select); });
   }
   document.querySelectorAll('select[data-searchable-select]').forEach(enhance);
+  document.addEventListener('ui:controls-added', event => event.target.querySelectorAll('select[data-searchable-select]').forEach(enhance));
+  document.addEventListener('ui:controls-remove', event => event.target.querySelectorAll('select[data-searchable-select]').forEach(select => instances.get(select)?.()));
 })();

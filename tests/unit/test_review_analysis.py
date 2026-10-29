@@ -302,3 +302,33 @@ class ReviewAnalysisTests(unittest.TestCase):
         self.assertEqual(len(value['tasks']),100)
         self.assertNotIn(task,{row['id'] for row in value['tasks']})
         self.assertEqual(value['latest_result']['id'],task)
+
+    def test_dialog_preparation_is_read_only_and_matches_standalone_form(self):
+        """弹窗和独立确认页复用固定来源表单，准备过程不创建任务或调用AI。"""
+        with patch('ecommerce.modules.review_analysis.service.create_client') as paid:
+            result=self.client.get('/analysis/reviews/products/123/new?batch=5&dialog=1')
+            self.assertEqual(result.status_code,200)
+            self.assertEqual(result.headers['X-Review-Analysis-Fragment'],'1')
+            text=result.get_data(as_text=True)
+            self.assertIn('data-batch="5"',text)
+            self.assertIn('全部 2 条评价',text)
+            self.assertIn('name="allow_paid"',text)
+            self.assertNotIn('name="batch"',text)
+            self.assertNotIn('<script',text)
+            self.assertNotIn('sk-test-only',text)
+            self.assertNotIn('<html',text)
+            fallback=self.client.get('/analysis/reviews/products/123/new?batch=5').get_data(as_text=True)
+            self.assertIn('ui-confirm-form',fallback)
+            self.assertIn('data-batch="5"',fallback)
+            self.assertEqual(repository.history(self.settings,'123'),[])
+            paid.assert_not_called()
+
+    def test_dialog_invalid_source_returns_safe_closable_fragment(self):
+        """无效来源在弹窗内提供关闭和说明，不嵌入整页或异常堆栈。"""
+        response=self.client.get('/analysis/reviews/products/123/new?batch=999&dialog=1')
+        self.assertEqual(response.status_code,404)
+        self.assertEqual(response.headers['X-Review-Analysis-Fragment'],'1')
+        text=response.get_data(as_text=True)
+        self.assertIn('暂时无法准备分析',text)
+        self.assertIn('data-ra-close',text)
+        self.assertNotIn('data-ra-start',text)

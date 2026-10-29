@@ -31,6 +31,13 @@
 <button{{ attributes(attrs,'ui-button ui-' ~ variant) }}>{{ text }}</button>
 {%- endmacro %}
 
+{% macro modal_shell(id,title,description) -%}
+<dialog id="{{ id }}" class="ui-modal" aria-labelledby="{{ id }}-title" aria-describedby="{{ id }}-description">
+  <header class="ui-modal-header"><div><p class="ui-modal-eyebrow">商品分析</p><h2 id="{{ id }}-title">{{ title }}</h2><p id="{{ id }}-description">{{ description }}</p></div>{{ control_button('×',{'type':'button','data-ra-close':true,'aria-label':'关闭分析弹窗','autofocus':true,'class':'ui-modal-close'},'secondary') }}</header>
+  <div class="ui-modal-content" data-ra-modal-content>{{ caller() }}</div>
+</dialog>
+{%- endmacro %}
+
 {% macro data_chip(label,count,href,attrs={}) -%}
 <a href="{{ href }}"{{ attributes(attrs,'ui-data-chip') }}><span>{{ label }}</span><b>{{ count }}<small>件</small></b></a>
 {%- endmacro %}

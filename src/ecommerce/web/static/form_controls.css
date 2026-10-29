@@ -198,3 +198,70 @@ textarea.ui-control { min-height: calc(var(--control-height)*2); resize: vertica
 .ui-help-label:focus-visible{outline:2px solid var(--control-accent);outline-offset:3px;border-radius:3px}
 .ui-help-popup{position:fixed;z-index:2000;box-sizing:border-box;width:max-content;max-width:min(320px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;padding:12px 14px;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-surface);color:var(--control-text);font:400 12px/1.8 var(--control-font);white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 8px 28px #173c3024}
 .ui-help-popup[hidden]{display:none}
+
+/* 统一确认弹窗、来源卡和费用确认，业务页面复用而不复制控件外观。 */
+.ui-modal{box-sizing:border-box;width:min(680px,calc(100vw - 32px));max-width:none;max-height:88vh;max-height:88dvh;padding:0;border:1px solid var(--control-border);border-radius:20px;background:var(--control-surface);color:var(--control-text);font:400 14px/1.65 var(--control-font);box-shadow:0 28px 90px #12392e38,0 4px 18px #12392e18;overflow:visible}
+.ui-modal[open]{display:flex;flex-direction:column}
+.ui-modal::backdrop{background:#102c2866;backdrop-filter:blur(3px)}
+body:has(.ui-modal[open]){overflow:hidden}
+.ui-modal-header{flex:none;display:flex;justify-content:space-between;align-items:flex-start;gap:20px;height:auto;margin:0;padding:24px 28px 20px;border-bottom:1px solid var(--control-border);background:var(--control-surface);border-radius:20px 20px 0 0}
+.ui-modal-header h2{margin:2px 0 3px;font-size:24px;line-height:1.4;color:var(--control-text)}
+.ui-modal-header p{margin:0;color:var(--control-label);font-size:13px}
+.ui-modal-header .ui-modal-eyebrow{font-size:11px;color:var(--control-accent);letter-spacing:.08em}
+.ui-modal-close{flex:none;width:36px;min-height:36px;padding:0;font-size:24px;line-height:1;font-weight:400}
+.ui-modal-content{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.ui-modal-message{padding:32px 28px;color:var(--control-label);margin:0;overflow-wrap:anywhere}
+.ui-modal-message h3{margin:0 0 10px;color:var(--control-text)}
+.ui-confirm-panel{max-width:680px;padding:0;overflow:hidden}
+.ui-confirm-form{display:flex;flex-direction:column;min-height:0;margin:0}
+.ui-modal .ui-confirm-form{max-height:calc(88vh - 112px);max-height:calc(88dvh - 112px)}
+.ui-confirm-body{display:grid;gap:22px;padding:24px 28px;min-height:0;overflow:auto;overscroll-behavior:contain}
+.ui-source-card{padding:18px 22px;border:1px solid var(--control-selected-border);border-radius:14px;background:linear-gradient(130deg,var(--control-selected),var(--control-surface-soft))}
+.ui-source-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--control-label);font-size:12px}
+.ui-status-pill,.ui-provider-pill{display:inline-flex;align-items:center;padding:3px 9px;border-radius:99px;font-size:11px;line-height:1.6;background:var(--control-surface);color:var(--control-accent);border:1px solid var(--control-selected-border)}
+.ui-source-count{display:flex;align-items:baseline;gap:9px;margin-top:8px;color:var(--control-accent)}
+.ui-source-count strong{font-size:40px;font-weight:700;line-height:1.25;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.ui-source-count span{font-size:13px}
+.ui-source-caption{margin:4px 0 14px;font-size:13px;color:var(--control-text)}
+.ui-source-meta{display:grid;grid-template-columns:1fr 2fr;gap:16px;margin:0;padding-top:12px;border-top:1px solid var(--control-selected-border)}
+.ui-source-meta dt{font-size:11px;color:var(--control-label)}
+.ui-source-meta dd{margin:2px 0 0;color:var(--control-text);font-size:13px;overflow-wrap:anywhere}
+.ui-source-product{margin:10px 0 0;font-size:11px;color:var(--control-label);overflow-wrap:anywhere}
+.ui-form-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.ui-form-heading h3{margin:0;font-size:15px;color:var(--control-text)}
+.ui-confirm-settings .ui-field{width:100%;margin:0}
+.ui-form-note{font-size:12px;line-height:1.7;color:var(--control-label)}
+.ui-confirm-settings .ui-form-note{margin:10px 0 0}
+.ui-advanced-settings{border:1px solid var(--control-border);border-radius:10px;background:var(--control-surface)}
+.ui-advanced-settings>summary{display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer;font-size:13px;list-style:none}
+.ui-advanced-settings>summary::-webkit-details-marker{display:none}
+.ui-advanced-settings>summary small{margin-left:auto;color:var(--control-label);font-size:11px}
+.ui-advanced-settings>summary::after{content:'＋';color:var(--control-label)}
+.ui-advanced-settings[open]>summary::after{content:'－'}
+.ui-advanced-settings>summary:focus-visible{outline:2px solid var(--control-accent);outline-offset:2px;border-radius:8px}
+.ui-advanced-body{display:grid;gap:12px;padding:4px 14px 16px}
+.ui-advanced-body .ui-form-note{margin:0}
+.ui-advanced-body .ui-field{margin:0}
+.ui-consent-row{display:flex;align-items:flex-start;gap:10px;margin:0;font-size:13px;line-height:1.7;color:var(--control-text);cursor:pointer}
+.ui-consent-row .ui-choice{flex:none;margin:2px 0 0}
+.ui-consent-row small{display:block;margin-top:3px;color:var(--control-label);font-size:11px;line-height:1.7}
+.ui-form-notice,.ui-form-feedback{margin:0;overflow-wrap:anywhere;font-size:13px;color:var(--control-error)}
+.ui-form-feedback:empty{display:none}
+.ui-confirm-footer{flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:16px 28px;border-top:1px solid var(--control-border);background:var(--control-surface-soft);border-radius:0 0 20px 20px}
+.ui-confirm-buttons{display:flex;align-items:center;gap:10px}
+.ui-confirm-buttons .ui-button{min-width:94px}
+@media(max-width:600px){
+ .ui-modal{width:calc(100vw - 24px);border-radius:16px;max-height:90vh;max-height:90dvh}
+ .ui-modal-header{padding:20px 18px 16px;gap:12px;border-radius:16px 16px 0 0}
+ .ui-modal-header h2{font-size:21px}
+ .ui-modal-header p{font-size:12px}
+ .ui-modal .ui-confirm-form{max-height:calc(90vh - 104px);max-height:calc(90dvh - 104px)}
+ .ui-confirm-body{padding:18px;gap:18px}
+ .ui-source-card{padding:16px}
+ .ui-source-count strong{font-size:36px}
+ .ui-source-meta{grid-template-columns:1fr 2fr;gap:8px}
+ .ui-confirm-footer{padding:14px 18px;gap:10px;border-radius:0 0 16px 16px}
+ .ui-confirm-footer>.ui-form-note{display:none}
+ .ui-confirm-buttons{width:100%}
+ .ui-confirm-buttons .ui-button{flex:1}
+}

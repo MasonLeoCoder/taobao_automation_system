@@ -1,4 +1,4 @@
-{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
+{% from 'form_controls.html' import input_control,select_control,field,range_field,control_button,modal_shell with context %}
 {% from 'collection_media.html' import inline_media with context %}
 {% macro selection_form(part,code,batch_key,page_key,anchor) %}
 <form class="review-selection" method="get" action="{{ request.path }}#{{ anchor }}">
@@ -50,5 +50,6 @@
 {{ pager(comments.detail,review_parameters) }}
 {% else %}<p class="review-empty">{{ '本次关联运行尚未保存评价明细，可选择历史资料。' if context_run else '尚无有效评价明细，可采集或选择历史资料。' }}</p>{% endif %}
 </section>
+{% call modal_shell('review-analysis-dialog','分析评价','确认本次范围与模型，准备开始分析。') %}<p class="ui-modal-message" role="status">正在读取评价资料…</p>{% endcall %}
 <script src="{{ url_for('static',filename='reviews.js') }}" defer></script>
 <script src="{{ url_for('static',filename='review_analysis.js') }}" defer></script>

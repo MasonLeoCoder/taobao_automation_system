@@ -78,3 +78,7 @@ flowchart LR
 2026-10-28：新增公共`help_label(label,description,attrs={})`，输出type=button的可聚焦说明名称和ⓘ图标；通过data-ui-help-text传递已转义说明。全站base仅加载一次help_tooltip.js；初始页面有说明按钮才启用，浮层挂到body，使用textContent展示、role=tooltip与动态aria-describedby关联。支持悬停名称/图标、浮层内阅读、键盘聚焦/Esc、触屏点击切换及外部关闭，滚动/窗口变化时重新定位或隐藏，边缘自动避让；显式关闭后抑制布局变化触发的意外重开，直到真实鼠标移动。外观由公共.ui-help-label/.ui-help-popup和现有设计变量统一维护。
 
 首批仅腰部卡片和对照表使用：metric_help_definitions.html集中保存middle_metrics的名称和解释，search_middle.html通过同一宏复用。新增指标说明应先维护统一定义，禁止各展示位置复制不同文案；其他页面可复用help_label，无需再实现浮层脚本。定义文件只含展示文字，不承担业务统计规则。
+
+## 确认弹窗与动态控件（2026-10-29）
+
+form_controls.html的modal_shell及form_controls.css的ui-modal、ui-confirm-*定义确认弹窗、来源卡、折叠高级区与底栏。业务页面复用input/select/button宏，样式集中维护。动态插入表单后向容器派发冒泡ui:controls-added初始化搜索下拉；销毁前派发ui:controls-remove释放浮层与全局监听。初始化幂等，dialog内下拉浮层挂在dialog内以保持模态焦点可用；普通页面仍挂body。当前应用见评价分析确认弹窗。

@@ -1,0 +1,2 @@
+{% from 'form_controls.html' import control_button %}
+<div class="ui-modal-message"><h3>暂时无法准备分析</h3><p>{{ message }}</p><p class="ui-form-note">请关闭弹窗，核对当前评价资料或AI配置后重试。</p>{{ control_button('关闭',{'type':'button','data-ra-close':true},'secondary') }}</div>
