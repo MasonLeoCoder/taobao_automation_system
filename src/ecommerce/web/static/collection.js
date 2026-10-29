@@ -93,11 +93,15 @@
     const actions = card.querySelector('.module-actions');
     let result = actions.querySelector('[data-job-result]');
     if (job.done && job.result_url) {
-      if (!result) result = [...actions.querySelectorAll('a')].find(node => !node.matches('[data-review-analysis]') && new URL(node.href).searchParams.get('batch') === String(job.batch_id));
-      if (!result) { result = link('', job.result_url); result.dataset.jobResult = 'true'; actions.append(result); }
-      result.dataset.jobResult = 'true';
-      result.href = job.result_url;
-      result.textContent = job.valid ? `${job.result_label} →` : '查看本次采集尝试';
+      if (job.valid && card.hasAttribute('data-hide-success-result')) {
+        result?.remove();
+      } else {
+        if (!result) result = [...actions.querySelectorAll('a')].find(node => !node.matches('[data-review-analysis]') && new URL(node.href).searchParams.get('batch') === String(job.batch_id));
+        if (!result) { result = link('', job.result_url); result.dataset.jobResult = 'true'; actions.append(result); }
+        result.dataset.jobResult = 'true';
+        result.href = job.result_url;
+        result.textContent = job.valid ? `${job.result_label} →` : '查看本次采集尝试';
+      }
       if (job.valid) actions.querySelector('.module-collect')?.remove();
       if (job.valid) document.querySelectorAll(`.module-collect[data-product][data-module="${job.module}"]`).forEach(button => {
         button.replaceWith(link(`${job.result_label} →`,job.result_url,'action-primary'));

@@ -11,7 +11,7 @@
 {% if part.selected and part.selected.task_id %}<a class="button action-button action-history" data-job-logs href="{{ url_for('pages.logs',task_id=part.selected.task_id,return_to=current_location()) }}">查看任务日志</a>{% endif %}</div>{% if show_status %}<p class="module-job-status" role="status" aria-live="polite"></p>{% endif %}
 {% endmacro %}
 {% set overview=reviews_view.overview %}{% set comments=reviews_view.comments %}
-<section class="panel review-section" id="review-overview" data-collection-module="review_summary" data-latest-batch="{{ overview.history[0].id if overview.history else 0 }}">
+<section class="panel review-section" id="review-overview" data-hide-success-result data-collection-module="review_summary" data-latest-batch="{{ overview.history[0].id if overview.history else 0 }}">
 <h2>评价概览</h2>
 {{ selection_form(overview,'review_summary','summary_batch','tag_page','review-overview') }}
 {% if overview.selected %}
@@ -24,7 +24,7 @@
 {% else %}<p class="review-empty">{{ '本次关联运行尚未保存评价概览，可选择历史资料。' if context_run else '尚无有效评价概览，可采集或选择历史资料。' }}</p>{% endif %}
 {{ module_actions(overview,'review_summary','概览') }}
 </section>
-<section class="panel review-section" id="review-comments" data-collection-module="reviews" data-latest-batch="{{ comments.history[0].id if comments.history else 0 }}">
+<section class="panel review-section" id="review-comments" data-hide-success-result data-collection-module="reviews" data-latest-batch="{{ comments.history[0].id if comments.history else 0 }}">
 <h2>评价明细</h2>
 <div class="review-comment-actions">
 {{ module_actions(comments,'reviews','明细',false) }}
