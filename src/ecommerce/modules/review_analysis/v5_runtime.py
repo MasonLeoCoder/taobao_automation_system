@@ -121,9 +121,11 @@ def execute(settings,task_id,events,client_factory):
         try:
             if client is None:client=client_factory(replace(load_config(settings.root),model=task['model']),provider=task['provider'],model=task['model'])
             response=client.complete(text,max_tokens=output,require_complete=False,json_mode=True,timeout_seconds=plan['timeout_seconds'])
-        except AIError:
-            repository.finish_call(settings,task_id,call_id,'unknown',None,'接口请求未确认，结果及费用未知；未自动重试。')
-            raise ValueError('请求结果未知，已停止后续请求；先核对原始调用再明确是否继续。') from None
+        except AIError as error:
+            # AIError只含客户端已过滤的安全说明，不保存原始HTTP正文、授权头或异常堆栈。
+            message=str(error)+' 结果或用量尚未确认，已停止后续请求；未自动重试。'
+            repository.finish_call(settings,task_id,call_id,'unknown',None,message)
+            raise ValueError(message) from None
         atomic_json(directory/(call_id+'.json'),response)
         if kind=='classify':
             assessed=v4.assess(response['text'],[by_id[uid] for uid in source_ids],response['finish_reason'])
@@ -151,6 +153,8 @@ def execute(settings,task_id,events,client_factory):
         status='succeeded' if counts['unfinished']==0 and not execution_failed else 'partial' if handled else 'failed'
         message=f'本轮已结束：有效{counts["valid"]}条，局部保留{counts["partial"]}条，无具体信息{counts["no_information"]}条，排除{counts["excluded"]}条，执行未完成{counts["unfinished"]}条；'
         message+=('总报告已生成，仍待复核。' if narrative else f'总报告未生成，可查看{len(phase_reports)}份已保存分段报告和本地统计。')
+        if execution_failed:
+            message+=' 原因：'+next((item['message'] for item in reversed(diagnostics) if item.get('stage')=='execution'),'执行未完成。')
         repository.update_task(settings,task_id,status=status,active_key=None,owner=None,message=message)
         return status
 

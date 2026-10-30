@@ -25,11 +25,17 @@
     {% call field('本次AI用量上限') %}{{ input_control({'name':'max_tokens','type':'number','min':1,'max':5000000,'value':data.default_tokens,'data-ra-default':data.default_tokens,'required':true,'disabled':true,'data-ra-minimum':data.reserved_tokens}) }}{% endcall %}
     <p class="ui-form-note">最低预留 {{ data.reserved_tokens }} Token，自动上限 {{ data.default_tokens }} Token，含全部分组、报告及余量。输入为保守估算，完整用量确认后按实际结算；未知请求保留预留量。不是人民币金额，实际费用以服务商账单为准，不自动提高上限或重试。</p>
     <p class="ra-feedback" data-ra-budget-feedback role="status" aria-live="polite"></p>
-    <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'force'}) }}<span>重新分析，另建记录<small>默认优先复用相同资料与设置的已有结果。</small></span></label>
+    <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'force'}) }}<span>从头重新分析，另建记录<small>重新发送当前批次全部评价并产生费用；已有记录保留。运行中的相同任务仍进入已有进度。</small></span></label>
   </div></details>
   <label class="ui-consent-row ui-payment-consent">{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }}<span>允许发送本批评价并承担AI调用费用<small>发送评价文字、规格及追评，不发送昵称或媒体链接。实际费用以DeepSeek账单为准。</small></span></label>
   {% if not data.key_configured %}<p class="ui-form-notice">尚未配置密钥，请先完成<a href="{{ url_for('ai.index') }}">AI设置</a>。</p>{% endif %}
-  <p class="ra-feedback ui-form-feedback" role="status" aria-live="polite"></p>
+  <section data-ra-existing hidden class="ui-source-card" aria-label="已有分析的处理选择">
+    <h3 data-ra-existing-title>发现已有分析记录</h3><p data-ra-existing-message></p>
+    <p><a class="ui-button ui-secondary" data-ra-view>查看已有记录</a> <a class="ui-button ui-secondary" data-ra-continue hidden>继续未完成部分</a></p>
+    <p class="ui-form-note">继续未完成部分会先打开原任务的剩余计划，由你再次确认费用和未知请求风险；这里不会立即执行。</p>
+    <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'restart_paid'}) }}<span>我确认从头重新分析全批评价并重新产生调用费用，旧记录保留。</span></label>
+    {{ control_button('从头重新分析（再次计费）',{'type':'button','data-ra-restart':true}) }}
+  </section>
 </div>
-<footer class="ui-confirm-footer"><span class="ui-form-note">仅分析已采集样本</span><div class="ui-confirm-buttons">{% if dialog_mode %}{{ control_button('取消',{'type':'button','data-ra-close':true},'secondary') }}{% else %}<a class="ui-button ui-secondary" href="{{ url_for('pages.collection_product',product_id=product,module='reviews',reviews_batch=data.batch.id) }}#review-comments">返回评价明细</a>{% endif %}{{ control_button('开始分析',{'type':'submit','disabled':not data.key_configured}) }}</div></footer>
+<footer class="ui-confirm-footer"><div><span class="ui-form-note">仅分析已采集样本</span><p class="ra-feedback ui-form-feedback" data-ra-submit-feedback role="status" aria-live="polite"></p></div><div class="ui-confirm-buttons">{% if dialog_mode %}{{ control_button('取消',{'type':'button','data-ra-close':true},'secondary') }}{% else %}<a class="ui-button ui-secondary" href="{{ url_for('pages.collection_product',product_id=product,module='reviews',reviews_batch=data.batch.id) }}#review-comments">返回评价明细</a>{% endif %}{{ control_button('开始分析',{'type':'submit','disabled':not data.key_configured}) }}</div></footer>
 </form>

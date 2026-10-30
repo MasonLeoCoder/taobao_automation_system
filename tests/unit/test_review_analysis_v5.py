@@ -5,6 +5,7 @@ from unittest import TestCase
 from unittest.mock import Mock,patch
 from ecommerce.modules.review_analysis import service,v4,v5,v5_runtime
 from ecommerce.infrastructure.storage import analysis_store as repository,analysis_review_store
+from ecommerce.infrastructure.ai.client import AIError
 from tests.unit import test_review_analysis as legacy
 from tests.unit.test_review_analysis_v4 import extraction,narrative
 
@@ -156,3 +157,37 @@ class ReviewV5Tests(TestCase):
         self.assertIn('segment-1-finding-f1',page);self.assertIn('segment-2-finding-f1',page)
         exported=self.client.get('/analysis/reviews/tasks/'+identifier+'/export?format=html').get_data(as_text=True)
         self.assertIn('已保存的分段报告',exported);self.assertIn('本段发现与依据',exported);self.assertNotIn('<form',exported)
+
+    def test_failed_start_requires_choice_and_explicit_restart_preserves_old(self):
+        identifier=self.start();repository.update_task(self.settings,identifier,status='failed',active_key=None,owner=None,message='模拟失败')
+        before=repository.read(self.settings,identifier);preview=service.preview(self.settings,'123',5)
+        values=dict(batch_id=5,model=preview['model'],input_hash=preview['input_hash'],plan_hash=preview['plan_hash'],allow_paid=True)
+        with patch.object(service,'launch') as launch:
+            response=self.client.post('/api/analysis/reviews/products/123',json=values,headers=self.headers)
+            self.assertEqual(response.status_code,200);choice=response.get_json()
+            self.assertTrue(choice['choice_required']);self.assertTrue(choice['can_continue']);self.assertEqual(choice['id'],identifier)
+            launch.assert_not_called()
+            response=self.client.post('/api/analysis/reviews/products/123',json={**values,'force':True},headers=self.headers)
+            self.assertEqual(response.status_code,202);new=response.get_json()
+            self.assertNotEqual(new['id'],identifier);launch.assert_called_once()
+        self.assertEqual(repository.read(self.settings,identifier),before)
+
+    def test_active_task_reused_even_force_but_success_partial_need_choice(self):
+        identifier=self.start();preview=service.preview(self.settings,'123',5)
+        values=dict(batch_id=5,model=preview['model'],input_hash=preview['input_hash'],plan_hash=preview['plan_hash'],allow_paid=True)
+        with patch.object(service,'launch') as launch:
+            active=service.start(self.settings,'123',**values,force=True)
+            self.assertFalse(active['choice_required']);self.assertEqual(active['id'],identifier)
+            for status in ('succeeded','partial','interrupted'):
+                repository.update_task(self.settings,identifier,status=status,active_key=None,owner=None)
+                choice=service.start(self.settings,'123',**values)
+                self.assertTrue(choice['choice_required']);self.assertEqual(choice['can_continue'],status!='succeeded')
+            launch.assert_not_called()
+
+    def test_upstream_safe_error_saved_and_displayed_without_retry(self):
+        identifier=self.start();client=Mock();client.complete.side_effect=AIError('DeepSeek返回HTTP 402：余额不足，请检查账户额度。')
+        with patch.object(service,'create_client',return_value=client):service.execute(self.settings,identifier,Mock())
+        data=service.read(self.settings,identifier)
+        self.assertEqual(client.complete.call_count,1);self.assertIn('HTTP 402',data['calls'][0]['error'])
+        self.assertIn('余额不足',data['task']['message']);self.assertEqual(data['calls'][0]['status'],'unknown')
+        self.assertEqual(data['task']['status'],'failed');self.assertEqual(data['v4_content']['coverage']['state_counts']['excluded'],0)

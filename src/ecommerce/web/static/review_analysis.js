@@ -80,8 +80,12 @@
     if (target instanceof HTMLDetailsElement) target.open = true;
   }
   async function post(url, data) {
-    const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Collection-Token': token}, body: JSON.stringify(data)});
-    const result = await response.json();
+    let response,result;
+    try { response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Collection-Token': token}, body: JSON.stringify(data)}); }
+    catch (_) { throw new Error('提交结果未确认，请先刷新查看已有记录，再决定是否重试。'); }
+    try { result = await response.json(); }
+    catch (_) { throw new Error('服务器未返回可识别的结果，请先刷新查看已有记录；不会自动重试。'); }
+    if (!result || typeof result !== 'object') throw new Error('服务器返回格式异常，请先刷新核对已有记录。');
     if (!response.ok) throw new Error(result.error || '操作失败，请刷新查看状态。');
     return result;
   }
@@ -89,20 +93,31 @@
     root.querySelectorAll(selector).forEach(form => {
       if (form.dataset.raBound) return;
       form.dataset.raBound = 'true';
-      form.addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
+      form.addEventListener('invalid', event => {
+        const details = event.target.closest('details'); if (details) details.open = true;
+        const feedback = form.querySelector('[data-ra-submit-feedback]');
+        if (feedback) feedback.textContent = event.target.name === 'allow_paid' ? '请先勾选本次AI调用费用确认，再开始分析。' : '请检查标出的设置，当前尚未提交分析。';
+      }, true);
       form.addEventListener('submit', async event => {
       event.preventDefault();
       if (form.dataset.raSubmitting === 'true') return;
       const button = form.querySelector('button[type=submit]');
-      const feedback = form.querySelector('.ra-feedback');
+      const feedback = form.querySelector('[data-ra-submit-feedback]') || form.querySelector('.ra-feedback');
       const label = button.textContent;
       const closeButtons = form.closest('dialog')?.querySelectorAll('[data-ra-close]') || [];
       form.dataset.raSubmitting = 'true'; closeButtons.forEach(b => b.disabled = true);
+      form.querySelectorAll('[data-ra-restart]').forEach(b => b.disabled = true);
       button.disabled = true;
       button.textContent = '正在提交…'; feedback.textContent = '正在提交，请稍候…';
-      try { const result = await post(form.dataset.url, values(form)); success(result); }
-      catch (error) { feedback.textContent = error.message; button.disabled = false; button.textContent = label; }
-      finally { form.dataset.raSubmitting = 'false'; closeButtons.forEach(b => b.disabled = false); }
+      try { const result = await post(form.dataset.url, values(form)); await success(result,form); }
+      catch (error) { feedback.textContent = error.message; }
+      finally {
+        form.dataset.raSubmitting = 'false'; closeButtons.forEach(b => b.disabled = false);
+        button.disabled = false; button.textContent = label;
+        form.querySelectorAll('[data-ra-restart]').forEach(b => b.disabled = false);
+        // 提交结果丢失后再次点击先查已有任务，不能沿用上一次的强制另建意图。
+        if (form.matches('[data-ra-start]')) form.elements.force.checked = false;
+      }
       });
     });
   }
@@ -121,12 +136,36 @@
         form.querySelector('[data-ra-budget-feedback]').textContent = message;
       }
       manual.addEventListener('change', budgetFeedback); tokens.addEventListener('input', budgetFeedback); budgetFeedback();
+      const existing=form.querySelector('[data-ra-existing]');
+      const resetChoice=() => { existing.hidden=true; form.elements.restart_paid.checked=false; };
+      form.elements.model.addEventListener('change',resetChoice);
+      manual.addEventListener('change',resetChoice); tokens.addEventListener('input',resetChoice); calls.addEventListener('input',resetChoice);
+      form.querySelector('[data-ra-restart]').addEventListener('click',() => {
+        if (form.dataset.raSubmitting === 'true') return;
+        if (!form.elements.restart_paid.checked) {
+          form.querySelector('[data-ra-submit-feedback]').textContent='从头重新分析会重新产生费用，请先勾选上方确认。';
+          form.elements.restart_paid.focus();return;
+        }
+        form.elements.force.checked=true; form.requestSubmit();
+      });
     });
     bind('[data-ra-start]', form => ({batch_id:Number(form.dataset.batch), input_hash:form.dataset.hash,
     plan_hash:form.dataset.planHash, model:form.elements.model.value,
     max_calls:form.elements.manual_budget.checked ? Number(form.elements.max_calls.value) : null,
     max_tokens:form.elements.manual_budget.checked ? Number(form.elements.max_tokens.value) : null,
-    allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked}), result => location.assign(result.url), root);
+    allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked}), (result,form) => {
+      const feedback=form.querySelector('[data-ra-submit-feedback]');
+      feedback.textContent=result.message || '提交成功，正在打开分析任务…';
+      if (!result.choice_required) { location.assign(result.url);return; }
+      const existing=form.querySelector('[data-ra-existing]');
+      const names={succeeded:'已完成',failed:'失败',partial:'部分完成',interrupted:'中断'};
+      existing.querySelector('[data-ra-existing-title]').textContent='已有分析：'+(names[result.status] || '已有记录');
+      existing.querySelector('[data-ra-existing-message]').textContent=result.message;
+      const view=existing.querySelector('[data-ra-view]');view.href=result.url;
+      view.textContent=result.status === 'succeeded' ? '查看已有报告' : '查看已有记录';
+      const resume=existing.querySelector('[data-ra-continue]');resume.href=result.url+'#analysis-resume';resume.hidden=!result.can_continue;
+      form.elements.restart_paid.checked=false;existing.hidden=false;existing.scrollIntoView({block:'nearest'});
+    }, root);
   }
   bindStart();
   document.querySelectorAll('[data-ra-resume]').forEach(form => {
@@ -178,5 +217,9 @@
       } catch (_) { document.querySelector('#ra-progress').textContent = '暂时无法读取进度，请刷新查看；不会自动重新启动分析。'; }
     }
     setTimeout(poll, 1500);
+  }
+  if (location.hash === '#analysis-resume') {
+    const resume=document.querySelector('[data-ra-resume]');
+    if (resume) { const details=resume.closest('details');if (details) details.open=true;resume.scrollIntoView({block:'start'}); }
   }
 })();

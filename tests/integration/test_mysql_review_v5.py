@@ -66,6 +66,8 @@ class MySQLReviewV5Tests(unittest.TestCase):
                     with self.assertRaises(ValueError):analysis_review_store.save(settings,task,**values)
                     record=dict(conn.execute(sa.select(tables['analysis_review_decisions'])).mappings().one())
                     with self.assertRaises(sa.exc.IntegrityError),conn.begin_nested():conn.execute(tables['analysis_review_decisions'].insert().values(**{**record,'id':uuid4().hex}))
+                    choice=service.start(settings,product,batch_id=b,model=preview['model'],input_hash=preview['input_hash'],allow_paid=True)
+                    self.assertTrue(choice['choice_required']);self.assertEqual(choice['id'],task);self.assertFalse(choice['can_continue'])
                     other=service.start(settings,product,batch_id=b,model=preview['model'],input_hash=preview['input_hash'],allow_paid=True,force=True)['id']
                     with self.assertRaises(sa.exc.IntegrityError),conn.begin_nested():conn.execute(tables['analysis_review_decisions'].insert().values(**{**record,'id':uuid4().hex,'analysis_id':other,'revision':2}))
                     call=result['calls'][-1]
@@ -76,6 +78,11 @@ class MySQLReviewV5Tests(unittest.TestCase):
                     service.recount(settings,task)
                     with self.assertRaises(ValueError):analysis_review_store.save(settings,task,**{**values,'expected_revision':1})
                     self.assertEqual(client.complete.call_count,2)
+                    repository.update_task(settings,other,status='failed',active_key=None,owner=None,message='模拟失败选择')
+                    failed_before=repository.read(settings,other)
+                    choice=service.start(settings,product,batch_id=b,model=preview['model'],input_hash=preview['input_hash'],allow_paid=True)
+                    self.assertTrue(choice['choice_required']);self.assertTrue(choice['can_continue']);self.assertEqual(choice['id'],other)
+                    self.assertEqual(repository.read(settings,other),failed_before)
             finally:transaction.rollback()
             after={n:conn.scalar(sa.select(sa.func.count()).select_from(t)) for n,t in tables.items()}
             self.assertEqual(before,after)

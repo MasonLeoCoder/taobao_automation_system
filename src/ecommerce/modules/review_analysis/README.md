@@ -1,5 +1,7 @@
 # 评价分析
 
+2026-10-30启动反馈：start不再让终态复用无提示跳转，响应choice_required/status/message/can_continue供Web选择；force仍是明确全量另建，活动任务优先防重。CLI看到choice_required应先status/history，明确全量另建才使用--force和--allow-paid。V5执行保留客户端安全AIError文字及HTTP状态，不修改旧调用、不给未知费用猜零。共享提交脚本将反馈放按钮附近，丢响应后清除强制另建意图；继续链接只打开原任务确认计划。
+
 2026-10-30流水线修复：新任务默认reviews-v5 / reviews-validation-v5.1，旧V4模块、提示及规则快照保留。v5提供同源完整合格片段的引用重编、逐来源排除审计、列式紧凑报告输入和阶段覆盖；v5_runtime执行新任务。Web/CLI共用service分发；v4_view及模板兼容两版，分段键segment:N:隔离。执行故障与无具体信息/排除分开；不自动重试、补额度或生成更多层。新0016只更新JSON备注，不转换旧任务。详见[修复记录](../../../../docs/变更记录/评价分析流水线修复记录.md)。
 
 2026-10-30正式接入更新：新任务默认reviews-v4，规则schema_version=4、计划version=4；生产v4_contracts/v4_processing/prompts由已批准的独立V1.2复制冻结，不导入tests或读取docs。v4负责纯计算、v4_runtime负责已授权后台与收据、v4_view负责读模型及人工修正；旧rules/planning/validation继续处理旧任务，旧快照不改写。当前0015/schema_v15，0014新增通用复核表，0015仅补原生备注，旧版本模型全部保留。

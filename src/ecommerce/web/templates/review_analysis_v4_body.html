@@ -88,7 +88,7 @@
 <label>{{ input_control({'type':'checkbox','name':'excluded','checked':detail.effective.get('excluded',false)}) }} 将整条排除出统计</label>{% call field('修改原因') %}{{ input_control({'name':'reason','maxlength':500,'required':true}) }}{% endcall %}
 {{ control_button('保存修正并本地重统计',{'type':'submit','disabled':task.status in ['queued','running']}) }}<p class="ra-feedback" role="status"></p></form></details>{% endfor %}{% endif %}</details>{% endfor %}</section>
 
-{% if not exporting %}<section class="panel"><h2>恢复与调用记录</h2>
+{% if not exporting %}<section class="panel" id="analysis-resume"><h2>恢复与调用记录</h2>
 {% if task.status not in ['queued','running'] or task.appears_interrupted %}
 {{ control_button('重新校验已有返回（不调用AI）',{'type':'button','data-ra-recover':url_for('review_analysis.recover',task_id=task.id),'disabled':not data.needs_local_recovery},'secondary') }}
 {% if not narrative and data.resume_budget.required_calls and not data.needs_local_recovery and not data.resume_budget.get('blocked') %}<details><summary>查看未完成分析的费用与计划，确认后才继续</summary><form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}" data-plan-hash="{{ data.resume_budget.plan_hash }}">

@@ -2,11 +2,13 @@
 import io
 import json
 import os
+import socket
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch, MagicMock
 from urllib.error import HTTPError
+from urllib.error import URLError
 from flask import Flask
 from ecommerce.infrastructure.ai.config import AISettings, load_config
 from ecommerce.infrastructure.ai.client import AIError, create_client
@@ -101,11 +103,21 @@ class AITests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), patch('ecommerce.infrastructure.ai.client.build_opener') as factory:
             with self.assertRaises(AIError): create_client(AISettings()).complete('测试')
             factory.assert_not_called()
-        for code in (401,402,403,422,429,500,302):
+        for code in (400,401,402,403,404,422,429,500,503,302):
             with patch.dict(os.environ, {'DEEPSEEK_API_KEY':'private-test-secret'}), patch('ecommerce.infrastructure.ai.client.build_opener') as factory:
                 factory.return_value.open.side_effect = HTTPError('hidden',code,'private-test-secret',{},io.BytesIO(b'private-test-secret'))
                 with self.assertRaises(AIError) as caught: create_client(AISettings()).complete('测试')
                 self.assertNotIn('private-test-secret', str(caught.exception))
+                self.assertIn('HTTP '+str(code),str(caught.exception))
+                self.assertEqual(factory.return_value.open.call_count,1)
+
+    def test_network_failure_and_timeout_have_safe_distinct_messages(self):
+        """区分连接与超时，不回显底层敏感异常内容；参数：无；返回：无。"""
+        for error,label in ((URLError('private-test-secret'),'网络连接失败'),(URLError(socket.timeout('private-test-secret')),'超时')):
+            with patch.dict(os.environ,{'DEEPSEEK_API_KEY':'private-test-secret'}),patch('ecommerce.infrastructure.ai.client.build_opener') as factory:
+                factory.return_value.open.side_effect=error
+                with self.assertRaises(AIError) as caught:create_client(AISettings()).complete('脱敏连接测试')
+                self.assertIn(label,str(caught.exception));self.assertNotIn('private-test-secret',str(caught.exception))
                 self.assertEqual(factory.return_value.open.call_count,1)
 
     def test_analysis_json_output_limit_and_timeout(self):

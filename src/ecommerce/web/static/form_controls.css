@@ -251,6 +251,8 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-form-feedback:empty{display:none}
 .ui-confirm-footer{flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:16px 28px;border-top:1px solid var(--control-border);background:var(--control-surface-soft);border-radius:0 0 20px 20px}
 .ui-confirm-buttons{display:flex;align-items:center;gap:10px}
+.ui-confirm-footer>div:first-child{min-width:0;flex:1}
+.ui-confirm-footer .ui-confirm-buttons{flex:none}
 .ui-confirm-buttons .ui-button{min-width:94px}
 @media(max-width:600px){
  .ui-modal{width:calc(100vw - 24px);border-radius:16px;max-height:90vh;max-height:90dvh}
@@ -264,6 +266,8 @@ body:has(.ui-modal[open]){overflow:hidden}
  .ui-source-meta{grid-template-columns:1fr 2fr;gap:8px}
  .ui-confirm-footer{padding:14px 18px;gap:10px;border-radius:0 0 16px 16px}
  .ui-confirm-footer>.ui-form-note{display:none}
+ .ui-confirm-footer{flex-direction:column;align-items:stretch}
+ .ui-confirm-footer>div:first-child>.ui-form-note{display:none}
  .ui-confirm-buttons{width:100%}
  .ui-confirm-buttons .ui-button{flex:1}
 }

@@ -108,7 +108,7 @@ def start(product):
     values = payload({'batch_id', 'model', 'input_hash', 'plan_hash', 'max_calls', 'max_tokens', 'allow_paid', 'force'},
                      {'batch_id', 'model', 'input_hash'})
     result = service.start(settings(), product, **values)
-    return jsonify(**result, url='/analysis/reviews/tasks/' + result['id']), 202
+    return jsonify(**result, url='/analysis/reviews/tasks/' + result['id']), 200 if result.get('choice_required') else 202
 
 
 @review_analysis.get('/analysis/reviews/tasks/<task_id>')

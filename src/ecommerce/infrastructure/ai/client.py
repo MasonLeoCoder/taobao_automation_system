@@ -75,12 +75,15 @@ class DeepSeekClient:
         except HTTPError as error:
             code = error.code
             error.close()
-            messages = {401: '密钥无效或已失效。', 402: '余额不足，请检查账户额度。',
+            messages = {400:'请求参数错误，请核对模型与发送设置。',401: '密钥无效或已失效。', 402: '余额不足，请检查账户额度。',
                         403: '没有调用权限。', 404: '接口或模型不存在。',
-                        422: '模型或请求参数不受支持。', 429: '调用频率或额度受限，请稍后手动重试。'}
-            raise AIError(messages.get(code, 'AI服务请求失败，请稍后检查；未自动重试。')) from None
-        except (URLError, TimeoutError, socket.timeout, OSError):
-            raise AIError('连接失败或超时，请检查网络；未自动重试。') from None
+                        422: '模型或请求参数不受支持。', 429: '调用频率或额度受限，请稍后手动重试。',
+                        500:'AI服务内部异常。',503:'AI服务暂时不可用。'}
+            raise AIError(f'DeepSeek返回HTTP {code}：'+messages.get(code, 'AI服务请求失败，请稍后检查；未自动重试。')) from None
+        except (URLError, TimeoutError, socket.timeout, OSError) as error:
+            reason=getattr(error,'reason',error)
+            message='连接或等待响应超时，请检查网络或稍后手动重试。' if isinstance(reason,(TimeoutError,socket.timeout)) else '网络连接失败，请检查网络和代理设置。'
+            raise AIError(message+' 未自动重试。') from None
         except (ValueError, KeyError, IndexError, TypeError):
             raise AIError('AI返回格式异常，连接检查未通过。') from None
 

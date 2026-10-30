@@ -132,7 +132,11 @@ def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max
                                       data.get('rule_version',rules.VERSION), input_hash, force=force)
     if created:
         launch(settings, row['id'])
-    return {'id': row['id'], 'reused': not created}
+    choice_required=not created and not row['active_key']
+    message='已创建新的分析任务。' if created else '已有相同设置的分析正在执行，将打开已有进度，不重复发送评价。' if row['active_key'] else '已有相同资料与设置的分析记录，请选择查看、从头重新分析或继续未完成部分。'
+    return {'id': row['id'], 'reused': not created,'choice_required':choice_required,
+            'status':row['status'],'message':message,
+            'can_continue':choice_required and row['status'] in ('failed','partial','interrupted')}
 
 
 def read(settings, task_id):
