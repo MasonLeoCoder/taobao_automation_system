@@ -26,6 +26,10 @@
 <section class="panel" data-ra-task="{{ task.id }}" data-ra-active="{{ 'true' if not exporting and task.status in ['queued','running'] and not task.appears_interrupted else 'false' }}">
 <h2>进度与范围</h2><p id="ra-progress" role="status">{{ task.message }}</p>
 <div class="ra-v4-grid"><p><strong>评价提取</strong><br>已保存 {{ report.coverage.processed_count }}/{{ report.coverage.source_count }} 条，待处理 {{ report.coverage.unprocessed_count }} 条；纳入统计 {{ report.coverage.included_count }} 条。</p><p><strong>AI报告</strong><br>{{ '已生成，内容仍需复核' if narrative else '尚未生成，可先查看已保存统计和原文' }}</p><p><strong>人工复核</strong><br>待复核 {{ data.review_counts.pending }} 项 · 已采用 {{ data.review_counts.adopted }} 项 · 不采用 {{ data.review_counts.rejected }} 项。</p></div>
+{% if report.coverage.get('state_counts') %}{% set counts=report.coverage.state_counts %}
+<p>有效提取 {{ counts.valid }} 条 · 局部保留 {{ counts.partial }} 条 · 已处理但无具体信息 {{ counts.no_information }} 条 · 本轮排除 {{ counts.excluded }} 条 · 执行未完成 {{ counts.unfinished }} 条。</p>
+<p class="ui-form-note">排除项保留原文和原因，不自动重发；本轮结束不代表全部评价提取成功。总报告与分段报告分别保留，分段仅代表所列范围。</p>
+{% endif %}
 <p class="ui-form-note">待复核不是评价未分析。仅本批已采集样本，不代表平台全部评价、市场需求或独立买家；没有提及不代表没有问题。</p>
 {% if data.sources %}<p>采集时间 {{ data.sources[0].scope.captured_at }} · {{ '已达到采集上限，属于部分样本' if data.sources[0].scope.coverage_status=='limit_reached' else '以原采集范围为准' }}。</p>{% endif %}
 <p>已知用量 {{ task.usage.get('total_tokens',0) }} Tokens；结果或用量未知请求 {{ task.usage.get('unknown_calls',0) }} 次。查看、复核、导出及本地重统计均不调用AI。</p>
@@ -35,6 +39,14 @@
 {% if not exporting %}<p><a href="{{ url_for('review_analysis.export',task_id=task.id,version=data.report.version if data.report else none) }}">下载JSON与依据</a> · <a href="{{ url_for('review_analysis.export',task_id=task.id,format='html',version=data.report.version if data.report else none) }}">下载可读HTML</a></p>
 {% if task.status not in ['queued','running'] %}{{ control_button('重新统计（不调用AI）',{'type':'button','data-ra-recount':url_for('review_analysis.recount',task_id=task.id)},'secondary') }}{% endif %}<p id="ra-global-feedback" role="status"></p>{% endif %}
 </section>
+
+{% if report.get('phase_reports') %}<section class="panel"><h2>已保存的分段报告</h2><p>共 {{ report.phase_reports|length }} 份，可独立查看。不同分段的发现编号分别使用，不合并证据分量；总报告尚未生成时，这些阶段成果仍可查看、复核和导出。</p>
+{% for phase in report.phase_reports %}{% set prefix='segment:'+phase.segment_id|string+':' %}
+<details class="ra-v4-card" id="segment-{{ phase.segment_id }}" {{ 'open' if not narrative }}><summary>分段 {{ phase.segment_id }} · 本段纳入 {{ phase.scope.included_count }} 条</summary>
+<p>整批已处理 {{ phase.scope.batch_processed_count }} 条；其他段已处理 {{ phase.scope.processed_elsewhere_count }} 条；整批执行未完成 {{ phase.scope.batch_pending_count }} 条，排除 {{ phase.scope.batch_excluded_count }} 条。</p>
+<p>本段来源：{% for uid in phase.scope.review_ids %}<a href="#review-{{ uid }}">{{ uid }}</a> {% endfor %}</p>
+{% include 'review_analysis_phase.html' %}
+</details>{% endfor %}</section>{% endif %}
 
 <section class="panel"><h2>先核对经营资料，再决定拿样</h2><p>先确认基本报价、规格、起订量与补货条件，再安排候选样品。没有提供的资料视为未知，不代表竞品或供应商没有能力。</p>
 {% if narrative %}{% for item in narrative.business_checks %}<details><summary>{{ item.item }} · {{ item.status }}</summary><p>已有：{{ item.known_information or '未提供' }}</p><p>待补：{{ item.missing_information }}</p><p>影响：{{ item.decision_impact }}</p></details>{% endfor %}{% else %}<p>当前仅有已采集评价及商品理解背景，尚未新增报价、成本或供货材料。</p>{% endif %}</section>
@@ -61,6 +73,7 @@
 {% for part in stat.sentiment_views if part.count %}<p>{{ part.name }}来源：{% for uid in part.ids %}<a href="#review-{{ uid }}">{{ uid }}</a> {% endfor %}</p>{% endfor %}<p>来源类别：{% for name,count in stat.source_counts.items() %}{{ name }} {{ count }}条；{% endfor %}</p></details>{% else %}<p>尚无纳入统计的明确观点。</p>{% endfor %}</section>
 
 <section class="panel"><h2>资料问题及被隔离内容</h2>{% for issue in report.program_issues %}<p>{{ issue.description }}</p>{% else %}<p>没有新增程序来源问题；不代表全部语义已验证。</p>{% endfor %}
+{% for item in report.get('source_outcomes',[]) if item.state in ['excluded','no_information','partial','unfinished'] %}<p><a href="#review-{{ item.review_id }}">评价 {{ item.review_id }}</a> · {{ {'excluded':'本轮排除','no_information':'无具体选品信息','partial':'局部保留','unfinished':'执行未完成'}.get(item.state) }}：{{ item.reason }}</p>{% endfor %}
 <details><summary>查看程序校验诊断</summary>{{ text_preview(report.diagnostics|tojson(indent=2)) }}</details><p class="ui-form-note">原AI自由资料说明不作为程序来源编号。原始返回完整保留在调用记录与JSON导出。</p></section>
 
 <section class="panel"><h2>原文、表达来源与明细修正</h2><p>买家表达可追溯不等于实物已验证。局部疑点保留，只限制相关字段。</p>
@@ -78,7 +91,7 @@
 {% if not exporting %}<section class="panel"><h2>恢复与调用记录</h2>
 {% if task.status not in ['queued','running'] or task.appears_interrupted %}
 {{ control_button('重新校验已有返回（不调用AI）',{'type':'button','data-ra-recover':url_for('review_analysis.recover',task_id=task.id),'disabled':not data.needs_local_recovery},'secondary') }}
-{% if not narrative and not data.needs_local_recovery and not data.resume_budget.get('blocked') %}<details><summary>查看未完成分析的费用与计划，确认后才继续</summary><form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}" data-plan-hash="{{ data.resume_budget.plan_hash }}">
+{% if not narrative and data.resume_budget.required_calls and not data.needs_local_recovery and not data.resume_budget.get('blocked') %}<details><summary>查看未完成分析的费用与计划，确认后才继续</summary><form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}" data-plan-hash="{{ data.resume_budget.plan_hash }}">
 <p>剩余提取 {{ data.resume_budget.supplement.source_ids|length }} 条；报告最多预留 {{ data.resume_budget.supplement.report_slots }} 次，已保存提取不重复发送。最多新增 {{ data.resume_budget.required_calls }} 次。</p>
 {% for group in data.resume_budget.supplement.groups %}<details><summary>补处理组 {{ group.index }} · {{ group.source_ids|length }} 条</summary>{{ text_preview(group.prompt) }}</details>{% endfor %}
 <p>报告实际输入随已保存提取生成，仍受完整发送边界限制；超限保留本地结果，不自动改计划或截断。</p>

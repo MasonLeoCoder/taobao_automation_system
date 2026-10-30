@@ -272,6 +272,8 @@ def persist_validation(conn, tables, task, call, assessment, origin):
         'time':database_now().isoformat()+'+08:00','source_ids':assessment['source_ids'],
         'accepted_ids':[result['id'] for result in assessment['results']],'added_ids':added,
         'issues':assessment['issues'],'adjustments':[change for change in assessment['adjustments'] if change['review_id'] in added]}
+    if 'outcomes' in assessment:
+        record.update(outcomes=assessment['outcomes'],technical_failure=assessment['technical_failure'])
     parameters['validation_history'] = [*history,record]
     count = conn.scalar(sa.select(sa.func.count()).select_from(tables['analysis_details']).where(tables['analysis_details'].c.analysis_id == task['id']))
     conn.execute(tables['analysis_tasks'].update().where(tables['analysis_tasks'].c.id == task['id']).values(

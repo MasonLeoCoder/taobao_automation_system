@@ -1,0 +1,14 @@
+{% for summary in phase.compiled.decision_summary %}<p>{{ summary.text }}</p>{% endfor %}
+<h3>本段发现与依据</h3>
+{% for finding in phase.compiled.findings %}<article id="segment-{{ phase.segment_id }}-finding-{{ finding.id }}"><h4>{{ finding.category }} · {{ finding.evidence_strength }}</h4>
+{% for fact in finding.facts %}<div class="ra-v4-fact"><p>{{ fact.text }}</p>{{ source_refs(fact.observation_refs) }}</div>{% endfor %}
+{% if finding.interpretation %}<p>分析推断（待复核）：{{ finding.interpretation.text }}</p><p>成立假设：{{ finding.interpretation.assumptions|join('；') }}</p><p>限制：{{ finding.interpretation.limitations|join('；') }}</p>{{ review_control(prefix+'finding:'+finding.id) }}{% endif %}
+<p>{{ finding.strength_reason }}</p><p>{{ finding.limitations|join('；') }}</p></article>{% endfor %}
+<h3>本段选品方向</h3>
+{% for card in phase.compiled.opportunities %}<article id="segment-{{ phase.segment_id }}-opportunity-{{ card.id }}"><h4>{{ card.name }} · {{ card.stage }}</h4><p>原AI优先级：{{ card.priority }}；{{ card.priority_reason }}</p>
+<p>目标需求：{{ card.target_need }}</p><p>产品方向：{{ card.product_direction }}</p><p>推断理由：{{ card.reasoning }}</p><p>与其他方向差别：{{ card.independence_reason }}</p>
+{% for key,label in [('missing_information','待补资料'),('validation_actions','验证动作'),('conditions','继续条件'),('stop_conditions','淘汰条件及范围（待核对）'),('risk_hypotheses','待验证风险假设')] %}<p><strong>{{ label }}</strong></p><ul>{% for text in card[key] %}<li>{{ text }}</li>{% else %}<li>资料不足。</li>{% endfor %}</ul>{% endfor %}
+{{ review_control(prefix+'opportunity:'+card.id) }}
+{% for counter in card.counter_evidence %}<div class="ra-v4-fact"><p>原AI反证（仍需核对）：{{ counter.explanation }}</p><p>仅引用本段 {{ counter.finding_id }}/{{ counter.fact_id }}；定位正确不等于推理成立。</p>{{ source_refs(counter.inherited_observation_refs) }}{{ review_control(prefix+'counter:'+card.id+':'+loop.index0|string) }}</div>{% endfor %}</article>{% else %}<p>本段没有足够依据形成选品方向。</p>{% endfor %}
+<h3>本段经营资料检查</h3>{% for item in phase.compiled.business_checks %}<p>{{ item.item }} · {{ item.status }}；已有：{{ item.known_information or '未提供' }}；待补：{{ item.missing_information }}；影响：{{ item.decision_impact }}</p>{% endfor %}
+{% for action in phase.compiled.next_actions %}<p>验证动作 {{ action.order }}：{{ action.action }}；目的：{{ action.purpose }}；继续条件：{{ action.continue_condition or '未明确' }}；停止条件：{{ action.stop_condition or '未明确' }}</p>{% endfor %}

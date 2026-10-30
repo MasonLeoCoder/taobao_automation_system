@@ -42,6 +42,8 @@ def save(settings,analysis_id,*,report_id,item_key,candidate_hash,source_hash,ex
         item=next((i for i in content.get('review_items',[]) if i['key']==item_key),None)
         if not item or fingerprint(item['candidate'])!=candidate_hash or item['candidate_hash']!=candidate_hash or source_hash!=content.get('source_hash') or actual_source!=source_hash:
             raise ValueError('复核内容或来源已变化，请刷新后核对。')
+        if decision=='adopted' and item['kind']=='选品方向' and (review_context.get('conditions_checked') is not True or review_context.get('stop_scope') not in ('current_model','supplier','bundle','product_direction')):
+            raise ValueError('采用方向前请核对问题对应的动作和继续条件，并明确淘汰范围。')
         revision=conn.scalar(sa.select(sa.func.max(t.c.revision)).where(t.c.report_id==report_id,t.c.item_key==item_key)) or 0
         if revision!=expected_revision:raise ValueError('该条目的审核决定已变化，请刷新后重试。')
         conn.execute(t.insert().values(id=uuid4().hex,analysis_id=analysis_id,report_id=report_id,item_key=item_key,

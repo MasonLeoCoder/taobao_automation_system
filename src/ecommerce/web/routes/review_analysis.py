@@ -3,7 +3,7 @@ import json
 import secrets
 from urllib.parse import urlsplit
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, Response, redirect, url_for
-from ecommerce.modules.review_analysis import service, rules, v4, v4_view
+from ecommerce.modules.review_analysis import service, rules, v4, v5, v4_view
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.infrastructure.storage.time_values import iso_value
 from ecommerce.shared.pagination import pagination, PAGE_SIZE
@@ -115,7 +115,7 @@ def start(product):
 def result(task_id):
     """查看已存结果及依据；参数：编号和明细页码；返回：结果页。"""
     data = service.read(settings(), task_id)
-    if data['task']['rule_version']==v4.VERSION:
+    if data['task']['rule_version'] in (v4.VERSION,v5.VERSION):
         raw=request.args.get('version')
         if raw:
             try:version=int(raw)
@@ -161,7 +161,7 @@ def recover(task_id):
 def correct(task_id, detail_id):
     """人工修订和本地重统计；参数：完整修订、原因和版本；返回：新报告版本。"""
     service.identifier(detail_id)
-    if repository.read(settings(),task_id)['task']['rule_version']==v4.VERSION:
+    if repository.read(settings(),task_id)['task']['rule_version'] in (v4.VERSION,v5.VERSION):
         fields={'expected_revision','points','excluded','reason'}
         return jsonify(v4_view.correct(settings(),task_id,detail_id,**payload(fields,fields)))
     fields = {'expected_revision', 'kind', 'points', 'excluded', 'reason'}
@@ -179,7 +179,7 @@ def recount(task_id):
 def export(task_id):
     """导出MySQL中保存的完整结果；参数：任务；返回：JSON下载，无新AI请求。"""
     data = repository.read(settings(), service.identifier(task_id))
-    if data['task']['rule_version']==v4.VERSION:
+    if data['task']['rule_version'] in (v4.VERSION,v5.VERSION):
         data=service.read(settings(),task_id)
         if request.args.get('version'):
             try:data=v4_view.enrich(settings(),data,int(request.args['version']))

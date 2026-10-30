@@ -43,7 +43,11 @@ def narrative(incoming):
 
 class ReviewV4Tests(TestCase):
     use_v4=True
-    setUp=legacy.ReviewAnalysisTests.setUp
+    def setUp(self):
+        """固定旧V4预览分支；参数：无；返回：无。"""
+        legacy.ReviewAnalysisTests.setUp(self)
+        self.preview_patch=patch.object(service,'preview',service.preview_v4)
+        self.preview_patch.start();self.addCleanup(self.preview_patch.stop)
     put=legacy.ReviewAnalysisTests.put
     response=legacy.ReviewAnalysisTests.response
 
