@@ -16,7 +16,7 @@ from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import owner_alive, process_started_at, atomic_json
 from ecommerce.shared.exceptions import TaskBusy
-from ecommerce.modules.review_analysis import rules, planning, validation
+from ecommerce.modules.review_analysis import rules, planning, validation, v4, v4_runtime
 
 
 def identifier(value):
@@ -56,7 +56,7 @@ def chunks(items, prompt):
     return result
 
 
-def preview(settings, product, batch_id=None):
+def preview_legacy(settings, product, batch_id=None):
     """预览资料与预算，不联网；参数：商品及批次；返回：确认页面数据。"""
     product_id(product)
     if batch_id is not None:
@@ -72,6 +72,20 @@ def preview(settings, product, batch_id=None):
                 planned_calls=plan['planned_calls'], default_calls=plan['planned_calls'],
                 reserved_tokens=plan['minimum_tokens'], default_tokens=plan['recommended_tokens'], models=config.models, model=config.model,
                 provider=config.provider, key_configured=bool(api_key(config)))
+    return data
+
+
+def preview(settings, product, batch_id=None):
+    """新任务默认使用冻结V4契约；参数：配置、商品、批次；返回：完整计划，不联网。"""
+    product_id(product)
+    if batch_id is not None:integer(batch_id,1,2**63-1,'批次编号')
+    data=repository.preview(settings,product,batch_id);config=load_config(settings.root);snapshot=v4.snapshot()
+    plan=v4.plan(data['items'],snapshot,data['context'],config.analysis_timeout_seconds)
+    data.update(input_hash=fingerprint(data['items']),plan_hash=fingerprint({'plan':plan,'rules':snapshot}),
+        plan=plan,outgoing=plan['groups'],rule_snapshot=snapshot,rule_version=v4.VERSION,
+        report_template=snapshot['report'],chunk_count=len(plan['groups']),planned_calls=plan['planned_calls'],
+        default_calls=plan['planned_calls'],reserved_tokens=plan['minimum_tokens'],default_tokens=plan['recommended_tokens'],
+        models=config.models,model=config.model,provider=config.provider,key_configured=bool(api_key(config)))
     return data
 
 
@@ -100,8 +114,8 @@ def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max
     parameters = {'plan': data['plan'], 'budget_version': 2, 'budget_mode': 'auto' if automatic else 'manual',
                   'budget_history': [], 'max_output_tokens': planning.MAX_OUTPUT_TOKENS, 'max_calls': max_calls, 'max_tokens': max_tokens,
                   'config_file': settings.mysql.credentials_file or str(settings.root / 'config/settings.toml')}
-    row, created = repository.create(settings, product, batch_id, rules.snapshot(), parameters, config.provider, model,
-                                      rules.VERSION, input_hash, force=force)
+    row, created = repository.create(settings, product, batch_id, data.get('rule_snapshot',rules.snapshot()), parameters, config.provider, model,
+                                      data.get('rule_version',rules.VERSION), input_hash, force=force)
     if created:
         launch(settings, row['id'])
     return {'id': row['id'], 'reused': not created}
@@ -117,11 +131,14 @@ def read(settings, task_id):
     data['source_by_id'] = {s['id']: s for s in data['sources']}
     data['source_by_review'] = {s['review_id']: s for s in data['sources']}
     for detail in data['details']:
-        detail['effective'] = rules.effective(detail)
+        detail['effective'] = v4.effective(detail) if task['rule_version']==v4.VERSION else rules.effective(detail)
     from ecommerce.shared.pagination import PAGE_SIZE
     data['detail_locations'] = {str(d['result']['id']): index // PAGE_SIZE + 1 for index, d in enumerate(data['details'])}
     data['report_stale'] = bool(data['report'] and data['report']['content']['detail_revisions'] != {d['id']: d['revision'] for d in data['details']})
     data['budget'] = repository.budget_status(task['parameters'], data['calls'])
+    if task['rule_version']==v4.VERSION:
+        from ecommerce.modules.review_analysis.v4_view import enrich
+        return enrich(settings,data)
     try:
         data['resume_budget'] = remaining_budget(data)
     except ValueError as error:
@@ -138,7 +155,8 @@ def read(settings, task_id):
 
 def needs_local_recovery(data):
     """检查有原响应但尚未做逐条校验的失败调用；参数：任务；返回：是否应先本地恢复。"""
-    checked = {record['call_id'] for record in data['task']['parameters'].get('validation_history',[]) if record['policy']==validation.POLICY}
+    policy=v4.POLICY if data['task']['rule_version']==v4.VERSION else validation.POLICY
+    checked = {record['call_id'] for record in data['task']['parameters'].get('validation_history',[]) if record['policy']==policy}
     done = {detail['result']['id'] for detail in data['details']}
     return any(call['kind']=='classify' and call['status'] not in {'inflight','unknown'} and call['response'] is not None
                and call['id'] not in checked and any(uid not in done for uid in call['request']['source_ids']) for call in data['calls'])
@@ -146,6 +164,7 @@ def needs_local_recovery(data):
 
 def continuation(data):
     """只为未完成评价构建补处理预览，原计划不变；参数：任务；返回：完整补处理方案。"""
+    if data['task']['rule_version']==v4.VERSION:return v4_runtime.continuation(data)
     task, parameters = data['task'], data['task']['parameters']
     done = {detail['result']['id'] for detail in data['details']}
     pending = [source['snapshot'] for source in sorted(data['sources'],key=lambda source:source['position']) if source['review_id'] not in done]
@@ -167,6 +186,7 @@ def continuation(data):
 
 def remaining_budget(data):
     """估算继续当前任务所需额度；参数：持久任务及明细；返回：剩余预留和建议总上限。"""
+    if data['task']['rule_version']==v4.VERSION:return v4_runtime.remaining_budget(data)
     task, parameters = data['task'], data['task']['parameters']
     supplement = continuation(data)
     if parameters.get('plan'):
@@ -195,6 +215,7 @@ def recover_saved(settings, task_id):
             raise ValueError('分析进程仍存活或身份无法确认，不能同时本地恢复。')
         if data['task']['status']=='succeeded':
             raise ValueError('任务已经完成，不重复恢复已有结果。')
+        if data['task']['rule_version']==v4.VERSION:return v4_runtime.recover_saved(settings,task_id)
         by_id = {source['review_id']:source['snapshot'] for source in data['sources']}
         added, recorded = [], False
         for call in data['calls']:
@@ -280,7 +301,7 @@ def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, ma
             owner = row.get('owner') or {}
             if owner and owner_alive(owner.get('pid'), owner.get('started_at')) is not False:
                 raise ValueError('任务进程仍存活或身份无法确认，不能重复启动。')
-            if row['status'] == 'succeeded':
+            if row['status'] == 'succeeded' and not (row['rule_version']==v4.VERSION and not data['report']['content'].get('narrative')):
                 raise ValueError('分析已完成，请查看结果或明确创建新的分析。')
             calls = tables['analysis_calls']
             unknown = conn.scalar(sa.select(sa.func.count()).select_from(calls).where(calls.c.analysis_id == task_id,
@@ -327,6 +348,7 @@ def build_report(settings, task_id, narrative=None, issues=None):
     """从持久明细构建报告，不调用AI；参数：任务、已校验文字、问题；返回：报告版本。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version']==v4.VERSION:return v4_runtime.build_report(settings,task_id,narrative,issues)
     content = {'schema_version': 2 if task['parameters'].get('plan') else 1, 'statistics': rules.statistics(data['details'], task['rules']),
         'findings': (narrative or {}).get('findings', []), 'suggestions': (narrative or {}).get('suggestions', []),
         'issues': issues or [], 'detail_revisions': {d['id']: d['revision'] for d in data['details']},
@@ -366,6 +388,7 @@ def execute(settings, task_id, events):
     """执行一次恢复轮次；参数：任务和通用日志会话；返回：终态，不自动重试。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version']==v4.VERSION:return v4_runtime.execute(settings,task_id,events,create_client)
     config = replace(load_config(settings.root), model=task['model'])
     client = create_client(config, provider=task['provider'], model=task['model'])
     inputs = [s['snapshot'] for s in data['sources']]

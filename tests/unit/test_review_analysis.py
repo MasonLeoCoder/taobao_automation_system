@@ -19,6 +19,10 @@ from ecommerce.web.app import create_app
 class ReviewAnalysisTests(unittest.TestCase):
     def setUp(self):
         """建立临时数据库和脱敏评价；参数：无；返回：无。"""
+        # 本组冻结旧版任务和响应的兼容行为，新版有独立用例。
+        if not getattr(self,'use_v4',False):
+            preview=patch.object(service,'preview',side_effect=service.preview_legacy)
+            preview.start();self.addCleanup(preview.stop)
         temp = TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         base = load_settings(root=self.root)
@@ -29,6 +33,9 @@ class ReviewAnalysisTests(unittest.TestCase):
         self.headers = {'X-Collection-Token': self.app.config['COLLECTION_TOKEN']}
         metadata = sa.MetaData()
         original = build_metadata()
+        if getattr(self,'use_v4',False):
+            from ecommerce.infrastructure.storage.mysql_migrations.schema_v14 import build_metadata as current_metadata
+            original=current_metadata()
         for t in original.tables.values():
             columns = []
             for col in t.c:

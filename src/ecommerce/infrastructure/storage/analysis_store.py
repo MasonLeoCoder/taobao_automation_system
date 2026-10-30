@@ -210,7 +210,7 @@ def budget_status(parameters, calls):
             'used_calls': len(calls), 'remaining_calls': parameters['max_calls'] - len(calls)}
 
 
-def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *, output_tokens=None, json_mode=False, timeout_seconds=None):
+def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *, output_tokens=None, json_mode=False, timeout_seconds=None, report_input=None):
     """在联网前保存请求并扣除预算；参数：任务、请求和保守用量；返回：调用编号。"""
     with connection(settings, True) as (conn, tables):
         task = task_row(conn, tables, identifier, True)
@@ -222,6 +222,8 @@ def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *
             raise ValueError('本次调用次数或AI用量上限不足；未发出新请求，已保存结果保留。可明确增加额度后继续。')
         uid = uuid4().hex
         request = {'prompt': prompt, 'source_ids': source_ids, 'max_output_tokens': output_tokens or task['parameters']['max_output_tokens']}
+        if report_input is not None:
+            request['report_input'] = report_input
         if task['parameters'].get('plan'):
             request.update(json_mode=json_mode, timeout_seconds=timeout_seconds)
         if task['parameters'].get('active_supplement'):

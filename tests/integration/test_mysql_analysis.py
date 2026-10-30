@@ -18,6 +18,11 @@ from ecommerce.modules.review_analysis import service
 
 @unittest.skipUnless(os.environ.get('ECOMMERCE_MYSQL_TESTS') == '1', '显式启用验证库')
 class MySQLAnalysisTests(unittest.TestCase):
+    def setUp(self):
+        """本组明确验证旧版任务兼容，不用新版响应替换历史契约。"""
+        preview=patch.object(service,'preview',side_effect=service.preview_legacy)
+        preview.start();self.addCleanup(preview.stop)
+
     def test_transaction_constraints_and_analysis_flow(self):
         """真实事务执行模拟分析和人工修订，唯一约束及来源外键生效，最后回滚。"""
         base = load_settings()

@@ -7,3 +7,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .ra-stat-table td:first-child { min-width: 160px; }
 .ra-call-table { min-width: 560px; }
 [data-ra-resume] { display: flex; flex-direction: column; gap: 12px; }
+.ra-v4-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 20px; }
+.ra-v4-card { margin: 24px 0; padding: 12px 0; }
+.ra-v4-fact, .ra-v4-review, .ra-v4-notice { margin: 16px 0; padding: 12px 0; }
+.ra-v4-ref { display: inline-block; margin: 4px 8px 4px 0; }
+.ra-v4-review form, [data-ra-v4-correct] { display: flex; flex-direction: column; gap: 12px; }
+[data-ra-v4-correct] fieldset { min-width: 0; }
+.ra-v4-stat { padding: 12px 0; }
+.ra-v4-fact blockquote { margin: 12px 0; white-space: pre-wrap; overflow-wrap: anywhere; }

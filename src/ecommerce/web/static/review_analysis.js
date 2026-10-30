@@ -151,6 +151,15 @@
     points:[...form.querySelectorAll('[data-ra-point]')].filter(row => row.querySelector('[name=keep]').checked).map(row => ({
       topic:row.querySelector('[name=topic]').value, sentiment:row.querySelector('[name=sentiment]').value,
       segment:row.dataset.segment, quote:row.dataset.quote}))}), () => location.reload());
+  bind('[data-ra-v4-review]', form => ({report_id:form.dataset.report,item_key:form.dataset.key,
+    candidate_hash:form.dataset.candidate,source_hash:form.dataset.source,expected_revision:Number(form.dataset.revision),
+    decision:form.elements.decision.value,reviewer:form.elements.reviewer.value,reason:form.elements.reason.value,
+    review_context:{evidence_checked:form.elements.evidence_checked.checked,
+      ...(form.elements.conditions_checked ? {conditions_checked:form.elements.conditions_checked.checked,stop_scope:form.elements.stop_scope.value} : {})}}), () => location.reload());
+  bind('[data-ra-v4-correct]', form => ({expected_revision:Number(form.dataset.revision),excluded:form.elements.excluded.checked,
+    reason:form.elements.reason.value,points:[...form.querySelectorAll('[data-ra-v4-point]')].filter(row=>row.querySelector('[name=keep]').checked).map(row=>({
+      observation_id:row.dataset.id,topic:row.querySelector('[name=topic]').value,sentiment:row.querySelector('[name=sentiment]').value,
+      fact_text:row.querySelector('[name=fact_text]').value}))}), () => location.reload());
   document.querySelectorAll('[data-ra-recount]').forEach(button => button.addEventListener('click', async () => {
     button.disabled = true;
     try { await post(button.dataset.raRecount, {}); location.reload(); }
