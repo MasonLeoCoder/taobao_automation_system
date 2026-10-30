@@ -54,7 +54,7 @@ class MySQLReviewV5Tests(unittest.TestCase):
                     incoming=json.loads(text.split('以下是输入资料：\n',1)[1]);value=extraction(incoming) if 'reviews' in incoming else narrative(unpack(incoming))
                     return {'text':json.dumps(value,ensure_ascii=False),'finish_reason':'stop','usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}}
                 client.complete.side_effect=complete
-                with patch.object(repository,'collection_store',return_value=SimpleNamespace(engine=Proxy(),tables=tables)),patch.object(service,'launch'),patch.object(service,'create_client',return_value=client):
+                with patch.object(repository,'collection_store',return_value=SimpleNamespace(engine=Proxy(),tables=tables)),patch.object(service,'preview',service.preview_v5),patch.object(service,'launch'),patch.object(service,'create_client',return_value=client):
                     preview=service.preview(settings,product,b)
                     task=service.start(settings,product,batch_id=b,model=preview['model'],input_hash=preview['input_hash'],plan_hash=preview['plan_hash'],allow_paid=True)['id']
                     self.assertEqual(service.execute(settings,task,Mock()),'succeeded')

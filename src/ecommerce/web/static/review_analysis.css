@@ -15,3 +15,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 [data-ra-v4-correct] fieldset { min-width: 0; }
 .ra-v4-stat { padding: 12px 0; }
 .ra-v4-fact blockquote { margin: 12px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 直接报告仅负责正文布局，交互控件继续使用公共组件。 */
+.ra-v6-report{min-width:0;overflow-wrap:anywhere}.ra-v6-report table{width:100%;table-layout:fixed}.ra-v6-report th,.ra-v6-report td{overflow-wrap:anywhere}.ra-v6-report pre{white-space:pre-wrap;overflow-wrap:anywhere}

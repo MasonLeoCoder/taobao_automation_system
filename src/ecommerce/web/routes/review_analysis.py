@@ -3,7 +3,7 @@ import json
 import secrets
 from urllib.parse import urlsplit
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, Response, redirect, url_for
-from ecommerce.modules.review_analysis import service, rules, v4, v5, v4_view
+from ecommerce.modules.review_analysis import service, rules, v4, v5, v4_view, v6, v6_view
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.infrastructure.storage.time_values import iso_value
 from ecommerce.shared.pagination import pagination, PAGE_SIZE
@@ -47,7 +47,7 @@ def payload(allowed, required=()):
 @review_analysis.errorhandler(TaskBusy)
 def invalid(error):
     """展示安全业务错误；参数：异常；返回：明确错误页或JSON。"""
-    if request.method == 'POST':
+    if request.method == 'POST' or request.path.startswith('/api/'):
         return jsonify(error=str(error)), 409 if isinstance(error, TaskBusy) else 400
     if request.args.get('dialog') == '1':
         return Response(render_template('review_analysis_dialog_error.html', message=str(error)),
@@ -96,16 +96,31 @@ def new(product):
             raise LookupError('尚无评价资料，请返回商品评价明细选择资料。')
         return redirect(url_for('review_analysis.new', product=product, batch=choices[0]['id']))
     data = service.preview(settings(), product, batch)
+    if data.get('rule_version')==v6.VERSION and (request.args.get('model') or request.args.get('output_tokens')):
+        data=service.preview(settings(),product,batch,model=request.args.get('model'),output_tokens=int(request.args['output_tokens']) if request.args.get('output_tokens') else None)
     if request.args.get('dialog') == '1':
         return Response(render_template('review_analysis_form.html', data=data, product=product, dialog_mode=True),
                         headers={'X-Review-Analysis-Fragment':'1'})
     return render_template('review_analysis_new.html', active='collections', shop_name=settings().shop_name, data=data, product=product)
 
 
+@review_analysis.get('/api/analysis/reviews/products/<product>/plan')
+def refresh_plan(product):
+    """切换模型或输出时本地重算，不调用AI；参数：商品及查询；返回：显示片段和计划身份。"""
+    try:
+        batch=int(request.args.get('batch',''))
+        output=int(request.args['output_tokens']) if request.args.get('output_tokens') else None
+    except ValueError:raise ValueError('批次和输出上限须为整数。') from None
+    data=service.preview(settings(),product,batch,model=request.args.get('model'),output_tokens=output)
+    return jsonify(html=render_template('review_analysis_v6_plan.html',data=data),input_hash=data['input_hash'],
+        plan_hash=data['plan_hash'],minimum_tokens=data['reserved_tokens'],default_tokens=data['default_tokens'],
+        planned_calls=data['planned_calls'],output_max=data['plan']['capability']['max_output_tokens'])
+
+
 @review_analysis.post('/api/analysis/reviews/products/<product>')
 def start(product):
     """确认后提交分析；参数：商品和JSON；返回：任务地址。"""
-    values = payload({'batch_id', 'model', 'input_hash', 'plan_hash', 'max_calls', 'max_tokens', 'allow_paid', 'force'},
+    values = payload({'batch_id', 'model', 'input_hash', 'plan_hash', 'max_calls', 'max_tokens', 'allow_paid', 'force','output_tokens'},
                      {'batch_id', 'model', 'input_hash'})
     result = service.start(settings(), product, **values)
     return jsonify(**result, url='/analysis/reviews/tasks/' + result['id']), 200 if result.get('choice_required') else 202
@@ -115,6 +130,11 @@ def start(product):
 def result(task_id):
     """查看已存结果及依据；参数：编号和明细页码；返回：结果页。"""
     data = service.read(settings(), task_id)
+    if data['task']['rule_version']==v6.VERSION:
+        if request.args.get('version'):
+            try:data=v6_view.enrich(settings(),data,int(request.args['version']))
+            except ValueError:raise ValueError('报告版本无效。') from None
+        return render_template('review_analysis_v6.html',active='collections',shop_name=settings().shop_name,data=data,task=data['task'])
     if data['task']['rule_version'] in (v4.VERSION,v5.VERSION):
         raw=request.args.get('version')
         if raw:
@@ -138,7 +158,7 @@ def status(task_id):
     """读取进度摘要；参数：任务编号；返回：无原文、无配置的安全状态。"""
     data = service.read(settings(), task_id)
     t = data['task']
-    return jsonify({k: t[k] for k in ('id', 'status', 'message', 'source_count', 'processed_count', 'usage', 'appears_interrupted')})
+    return jsonify({k: t[k] for k in ('id', 'status', 'message', 'source_count', 'processed_count', 'usage', 'appears_interrupted','rule_version')})
 
 
 @review_analysis.post('/api/analysis/reviews/tasks/<task_id>/resume')
@@ -179,6 +199,15 @@ def recount(task_id):
 def export(task_id):
     """导出MySQL中保存的完整结果；参数：任务；返回：JSON下载，无新AI请求。"""
     data = repository.read(settings(), service.identifier(task_id))
+    if data['task']['rule_version']==v6.VERSION:
+        data=service.read(settings(),task_id)
+        if request.args.get('version'):
+            try:data=v6_view.enrich(settings(),data,int(request.args['version']))
+            except ValueError:raise ValueError('报告版本无效。') from None
+        if request.args.get('format')=='html':
+            return Response(render_template('review_analysis_v6_export.html',data=data,task=data['task']),content_type='text/html; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="review_analysis_{task_id}.html"'})
+        if request.args.get('format')=='md':
+            return Response(data['v6_content']['markdown'],content_type='text/markdown; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="review_analysis_{task_id}.md"'})
     if data['task']['rule_version'] in (v4.VERSION,v5.VERSION):
         data=service.read(settings(),task_id)
         if request.args.get('version'):

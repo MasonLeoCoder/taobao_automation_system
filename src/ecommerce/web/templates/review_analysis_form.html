@@ -1,5 +1,5 @@
 {% from 'form_controls.html' import field, select_control, input_control, control_button, text_preview %}
-<form class="ui-confirm-form" data-ra-start data-url="{{ url_for('review_analysis.start',product=product) }}" data-batch="{{ data.batch.id }}" data-hash="{{ data.input_hash }}" data-plan-hash="{{ data.plan_hash }}">
+<form class="ui-confirm-form" data-ra-start data-ra-version="{{ data.plan.version }}" data-ra-plan-url="{{ url_for('review_analysis.refresh_plan',product=product) }}" data-url="{{ url_for('review_analysis.start',product=product) }}" data-batch="{{ data.batch.id }}" data-hash="{{ data.input_hash }}" data-plan-hash="{{ data.plan_hash }}">
 <div class="ui-confirm-body">
   <section class="ui-source-card" aria-label="本次评价来源">
     <div class="ui-source-heading"><span>本次分析范围</span><span class="ui-status-pill">来源已固定</span></div>
@@ -11,14 +11,21 @@
   <section class="ui-confirm-settings">
     <div class="ui-form-heading"><h3>分析设置</h3><span class="ui-provider-pill">DeepSeek</span></div>
     {% call field('分析模型') %}{% call select_control({'name':'model','data-searchable-select':true,'data-select-label':'分析模型','data-trigger-label':'分析模型','data-search-label':'查找模型'}) %}{% for model in data.models %}<option value="{{ model }}" {{ 'selected' if model==data.model }}>{{ model }}</option>{% endfor %}{% endcall %}{% endcall %}
+    {% if data.plan.version==6 %}
+    {% call field('报告输出上限（Token，不是实际消耗）') %}{{ input_control({'name':'output_tokens','type':'number','value':data.plan.report_output_tokens,'min':512,'max':data.plan.capability.max_output_tokens,'required':true}) }}{% endcall %}
+    <div data-ra-plan>{% include 'review_analysis_v6_plan.html' %}</div>
+    {% else %}
     {% if data.plan.version>=4 %}<p class="ui-form-note">{{ data.chunk_count }} 组完整评价提取；报告最多预留 {{ data.plan.report_slots }} 次，共最多 {{ data.planned_calls }} 次请求。能完整纳入时直接整理总报告；长内容才分段整理，未用名额不会调用。初评与追评一起发送。</p><p class="ui-form-note">新版竞品与选品报告：提及与正负面分开统计，方向、推断和反证默认待复核，不代表已经适合采购。</p>{% else %}<p class="ui-form-note">预计 {{ data.chunk_count }} 组逐条分析 + 1次报告整理，共 {{ data.planned_calls }} 次请求。按输入及预计返回长度合并分组，初评与追评一起发送。</p>{% endif %}
     <p class="ui-form-note">用量保护已开启，默认自动计算并预留报告额度。主题数量由程序统计，分析完成后可查看原文依据。</p>
+    {% endif %}
   </section>
+  {% if data.plan.version!=6 %}
   <details class="ui-advanced-settings"><summary><span>查看发送内容</span><small>规则、背景与完整评价分组</small></summary><div class="ui-advanced-body">
     <p class="ui-form-note">以下为逐条分析实际发送文字，接口同时使用当前所选模型、JSON返回模式及各组输出上限。仅发送评价编号、规格、初评、追评及有来源的商品背景；密钥不在预览内。主题参考允许扩展，不代表确认商品类目。</p>
     {% for group in data.outgoing %}<details><summary>第 {{ group.index }} 组 · {{ group.source_ids|length }} 条评价 · 返回上限 {{ group.max_output_tokens }} Token</summary><p class="ui-form-note">按原列表顺序发送，每条编号见下方资料中的id。</p>{{ text_preview(group.prompt) }}</details>{% endfor %}
     <details><summary>报告整理要求</summary>{{ text_preview(data.report_template) }}<p class="ui-form-note">报告的实际统计和筛选引文在逐条分析完成后生成，届时保存供查看；此处不是报告实际输入的完整预览。</p></details>
   </div></details>
+  {% endif %}
   <details class="ui-advanced-settings"><summary><span>高级设置</span><small>预算与重新分析</small></summary><div class="ui-advanced-body">
     <label class="ui-consent-row">{{ input_control({'type':'checkbox','name':'manual_budget'}) }}<span>手动设置用量限制<small>默认自动计算，无需填写；手动设置不足会在开始前提示。</small></span></label>
     {% call field('调用次数上限') %}{{ input_control({'name':'max_calls','type':'number','min':data.planned_calls,'max':200,'value':data.default_calls,'data-ra-default':data.default_calls,'required':true,'disabled':true}) }}{% endcall %}

@@ -1,0 +1,32 @@
+{% from 'form_controls.html' import field,input_control,control_button,text_preview %}
+{% set report=data.v6_content %}
+<section class="page-heading"><h1>竞品与选品评价报告</h1><p>商品 {{ data.product.platform_product_id }} · {{ task.model }} · 来源批次 {{ data.sources[0].batch_id if data.sources else '未记录' }}</p>
+{% if not exporting %}<p><a href="{{ url_for('pages.collection_product',product_id=data.product.platform_product_id,module='reviews',reviews_batch=data.sources[0].batch_id) }}#review-comments">返回评价明细</a> · <a href="{{ url_for('review_analysis.index',product=data.product.platform_product_id,batch=data.sources[0].batch_id) }}">查看分析记录</a></p>{% endif %}</section>
+<section class="panel" data-ra-task="{{ task.id }}" data-ra-active="{{ 'true' if not exporting and task.status in ['queued','running'] and not task.appears_interrupted else 'false' }}">
+<h2>报告进度与来源</h2><p id="ra-progress" role="status">{{ task.message }}</p>
+<p>本批来源 {{ report.coverage.source_count }} 条 · 提交尝试涉及 {{ report.coverage.submitted_count }} 条 · 已通过原文对应检查的引用来源 {{ report.coverage.referenced_count }} 条。</p>
+<p class="ui-form-note">{{ report.coverage.scope_note }} 本批仅为已采集样本，不能代表平台全部评价或市场需求；引用可定位不等于分析语义或性能已验证。</p>
+<p>报告状态：{{ {'insufficient_information':'资料不足说明，未调用AI','not_generated':'尚未生成','empty':'未返回可读内容','interrupted':'返回中断，保留可读部分','needs_review':'可阅读，存在待核对项','complete':'本地完整性和引用检查通过，内容仍待复核'}.get(report.validation.state,report.validation.state) }}{% if report.origin=='local_empty' %} · 本地资料不足说明，未请求AI{% endif %}。</p>
+<p>实际已知输入 {{ task.usage.get('prompt_tokens',0) }} · 输出 {{ task.usage.get('completion_tokens',0) }} · 合计 {{ task.usage.get('total_tokens',0) }} Token；未知用量请求 {{ task.usage.get('unknown_calls',0) }} 次。已请求 {{ data.calls|length }}/{{ task.parameters.max_calls }} 次。</p>
+<p>当前占用用量 {{ data.budget.used_tokens }}/{{ task.parameters.max_tokens }}（未知请求保留额度）；查看、下载和本地检查不调用AI。</p>
+{% if data.report %}<p>报告版本 {{ data.report.version }} · {{ data.report.created_at }}{% if not data.is_latest_report %} · 历史版本，仅供查看{% endif %}。</p>{% endif %}
+{% if not exporting %}<p><a href="{{ url_for('review_analysis.export',task_id=task.id,format='md',version=data.report.version if data.report else none) }}">下载Markdown报告</a> · <a href="{{ url_for('review_analysis.export',task_id=task.id,format='html',version=data.report.version if data.report else none) }}">下载可读HTML</a> · <a href="{{ url_for('review_analysis.export',task_id=task.id,version=data.report.version if data.report else none) }}">下载JSON与依据</a></p>
+{% if task.status not in ['queued','running'] %}{{ control_button('重新检查已有报告（不调用AI）',{'type':'button','data-ra-recount':url_for('review_analysis.recount',task_id=task.id)},'secondary') }}{% endif %}<p id="ra-global-feedback" role="status"></p>{% endif %}
+</section>
+{% if report.markdown %}<section class="panel ra-v6-report"><h2>详细分析报告</h2>{{ report.html|safe }}</section>{% endif %}
+{% if report.validation.issues or report.issues %}<section class="panel"><h2>需要核对的内容</h2><ul>{% for issue in report.validation.issues+report.issues %}<li>{{ issue }}</li>{% endfor %}</ul><p>局部问题没有自动触发付费改写。资料不足不能补写成事实，语义和采购判断仍需结合原文及实物验证。</p></section>{% endif %}
+{% if report.phases %}<section class="panel"><h2>已保存的分组要点</h2>{% for phase in report.phases %}<details><summary>分组 {{ phase.index }} · {{ phase.review_ids|length }} 条来源</summary><div class="ra-v6-report">{{ phase.html|safe }}</div></details>{% endfor %}<p>分组只覆盖各自来源；未生成总报告时仍可查看，不把片段当额外买家。</p></section>{% endif %}
+<section class="panel"><h2>本批基础资料</h2><p>带追评记录 {{ report.basic_statistics.with_append_count }} 条。规格数量按原规格文字统计，不合并推测同义规格：</p><ul>{% for sku,count in report.basic_statistics.sku_counts.items() %}<li>{{ sku }}：{{ count }}条</li>{% endfor %}</ul></section>
+<section class="panel"><h2>原文依据</h2>{% for src in data.sources %}<details id="review-{{ src.review_id }}"><summary>评价 {{ src.review_id }} · {{ src.snapshot.sku or '未记录规格' }}</summary><p>初评：{{ src.snapshot.text }}</p>{% for append in src.snapshot.appends %}<p>{{ append.segment }}：{{ append.text }}</p>{% endfor %}</details>{% endfor %}</section>
+{% if not exporting %}<section class="panel" id="analysis-resume"><h2>继续计划与原始调用</h2>
+{% if task.status not in ['queued','running'] or task.appears_interrupted %}
+{% if data.needs_local_recovery %}{{ control_button('核对已有响应收据（不调用AI）',{'type':'button','data-ra-recover':url_for('review_analysis.recover',task_id=task.id)}) }}{% endif %}
+{% if data.resume_budget.required_calls and not data.needs_local_recovery and not data.resume_budget.get('blocked') %}<details><summary>查看剩余请求与费用，确认后继续</summary><form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}" data-plan-hash="{{ data.resume_budget.plan_hash }}">
+<p>剩余 {{ data.resume_budget.required_calls }} 次请求；已完整保存、消息一致的请求不重发。需要新增用量预留 {{ data.resume_budget.minimum_tokens-data.budget.used_tokens }} Token，含报告输出上限及余量。</p>
+<label>{{ input_control({'type':'checkbox','name':'increase_budget'}) }} 明确调整总额度（不自动增加）</label>
+{% call field('继续后的Token总上限') %}{{ input_control({'type':'number','name':'max_tokens','value':data.resume_budget.suggested_tokens,'min':task.parameters.max_tokens,'max':5000000,'required':true,'disabled':true}) }}{% endcall %}
+{% call field('继续后的请求次数总上限') %}{{ input_control({'type':'number','name':'max_calls','value':data.resume_budget.suggested_calls,'min':task.parameters.max_calls,'max':200,'required':true,'disabled':true}) }}{% endcall %}
+<label>{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }} 允许剩余请求及调用费用</label><label>{{ input_control({'type':'checkbox','name':'acknowledge_unknown'}) }} 已核对未知请求，了解重发可能重复计费</label>
+{{ control_button('确认费用后继续',{'type':'submit'}) }}<p class="ra-feedback" role="status"></p></form></details>{% endif %}{% endif %}
+{% for call in data.calls %}<details><summary>{{ '报告' if call.chunk_index==0 else '分组 '+call.chunk_index|string }} · {{ call.status }} · {{ call.usage.get('total_tokens','未知') }} Token</summary><p>{{ call.error }}</p>{{ text_preview(call.request.prompt) }}{% if call.response %}<details><summary>原始返回（未改写）</summary>{{ text_preview(call.response.text) }}</details>{% endif %}</details>{% endfor %}
+<h3>报告历史</h3>{% for old in data.reports %}<p><a href="{{ url_for('review_analysis.result',task_id=task.id,version=old.version) }}">版本 {{ old.version }}</a> · {{ old.created_at }}</p>{% endfor %}</section>{% endif %}

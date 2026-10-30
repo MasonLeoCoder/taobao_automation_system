@@ -52,8 +52,8 @@ def parent(settings,config,output):
             p=conn.execute(tables['products'].insert().values(platform='taobao',platform_product_id=product)).inserted_primary_key[0]
             b=conn.execute(tables['collection_batches'].insert().values(platform='taobao',source_batch_key=uuid4().hex,product_id=p,module='reviews',status='complete',scope_key='0'*64,coverage_status='limit_reached',visibility='published',captured_at=database_now())).inserted_primary_key[0]
             conn.execute(tables['review_observations'].insert().values(batch_id=b,position=1,review_key=uuid4().hex,identity_method='fingerprint_occurrence',identity_exact=False,content='脱敏工作进程测试初评',append_reviews=[],sku_text='合成规格'))
-        preview=service.preview(settings,product,b)
-        with patch.object(service,'launch'),patch.object(service,'create_client',return_value=Mock()):
+        preview=service.preview_v4(settings,product,b)
+        with patch.object(service,'preview',service.preview_v4),patch.object(service,'launch'),patch.object(service,'create_client',return_value=Mock()):
             task_id=service.start(settings,product,batch_id=b,model=preview['model'],input_hash=preview['input_hash'],plan_hash=preview['plan_hash'],allow_paid=True)['id']
         child_output=output.with_name('worker-child.json')
         completed=subprocess.run([sys.executable,'-m',__spec__.name,'--config',str(config),'--task',task_id,'--output',str(child_output),'--child'],

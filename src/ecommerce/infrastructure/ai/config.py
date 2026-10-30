@@ -18,6 +18,10 @@ class AISettings:
     api_key_env: str = 'DEEPSEEK_API_KEY'
     timeout_seconds: int = 20
     analysis_timeout_seconds: int = 180
+    report_output_tokens: int = 8192
+    group_output_tokens: int = 2048
+    tokenizer_file: str = 'workspace/models/deepseek-v4/tokenizer.json'
+    capabilities: dict = field(default_factory=dict)
     api_key: str = field(default='', repr=False)
 
 
@@ -48,11 +52,21 @@ def load_config(root):
             raise ValueError()
         if type(config.analysis_timeout_seconds) is not int or not 30 <= config.analysis_timeout_seconds <= 600:
             raise ValueError()
+        if any(type(v) is not int or not 512<=v<=393216 for v in (config.report_output_tokens,config.group_output_tokens)):
+            raise ValueError()
+        if not isinstance(config.tokenizer_file,str) or not config.tokenizer_file or not isinstance(config.capabilities,dict):raise ValueError()
+        for model,profile in config.capabilities.items():
+            if model not in config.models or not isinstance(profile,dict) or set(profile)-{'context_tokens','max_output_tokens','family','source','verified_on','input_usd_per_million','output_usd_per_million'}:raise ValueError()
+            for name in ('context_tokens','max_output_tokens'):
+                if name in profile and (type(profile[name]) is not int or not 1<=profile[name]<=100000000):raise ValueError()
+            for name in ('input_usd_per_million','output_usd_per_million'):
+                if name in profile and (type(profile[name]) not in (int,float) or not 0<=profile[name]<=100000):raise ValueError()
+            if any(name in profile and (not isinstance(profile[name],str) or len(profile[name])>500) for name in ('family','source','verified_on')):raise ValueError()
         return config
     except AIConfigError:
         raise
     except (OSError, ValueError, TypeError):
-        raise ValueError('AI配置无效，请检查config/ai.toml；支持deepseek，默认模型须在模型列表内，连接检查超时1～30秒，分析超时30～600秒。配置内容未显示。') from None
+        raise ValueError('AI配置无效，请检查config/ai.toml；模型须在允许列表，连接超时1～30秒、分析30～600秒，报告/归纳输出512～393216 Token；模型能力键须符合说明。配置内容未显示。') from None
 
 
 def api_key(config):

@@ -1,0 +1,12 @@
+{% from 'form_controls.html' import text_preview %}
+{% set plan=data.plan %}{% set size=plan.whole_measurement %}
+<p><strong>{{ '无需AI调用：本批无可分析文字' if plan.mode=='local_empty' else '容量充足，全部评价一次生成报告' if plan.mode=='direct' else '完整资料超出单次边界，分组归纳后汇总' }}</strong></p>
+<p>预计输入 {{ size.input_tokens }} Token · 报告输出上限 {{ plan.report_output_tokens }} · 安全余量 {{ size.safety_tokens }} · 模型容量 {{ plan.capability.context_tokens }}。</p>
+<p>计划共 <strong>{{ plan.planned_calls }} 次请求</strong>{% if plan.mode=='grouped' %}：{{ plan.groups|length }}组归纳＋1次汇总{% endif %}，最低用量预留 {{ plan.minimum_tokens }}，自动总上限 {{ plan.recommended_tokens }} Token。</p>
+<p class="ui-form-note">{{ '官方V4数据本地估算' if plan.counter.method=='official-v4-local-estimate' else '分词数据不可用，使用UTF8保守估算' }}，不是接口精确用量。模型资料核对于 {{ plan.capability.verified_on }}；输出与输入共同占用容量，输出上限不代表实际消耗。</p>
+{% if plan.estimated_cost %}<p class="ui-form-note">按已核对高峰未命中单价的用量上界估算：约 USD {{ '%.6f'|format(plan.estimated_cost.amount) }}。不换算人民币，不是预扣款或账单，实际费用以服务商为准。</p>{% endif %}
+<p class="ui-form-note">报告覆盖使用场景、优缺点、用户痛点、改进方向及采购验证；基础数量由本地统计，不做逐条JSON分类。原文完整保留，不自动重试、追加费用或增加汇总层级。</p>
+<details class="ui-advanced-settings"><summary><span>查看实际发送内容</span><small>模型要求与本批完整资料</small></summary><div class="ui-advanced-body">
+{% for group in plan.groups %}<details><summary>{{ '直接报告' if group.kind=='direct' else '归纳组 '+group.index|string }} · {{ group.source_ids|length }}条来源 · 预计输入{{ group.measurement.input_tokens }} Token</summary>{{ text_preview(group.prompt) }}</details>{% endfor %}
+{% if plan.summary %}<p>最终汇总只发送各组精简发现和必要引用；预留输入上界 {{ plan.summary.input_bound }} Token，已经检查容量和费用。实际消息待各组返回后保存。</p>{% endif %}
+</div></details>

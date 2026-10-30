@@ -75,10 +75,12 @@
     }
     loadBatchSummary();
   }
-  if (/^#review-\d+$/.test(location.hash)) {
-    const target = document.querySelector(location.hash);
-    if (target instanceof HTMLDetailsElement) target.open = true;
+  function openSource() {
+    if (!/^#review-\d+$/.test(location.hash)) return;
+    const target=document.querySelector(location.hash);
+    if (target instanceof HTMLDetailsElement) target.open=true;
   }
+  openSource();window.addEventListener('hashchange',openSource);
   async function post(url, data) {
     let response,result;
     try { response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Collection-Token': token}, body: JSON.stringify(data)}); }
@@ -100,7 +102,7 @@
       }, true);
       form.addEventListener('submit', async event => {
       event.preventDefault();
-      if (form.dataset.raSubmitting === 'true') return;
+      if (form.dataset.raSubmitting === 'true' || form.dataset.raPlanLoading === 'true') return;
       const button = form.querySelector('button[type=submit]');
       const feedback = form.querySelector('[data-ra-submit-feedback]') || form.querySelector('.ra-feedback');
       const label = button.textContent;
@@ -121,6 +123,35 @@
       });
     });
   }
+  function bindPlan(form) {
+    let controller, sequence=0;
+    const output=form.elements.output_tokens,button=form.querySelector('button[type=submit]');
+    async function refresh() {
+      if (form.dataset.raSubmitting==='true') return;
+      controller?.abort();controller=new AbortController();const current=++sequence;
+      const feedback=form.querySelector('[data-ra-submit-feedback]');
+      form.dataset.raPlanLoading='true';form.dataset.planHash='';button.disabled=true;feedback.textContent='正在本地重新计算发送计划，不调用AI…';
+      try {
+        const url=new URL(form.dataset.raPlanUrl,location.href);
+        url.searchParams.set('batch',form.dataset.batch);url.searchParams.set('model',form.elements.model.value);url.searchParams.set('output_tokens',output.value);
+        const response=await fetch(url,{cache:'no-store',signal:controller.signal});
+        let data;
+        try { data=await response.json(); } catch (_) {throw new Error('计划服务未返回可识别结果，请刷新后核对；未发送评价。');}
+        if (current!==sequence || !form.isConnected) return;
+        if (!response.ok) throw new Error(data.error || '发送计划无法计算，请核对模型和输出上限。');
+        form.querySelector('[data-ra-plan]').innerHTML=data.html;
+        form.dataset.hash=data.input_hash;form.dataset.planHash=data.plan_hash;output.max=data.output_max;
+        const tokens=form.elements.max_tokens,calls=form.elements.max_calls;
+        tokens.dataset.raMinimum=data.minimum_tokens;tokens.dataset.raDefault=data.default_tokens;calls.dataset.raDefault=data.planned_calls;calls.min=data.planned_calls;
+        if (!form.elements.manual_budget.checked) {tokens.value=data.default_tokens;calls.value=data.planned_calls;}
+        tokens.dispatchEvent(new Event('input',{bubbles:true}));feedback.textContent='计划已更新，请核对本次请求次数和用量。';button.disabled=false;
+      } catch (error) {
+        if (error.name!=='AbortError' && current===sequence && form.isConnected) feedback.textContent=error.message || '无法更新计划，请刷新后重试。';
+      } finally {if(current===sequence) form.dataset.raPlanLoading='false';}
+    }
+    form.elements.model.addEventListener('change',refresh);output.addEventListener('change',refresh);
+    form.addEventListener('ui:controls-remove',()=>controller?.abort());
+  }
   function bindStart(root = document) {
     root.querySelectorAll('[data-ra-start]').forEach(form => {
       if (form.dataset.raBudgetBound) return;
@@ -136,6 +167,7 @@
         form.querySelector('[data-ra-budget-feedback]').textContent = message;
       }
       manual.addEventListener('change', budgetFeedback); tokens.addEventListener('input', budgetFeedback); budgetFeedback();
+      if (form.dataset.raVersion==='6') bindPlan(form);
       const existing=form.querySelector('[data-ra-existing]');
       const resetChoice=() => { existing.hidden=true; form.elements.restart_paid.checked=false; };
       form.elements.model.addEventListener('change',resetChoice);
@@ -153,7 +185,8 @@
     plan_hash:form.dataset.planHash, model:form.elements.model.value,
     max_calls:form.elements.manual_budget.checked ? Number(form.elements.max_calls.value) : null,
     max_tokens:form.elements.manual_budget.checked ? Number(form.elements.max_tokens.value) : null,
-    allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked}), (result,form) => {
+    allow_paid:form.elements.allow_paid.checked, force:form.elements.force.checked,
+    ...(form.elements.output_tokens ? {output_tokens:Number(form.elements.output_tokens.value)} : {})}), (result,form) => {
       const feedback=form.querySelector('[data-ra-submit-feedback]');
       feedback.textContent=result.message || '提交成功，正在打开分析任务…';
       if (!result.choice_required) { location.assign(result.url);return; }
@@ -211,7 +244,7 @@
         const response = await fetch('/api/analysis/reviews/tasks/' + task.dataset.raTask);
         if (!response.ok) throw new Error();
         const data = await response.json();
-        document.querySelector('#ra-progress').textContent = data.message + ' · 已保存 ' + data.processed_count + '/' + data.source_count + ' 条';
+        document.querySelector('#ra-progress').textContent = data.message + (data.rule_version==='reviews-v6' ? ' · 本批来源 '+data.source_count+' 条' : ' · 已保存 ' + data.processed_count + '/' + data.source_count + ' 条');
         if (!['queued','running'].includes(data.status) || data.appears_interrupted) location.reload();
         else setTimeout(poll, 2000);
       } catch (_) { document.querySelector('#ra-progress').textContent = '暂时无法读取进度，请刷新查看；不会自动重新启动分析。'; }

@@ -18,6 +18,11 @@ class TextClient(Protocol):
         """提交文字及输出上限；返回服务商、模型、文字、用量与完成原因。"""
         ...
 
+    def complete_messages(self, messages: list[dict], *, max_tokens: int, capability: dict,
+                          timeout_seconds: int = 180) -> dict:
+        """提交已确认的真实消息；参数：消息、输出上限、模型能力及超时；返回：文字、用量及完成原因。"""
+        ...
+
 
 class NoRedirect(HTTPRedirectHandler):
     """拒绝重定向，防止授权头跟随到其他地址。"""
@@ -50,7 +55,23 @@ class DeepSeekClient:
                    'thinking': {'type': 'disabled'}, 'stream': False, 'max_tokens': max_tokens}
         if json_mode:
             payload['response_format'] = {'type': 'json_object'}
-        body = json.dumps(payload).encode()
+        return self._send(payload,key,timeout,require_complete)
+
+    def complete_messages(self,messages,*,max_tokens,capability,timeout_seconds=180,**options):
+        """新流程使用真实消息和模型容量，旧文字接口保持原规则；参数：消息、输出、冻结能力；返回：响应。"""
+        key=api_key(self.config)
+        if not key or not key.isascii() or any(c.isspace() for c in key):raise AIError('密钥未配置或格式无效。')
+        if capability.get('model')!=self.model or capability.get('provider')!='deepseek':raise AIError('模型能力与实际模型不匹配。')
+        if type(max_tokens) is not int or not 1<=max_tokens<=capability['max_output_tokens']:raise AIError('输出上限超过当前模型能力。')
+        if not isinstance(messages,list) or not messages or any(not isinstance(m,dict) or set(m)!={'role','content'} or m['role'] not in ('system','user') or not isinstance(m['content'],str) for m in messages):raise AIError('消息结构无效。')
+        if type(timeout_seconds) is not int or not 1<=timeout_seconds<=600:raise AIError('等待上限无效。')
+        payload={'model':self.model,'messages':messages,'thinking':{'type':'disabled'},'stream':False,'max_tokens':max_tokens}
+        if len(json.dumps(payload,ensure_ascii=False).encode())>16*1024*1024:raise AIError('请求超过本机16MiB网络保护，未发送；这不是模型Token限制。')
+        return self._send(payload,key,timeout_seconds,False)
+
+    def _send(self,payload,key,timeout,require_complete):
+        """统一单次HTTP发送，无重试；参数：请求体、认证、超时；返回：脱敏响应。"""
+        body = json.dumps(payload,ensure_ascii=False).encode()
         request = Request('https://api.deepseek.com/chat/completions', data=body,
                           headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
         try:

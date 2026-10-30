@@ -36,7 +36,10 @@ def unpack(incoming):
 
 class ReviewV5Tests(TestCase):
     use_v4=True
-    setUp=legacy.ReviewAnalysisTests.setUp
+    def setUp(self):
+        """固定原V5任务；参数：无；返回：无。"""
+        legacy.ReviewAnalysisTests.setUp(self)
+        preview=patch.object(service,'preview',service.preview_v5);preview.start();self.addCleanup(preview.stop)
     put=legacy.ReviewAnalysisTests.put
     response=legacy.ReviewAnalysisTests.response
 

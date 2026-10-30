@@ -16,7 +16,7 @@ from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import owner_alive, process_started_at, atomic_json
 from ecommerce.shared.exceptions import TaskBusy
-from ecommerce.modules.review_analysis import rules, planning, validation, v4, v4_runtime, v5, v5_runtime
+from ecommerce.modules.review_analysis import rules, planning, validation, v4, v4_runtime, v5, v5_runtime, v6, v6_runtime
 
 
 def identifier(value):
@@ -89,7 +89,7 @@ def preview_v4(settings, product, batch_id=None):
     return data
 
 
-def preview(settings, product, batch_id=None):
+def preview_v5(settings, product, batch_id=None):
     """新任务默认使用V5有界汇总及逐条排除规则；参数：配置、商品、批次；返回：完整计划，不联网。"""
     product_id(product)
     if batch_id is not None:integer(batch_id,1,2**63-1,'批次编号')
@@ -103,13 +103,30 @@ def preview(settings, product, batch_id=None):
     return data
 
 
-def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max_tokens=None, allow_paid=False, force=False, plan_hash=None):
+def preview(settings, product, batch_id=None, *, model=None, output_tokens=None):
+    """新流程只读预览真实消息和完整用量计划；参数：商品、批次、模型、输出；返回：确认数据。"""
+    product_id(product)
+    if batch_id is not None:integer(batch_id,1,2**63-1,'批次编号')
+    data=repository.preview(settings,product,batch_id,full_batch=True);config=load_config(settings.root)
+    selected=model or config.model;snapshot=v6.snapshot()
+    plan=v6.plan(settings.root,config,selected,data['items'],data['context'],snapshot,output_tokens)
+    data.update(input_hash=fingerprint(data['items']),plan_hash=fingerprint({'plan':plan,'rules':snapshot}),
+        plan=plan,outgoing=plan['groups'],rule_snapshot=snapshot,rule_version=v6.VERSION,
+        report_template=snapshot['report'],chunk_count=len(plan['groups']),planned_calls=plan['planned_calls'],
+        default_calls=plan['planned_calls'],reserved_tokens=plan['minimum_tokens'],default_tokens=plan['recommended_tokens'],
+        models=config.models,model=selected,provider=config.provider,key_configured=bool(api_key(config)))
+    return data
+
+
+def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max_tokens=None, allow_paid=False, force=False, plan_hash=None, output_tokens=None):
     """确认后创建及派发分析；参数：来源、模型、预算和授权；返回：任务编号与复用标记。"""
     if allow_paid is not True:
         raise ValueError('请明确允许本次AI调用费用。')
     if type(force) is not bool:
         raise ValueError('重新分析选项无效。')
     data = preview(settings, product, batch_id)
+    if data.get('rule_version')==v6.VERSION and (model!=data['model'] or output_tokens is not None):
+        data=preview(settings,product,batch_id,model=model,output_tokens=output_tokens)
     if plan_hash is not None and plan_hash != data['plan_hash']:
         raise ValueError('发送计划或分析要求已变化，请刷新预览后再开始。')
     config = load_config(settings.root)
@@ -125,8 +142,8 @@ def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max
     if type(max_tokens) is int and max_tokens < data['reserved_tokens']:
         raise ValueError(f'本次AI用量上限不足：至少需预留{data["reserved_tokens"]}，当前设置{max_tokens}，还差{data["reserved_tokens"]-max_tokens}；未发送评价。')
     integer(max_tokens, data['reserved_tokens'], planning.MAX_TASK_TOKENS, '本次AI用量上限')
-    parameters = {'plan': data['plan'], 'budget_version': 2, 'budget_mode': 'auto' if automatic else 'manual',
-                  'budget_history': [], 'max_output_tokens': planning.MAX_OUTPUT_TOKENS, 'max_calls': max_calls, 'max_tokens': max_tokens,
+    parameters = {'plan': data['plan'], 'budget_version': 3 if data.get('rule_version')==v6.VERSION else 2, 'budget_mode': 'auto' if automatic else 'manual',
+                  'budget_history': [], 'max_output_tokens': data['plan']['report_output_tokens'] if data.get('rule_version')==v6.VERSION else planning.MAX_OUTPUT_TOKENS, 'max_calls': max_calls, 'max_tokens': max_tokens,
                   'config_file': settings.mysql.credentials_file or str(settings.root / 'config/settings.toml')}
     row, created = repository.create(settings, product, batch_id, data.get('rule_snapshot',rules.snapshot()), parameters, config.provider, model,
                                       data.get('rule_version',rules.VERSION), input_hash, force=force)
@@ -154,6 +171,9 @@ def read(settings, task_id):
     data['detail_locations'] = {str(d['result']['id']): index // PAGE_SIZE + 1 for index, d in enumerate(data['details'])}
     data['report_stale'] = bool(data['report'] and data['report']['content']['detail_revisions'] != {d['id']: d['revision'] for d in data['details']})
     data['budget'] = repository.budget_status(task['parameters'], data['calls'])
+    if task['rule_version']==v6.VERSION:
+        from ecommerce.modules.review_analysis.v6_view import enrich
+        return enrich(settings,data)
     if task['rule_version'] in (v4.VERSION,v5.VERSION):
         from ecommerce.modules.review_analysis.v4_view import enrich
         return enrich(settings,data)
@@ -173,6 +193,7 @@ def read(settings, task_id):
 
 def needs_local_recovery(data):
     """检查有原响应但尚未做逐条校验的失败调用；参数：任务；返回：是否应先本地恢复。"""
+    if data['task']['rule_version']==v6.VERSION:return any(c['status']=='inflight' for c in data['calls'])
     policy=v5.POLICY if data['task']['rule_version']==v5.VERSION else v4.POLICY if data['task']['rule_version']==v4.VERSION else validation.POLICY
     checked = {record['call_id'] for record in data['task']['parameters'].get('validation_history',[]) if record['policy']==policy}
     done = {detail['result']['id'] for detail in data['details']}
@@ -182,6 +203,7 @@ def needs_local_recovery(data):
 
 def continuation(data):
     """只为未完成评价构建补处理预览，原计划不变；参数：任务；返回：完整补处理方案。"""
+    if data['task']['rule_version']==v6.VERSION:return v6_runtime.continuation(data)
     if data['task']['rule_version']==v5.VERSION:return v5_runtime.continuation(data)
     if data['task']['rule_version']==v4.VERSION:return v4_runtime.continuation(data)
     task, parameters = data['task'], data['task']['parameters']
@@ -205,6 +227,7 @@ def continuation(data):
 
 def remaining_budget(data):
     """估算继续当前任务所需额度；参数：持久任务及明细；返回：剩余预留和建议总上限。"""
+    if data['task']['rule_version']==v6.VERSION:return v6_runtime.remaining_budget(data)
     if data['task']['rule_version']==v5.VERSION:return v5_runtime.remaining_budget(data)
     if data['task']['rule_version']==v4.VERSION:return v4_runtime.remaining_budget(data)
     task, parameters = data['task'], data['task']['parameters']
@@ -235,6 +258,7 @@ def recover_saved(settings, task_id):
             raise ValueError('分析进程仍存活或身份无法确认，不能同时本地恢复。')
         if data['task']['status']=='succeeded':
             raise ValueError('任务已经完成，不重复恢复已有结果。')
+        if data['task']['rule_version']==v6.VERSION:return v6_runtime.recover_saved(settings,task_id)
         if data['task']['rule_version']==v5.VERSION:return v5_runtime.recover_saved(settings,task_id)
         if data['task']['rule_version']==v4.VERSION:return v4_runtime.recover_saved(settings,task_id)
         by_id = {source['review_id']:source['snapshot'] for source in data['sources']}
@@ -281,7 +305,7 @@ def history_page(settings, product, batch=None):
     if latest_result is None and (selected is not None or batch == 'all'):
         latest_result = repository.latest_success(settings, product, selected)
     if latest_result is None:
-        latest_result = next((t for t in tasks if t['has_report'] and t['processed_count'] > 0 and t['status'] not in {'queued', 'running'}), None)
+        latest_result = next((t for t in tasks if t['has_report'] and (t['processed_count'] > 0 or t['rule_version']==v6.VERSION and t['status']=='partial') and t['status'] not in {'queued', 'running'}), None)
     active = next((t for t in tasks if t['status'] in {'queued', 'running'} and not t['appears_interrupted']), None)
     return {'tasks': tasks, 'batches': choices, 'selected_batch': selected, 'all_batches': batch == 'all',
             'latest_result': latest_result, 'active_task': active, 'latest_task': tasks[0] if tasks else None}
@@ -369,6 +393,7 @@ def build_report(settings, task_id, narrative=None, issues=None):
     """从持久明细构建报告，不调用AI；参数：任务、已校验文字、问题；返回：报告版本。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version']==v6.VERSION:return v6_runtime.build_report(settings,task_id,issues)
     if task['rule_version']==v5.VERSION:return v5_runtime.build_report(settings,task_id,narrative,issues)
     if task['rule_version']==v4.VERSION:return v4_runtime.build_report(settings,task_id,narrative,issues)
     content = {'schema_version': 2 if task['parameters'].get('plan') else 1, 'statistics': rules.statistics(data['details'], task['rules']),
@@ -403,6 +428,8 @@ def recount(settings, task_id):
     data = read(settings, task_id)
     if data['task']['status'] in {'queued', 'running'}:
         raise ValueError('运行期间不能重新统计。')
+    if data['task']['rule_version']==v6.VERSION:
+        return {'version':v6_runtime.build_report(settings,task_id,['从已保存原报告重新检查章节与引用；未调用AI，原文未改写。'])}
     return {'version': build_report(settings, task_id, issues=['从已保存明细重新统计；未调用AI，原综合文字未沿用。'])}
 
 
@@ -410,6 +437,7 @@ def execute(settings, task_id, events):
     """执行一次恢复轮次；参数：任务和通用日志会话；返回：终态，不自动重试。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version']==v6.VERSION:return v6_runtime.execute(settings,task_id,events,create_client)
     if task['rule_version']==v5.VERSION:return v5_runtime.execute(settings,task_id,events,create_client)
     if task['rule_version']==v4.VERSION:return v4_runtime.execute(settings,task_id,events,create_client)
     config = replace(load_config(settings.root), model=task['model'])

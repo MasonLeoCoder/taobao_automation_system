@@ -12,6 +12,8 @@ def execute(settings, args):
     action = args.action
     if action in {'preview', 'start'}:
         data = service.preview(settings, args.input, args.batch_id)
+        if data.get('rule_version')=='reviews-v6':
+            data=service.preview(settings,args.input,args.batch_id,model=args.model,output_tokens=args.output_tokens)
         if action == 'preview':
             result = {'product': args.input, 'batch_id': data['batch']['id'], 'source_count': len(data['items']),
                       'planned_calls': data['planned_calls'], 'reserved_tokens': data['reserved_tokens'],
@@ -20,7 +22,7 @@ def execute(settings, args):
         else:
             result = service.start(settings, args.input, batch_id=data['batch']['id'], model=args.model or load_config(settings.root).model,
                 input_hash=data['input_hash'], plan_hash=data['plan_hash'], max_calls=args.max_calls, max_tokens=args.max_tokens,
-                allow_paid=args.allow_paid, force=args.force)
+                allow_paid=args.allow_paid, force=args.force,**({'output_tokens':args.output_tokens} if data.get('rule_version')=='reviews-v6' else {}))
     elif action == 'history':
         result = repository.history(settings, service.product_id(args.input))
     elif action == 'resume':

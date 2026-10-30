@@ -21,7 +21,7 @@ def connection(settings, write=False):
         raise MySQLStorageError(safe_error(error)) from None
 
 
-def sources(conn, tables, product, batch_id=None):
+def sources(conn, tables, product, batch_id=None, *, full_batch=False):
     """校验并读取整批评价；参数：连接、表、平台商品编号、可选批次；返回：商品、批次及脱敏快照。"""
     p, b, r = (tables[n] for n in ('products', 'collection_batches', 'review_observations'))
     identity = conn.execute(sa.select(p).where(p.c.platform == 'taobao', p.c.platform_product_id == product)).mappings().one_or_none()
@@ -33,10 +33,11 @@ def sources(conn, tables, product, batch_id=None):
     batch = conn.execute(sa.select(b).where(*condition).order_by(b.c.captured_at.desc(), b.c.id.desc()).limit(1)).mappings().one_or_none()
     if not batch:
         raise LookupError('没有属于该商品的已完成、已发布评价批次。')
-    records = conn.execute(sa.select(r).where(r.c.batch_id == batch['id']).order_by(r.c.position, r.c.id).limit(1001)).mappings().all()
+    query=sa.select(r).where(r.c.batch_id == batch['id']).order_by(r.c.position,r.c.id)
+    records=conn.execute(query if full_batch else query.limit(1001)).mappings().all()
     if not records:
         raise ValueError('本批没有评价，无法启动分析。')
-    if len(records) > 1000:
+    if not full_batch and len(records) > 1000:
         raise ValueError('首版整批分析最多1000条；未静默截断资料。')
     snapshots = []
     for row in records:
@@ -55,10 +56,10 @@ def sources(conn, tables, product, batch_id=None):
     return dict(identity), dict(batch), snapshots
 
 
-def preview(settings, product, batch_id=None):
+def preview(settings, product, batch_id=None, *, full_batch=False):
     """读取分析候选及历史批次；参数：配置、商品和可选批次；返回：资料，不写数据库。"""
     with connection(settings) as (conn, tables):
-        identity, batch, items = sources(conn, tables, product, batch_id)
+        identity, batch, items = sources(conn, tables, product, batch_id,full_batch=full_batch)
         b = tables['collection_batches']
         history = [dict(r) for r in conn.execute(sa.select(b.c.id, b.c.captured_at, b.c.coverage_status, b.c.requested_limit)
             .where(b.c.product_id == identity['id'], b.c.module == 'reviews', b.c.visibility == 'published', b.c.status == 'complete')
@@ -98,7 +99,7 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
     with connection(settings, True) as (conn, tables):
         p, t, src = (tables[n] for n in ('products', 'analysis_tasks', 'analysis_sources'))
         conn.execute(sa.select(p.c.id).where(p.c.platform == 'taobao', p.c.platform_product_id == product).with_for_update()).all()
-        identity, batch, items = sources(conn, tables, product, batch_id)
+        identity, batch, items = sources(conn, tables, product, batch_id,full_batch=rule_version=='reviews-v6')
         if fingerprint(items) != expected_hash:
             raise ValueError('资料已变化，请刷新确认后再分析。')
         if parameters.get('plan') and product_context(conn, tables, identity) != parameters['plan']['context']:
@@ -106,10 +107,16 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
         digest = fingerprint({'product': identity['id'], 'batch': batch['id'], 'items': items, 'rules': rules,
                               'parameters': {k:v for k,v in parameters.items() if k not in {'max_calls','max_tokens','config_file','budget_history','budget_mode','validation_history','supplement_history','active_supplement'}},
                               'provider': provider, 'model': model, 'rule_version': rule_version})
+        if rule_version=='reviews-v6':
+            # 成品身份只含影响分析结果的内容，不因价格、预算、分词器或容量资料更新而重收费用。
+            digest=fingerprint({'product':identity['id'],'batch':batch['id'],'items':items,'rules':rules,
+                'title':parameters['plan']['context'].get('title'),'provider':provider,'model':model,'rule_version':rule_version,
+                'report_output_tokens':parameters['plan']['report_output_tokens']})
         existing = conn.execute(sa.select(t).where(t.c.fingerprint == digest).order_by(t.c.created_at.desc(), t.c.id.desc())).mappings().all()
         active = next((r for r in existing if r['active_key']), None)
         if active or (existing and not force):
-            return dict(active or existing[0]), False
+            selected=next((r for r in existing if r['status']=='succeeded'),existing[0]) if rule_version=='reviews-v6' else existing[0]
+            return dict(active or selected), False
         now = database_now()
         row = dict(id=uuid4().hex, product_id=identity['id'], analysis_type='reviews', fingerprint=digest, active_key=digest,
                    status='queued', provider=provider, model=model, rule_version=rule_version, rules=rules, parameters=parameters,
@@ -210,7 +217,7 @@ def budget_status(parameters, calls):
             'used_calls': len(calls), 'remaining_calls': parameters['max_calls'] - len(calls)}
 
 
-def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *, output_tokens=None, json_mode=False, timeout_seconds=None, report_input=None):
+def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *, output_tokens=None, json_mode=False, timeout_seconds=None, report_input=None,messages=None,measurement=None):
     """在联网前保存请求并扣除预算；参数：任务、请求和保守用量；返回：调用编号。"""
     with connection(settings, True) as (conn, tables):
         task = task_row(conn, tables, identifier, True)
@@ -222,6 +229,7 @@ def begin_call(settings, identifier, kind, index, prompt, source_ids, reserve, *
             raise ValueError('本次调用次数或AI用量上限不足；未发出新请求，已保存结果保留。可明确增加额度后继续。')
         uid = uuid4().hex
         request = {'prompt': prompt, 'source_ids': source_ids, 'max_output_tokens': output_tokens or task['parameters']['max_output_tokens']}
+        if messages is not None:request.update(messages=messages,measurement=measurement,request_hash=fingerprint(messages))
         if report_input is not None:
             request['report_input'] = report_input
         if task['parameters'].get('plan'):

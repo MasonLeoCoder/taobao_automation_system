@@ -9,3 +9,16 @@ models = ["deepseek-flash", "deepseek-v4-pro"]
 timeout_seconds = 20
 # 评价分析每次请求的等待上限，单位秒，可选30～600；默认180，下一次新建分析生效。
 analysis_timeout_seconds = 180
+
+# 新报告默认输出上限，单位Token；512～模型允许上限，不代表实际消耗。
+report_output_tokens = 8192
+# 仅超长分组时使用的简短归纳输出上限。
+group_output_tokens = 2048
+# 官方V4本地分词数据，不执行远程代码；文件缺失或校验不符时使用保守估算，不自动下载。
+tokenizer_file = "workspace/models/deepseek-v4/tokenizer.json"
+# 已核对的模型能力内置在程序中。可显式覆盖，修改后下一次预览生效；提交前会重新核对。
+# [ai.capabilities.deepseek-flash]
+# context_tokens = 1000000
+# max_output_tokens = 393216
+# verified_on = "2026-10-30"
+# source = "https://api-docs.deepseek.com/quick_start/pricing/"

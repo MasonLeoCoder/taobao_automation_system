@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block title %}评价分析报告{% endblock %}{% block breadcrumb %}评价分析报告{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='review_analysis.css') }}">{% endblock %}
+{% block content %}{% set exporting=false %}{% include 'review_analysis_v6_body.html' %}{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='review_analysis.js') }}" defer></script>{% endblock %}

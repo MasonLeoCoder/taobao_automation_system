@@ -29,8 +29,10 @@ def parser() -> argparse.ArgumentParser:
         if name in {'start', 'resume'}:
             command.add_argument('--max-calls', type=int, help='调用次数总上限；开始时自动计算，继续时可明确追加')
             command.add_argument('--max-tokens', type=int, help='AI用量总上限；开始时自动计算，继续时可明确追加，未知请求仍预留')
-        if name == 'start':
+        if name in {'preview','start'}:
+            command.add_argument('--output-tokens',type=int,help='新报告输出上限，默认8192 Token，不代表实际消耗')
             command.add_argument('--model', help='已配置模型，默认使用AI配置')
+        if name=='start':
             command.add_argument('--force', action='store_true', help='明确另建分析，不复用已完成结果')
         if name in {'start', 'resume'}:
             command.add_argument('--allow-paid', action='store_true', help='明确允许发送资料及AI费用')
