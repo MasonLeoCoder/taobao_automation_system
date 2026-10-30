@@ -1,0 +1,573 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "competitor-report-v1.1"
+    },
+    "decision_summary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^f[1-9][0-9]*$",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "opportunity_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^p[1-9][0-9]*$",
+              "minLength": 1
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "limitation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "text",
+          "finding_ids",
+          "opportunity_ids",
+          "limitation"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 5
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^f[1-9][0-9]*$",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "购买需求与场景",
+              "认可表现",
+              "问题与需求",
+              "规格与取舍",
+              "竞品综合"
+            ],
+            "minLength": 1
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation_refs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "review_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "observation_id": {
+                        "type": "string",
+                        "pattern": "^o[1-9][0-9]*$",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "review_id",
+                      "observation_id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "evidence_refs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "review_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "evidence_id": {
+                        "type": "string",
+                        "pattern": "^e[1-9][0-9]*$",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "review_id",
+                      "evidence_id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "text",
+                "observation_refs",
+                "evidence_refs"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "interpretation": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "basis_observation_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "review_id": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "observation_id": {
+                          "type": "string",
+                          "pattern": "^o[1-9][0-9]*$",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "review_id",
+                        "observation_id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  "assumptions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 0
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 0
+                  }
+                },
+                "required": [
+                  "text",
+                  "basis_observation_refs",
+                  "assumptions",
+                  "limitations"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "statistics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "stat_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "meaning": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "stat_id",
+                "meaning"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          },
+          "evidence_strength": {
+            "type": "string",
+            "enum": [
+              "证据较充分",
+              "线索性发现",
+              "暂无法判断"
+            ],
+            "minLength": 1
+          },
+          "strength_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "facts",
+          "interpretation",
+          "statistics",
+          "evidence_strength",
+          "strength_reason",
+          "limitations"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "opportunities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^p[1-9][0-9]*$",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "现成款采购",
+              "包装组合调整",
+              "后续定制储备"
+            ],
+            "minLength": 1
+          },
+          "target_need": {
+            "type": "string",
+            "minLength": 1
+          },
+          "product_direction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "supporting_finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^f[1-9][0-9]*$",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "reasoning": {
+            "type": "string",
+            "minLength": 1
+          },
+          "counter_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "finding_id": {
+                  "type": "string",
+                  "pattern": "^f[1-9][0-9]*$",
+                  "minLength": 1
+                },
+                "explanation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "finding_id",
+                "explanation"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          },
+          "risk_hypotheses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "missing_information": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "validation_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "stop_conditions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "优先拿样验证",
+              "补充资料后判断",
+              "暂不优先"
+            ],
+            "minLength": 1
+          },
+          "priority_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "independence_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "stage",
+          "target_need",
+          "product_direction",
+          "supporting_finding_ids",
+          "reasoning",
+          "counter_evidence",
+          "risk_hypotheses",
+          "conditions",
+          "missing_information",
+          "validation_actions",
+          "stop_conditions",
+          "priority",
+          "priority_reason",
+          "independence_reason"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 3
+    },
+    "business_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "已提供",
+              "未提供",
+              "存在疑点"
+            ],
+            "minLength": 1
+          },
+          "known_information": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "material_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "missing_information": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_impact": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "item",
+          "status",
+          "known_information",
+          "material_refs",
+          "missing_information",
+          "decision_impact"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "related_finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^f[1-9][0-9]*$",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "related_opportunity_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^p[1-9][0-9]*$",
+              "minLength": 1
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "continue_condition": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stop_condition": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "order",
+          "action",
+          "purpose",
+          "related_finding_ids",
+          "related_opportunity_ids",
+          "continue_condition",
+          "stop_condition"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 3
+    },
+    "data_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "affected_sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "handling": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "description",
+          "affected_sections",
+          "handling"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "decision_summary",
+    "findings",
+    "opportunities",
+    "business_checks",
+    "next_actions",
+    "data_issues"
+  ],
+  "additionalProperties": false
+}
