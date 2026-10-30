@@ -1,0 +1,431 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "reviews-extraction-v1.2"
+    },
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "pattern": "^e[1-9][0-9]*$",
+                  "minLength": 1
+                },
+                "segment": {
+                  "type": "string",
+                  "pattern": "^(initial|append:[1-9][0-9]*)$",
+                  "minLength": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "evidence_id",
+                "segment",
+                "quote"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          },
+          "usage_stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "segment": {
+                  "type": "string",
+                  "pattern": "^(initial|append:[1-9][0-9]*)$",
+                  "minLength": 1
+                },
+                "stage": {
+                  "type": "string",
+                  "enum": [
+                    "未使用",
+                    "已使用",
+                    "不明确"
+                  ],
+                  "minLength": 1
+                },
+                "duration_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^e[1-9][0-9]*$",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "segment",
+                "stage",
+                "duration_text",
+                "evidence_ids"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "observation_id": {
+                  "type": "string",
+                  "pattern": "^o[1-9][0-9]*$",
+                  "minLength": 1
+                },
+                "information_types": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "购买原因",
+                      "使用场景",
+                      "产品反馈",
+                      "问题与不满",
+                      "期望与需求",
+                      "规格反馈",
+                      "回购经历",
+                      "回购意愿",
+                      "不再购买",
+                      "比较",
+                      "取舍",
+                      "笼统表态"
+                    ],
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "topic": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fact_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sentiment": {
+                  "type": "string",
+                  "enum": [
+                    "正面",
+                    "负面",
+                    "中性",
+                    "褒贬并存",
+                    "不明确"
+                  ],
+                  "minLength": 1
+                },
+                "target": {
+                  "type": "string",
+                  "enum": [
+                    "产品",
+                    "包装",
+                    "物流",
+                    "客服",
+                    "不明确"
+                  ],
+                  "minLength": 1
+                },
+                "target_detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_type": {
+                  "type": "string",
+                  "enum": [
+                    "使用体验自述",
+                    "收货或外观感受",
+                    "期望",
+                    "转述",
+                    "不明确"
+                  ],
+                  "minLength": 1
+                },
+                "event_scope": {
+                  "type": "string",
+                  "enum": [
+                    "当前购买",
+                    "历史购买",
+                    "不明确"
+                  ],
+                  "minLength": 1
+                },
+                "comparison": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "reference_object": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "dimension": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "direction": {
+                          "type": "string",
+                          "enum": [
+                            "当前更高",
+                            "当前更低",
+                            "相当",
+                            "不明确"
+                          ],
+                          "minLength": 1
+                        },
+                        "description": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^e[1-9][0-9]*$",
+                            "minLength": 1
+                          },
+                          "minItems": 1,
+                          "uniqueItems": true
+                        }
+                      },
+                      "required": [
+                        "reference_object",
+                        "dimension",
+                        "direction",
+                        "description",
+                        "evidence_ids"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "explicit_impact": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^e[1-9][0-9]*$",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "uncertainties": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "information_types",
+                            "topic",
+                            "fact_text",
+                            "sentiment",
+                            "target",
+                            "target_detail",
+                            "source_type",
+                            "event_scope",
+                            "comparison",
+                            "explicit_impact"
+                          ],
+                          "minLength": 1
+                        },
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^e[1-9][0-9]*$",
+                          "minLength": 1
+                        },
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
+                    },
+                    "required": [
+                      "fields",
+                      "reason",
+                      "evidence_ids"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 0
+                }
+              },
+              "required": [
+                "observation_id",
+                "information_types",
+                "topic",
+                "fact_text",
+                "sentiment",
+                "target",
+                "target_detail",
+                "source_type",
+                "event_scope",
+                "comparison",
+                "explicit_impact",
+                "evidence_ids",
+                "uncertainties"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "relation_type": {
+                  "type": "string",
+                  "enum": [
+                    "观点变化",
+                    "相互矛盾",
+                    "表现取舍"
+                  ],
+                  "minLength": 1
+                },
+                "observation_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^o[1-9][0-9]*$",
+                    "minLength": 1
+                  },
+                  "minItems": 2,
+                  "uniqueItems": true
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^e[1-9][0-9]*$",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "relation_type",
+                "observation_ids",
+                "description",
+                "evidence_ids"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "局部难以理解",
+                    "疑似截断",
+                    "资料指令",
+                    "其他"
+                  ],
+                  "minLength": 1
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^e[1-9][0-9]*$",
+                    "minLength": 1
+                  },
+                  "minItems": 0,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "evidence_ids"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "id",
+          "evidence",
+          "usage_stages",
+          "observations",
+          "relations",
+          "flags"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "reviews"
+  ],
+  "additionalProperties": false
+}
