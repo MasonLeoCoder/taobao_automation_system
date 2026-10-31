@@ -262,6 +262,8 @@ class TaskEvents:
 
     def collection(self,snapshot,context):
         """排入不可变采集快照；参数：引用、发布依据；返回：无，下个页面屏障前确认。"""
+        if self.closing:
+            raise NeedsAttention('任务已进入收尾，不接受新的采集快照；已有本地资料保留')
         operation=self.operation('collection','collection_saved','采集结果等待入库')
         recovery=getattr(self,'recovery',None)
         if recovery and recovery.revision>self.recovery_exported_revision:
@@ -282,7 +284,8 @@ class TaskEvents:
         """持久保存任务中途状态；参数：状态与说明；返回：无。"""
         if status not in {'running','needs_attention'}:
             raise ValueError('执行中状态不受支持')
-        self.append(self.operation('progress','task_progress',message,state=status))
+        if not self.closing:
+            self.append(self.operation('progress','task_progress',message,state=status))
 
     def checkpoint(self,step=None,pump=None):
         """断库时在安全边界等待，停止命令始终可用；参数：步骤、浏览器事件泵；返回：无。"""
@@ -327,8 +330,20 @@ class TaskEvents:
 
     def finish(self,status,message):
         """持久保存真实结论并等待提交；参数：结果；返回：数据库是否已确认。"""
+        previous=getattr(self,'finish_operation',None)
+        if previous and (previous['state']!=status or previous['message']!=sanitize(message)):
+            raise NeedsAttention('任务结束结论冲突，保留第一次结束事件待核对')
         self.closing=True
-        self.append(self.operation('finish','task_finished',message,state=status,level='ERROR' if status=='failed' else 'INFO'))
+        if previous is None:
+            operation=self.operation('finish','task_finished',message,state=status,level='ERROR' if status=='failed' else 'INFO')
+            # 仅新生成的结束事件启用；旧流水重放不会自动修复历史详情。
+            if self.settings.collection_backend=='mysql' and self.name.startswith('collection.taobao.'):
+                operation['close_collection_runs']=True
+            self.finish_operation=operation
+        if not getattr(self,'finish_queued',False):
+            # 落盘失败仍保留同一事件身份，重试不能误报已提交或生成新结论。
+            self.append(self.finish_operation)
+            self.finish_queued=True
         deadline=time.monotonic()+max(3,self.store.settings.connect_timeout+1)
         while self.journal.pending() and time.monotonic()<deadline:
             if self.error:

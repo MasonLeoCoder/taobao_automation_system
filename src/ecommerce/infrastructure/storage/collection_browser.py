@@ -230,7 +230,8 @@ def _browse(c, tables, view, **o):
         task=c.execute(sa.select(tasks).where(tasks.c.id==o['task_id'])).mappings().first()
         if not task:
             raise LookupError('任务不存在')
-        return {'task':dict(task)}
+        from ecommerce.infrastructure.storage.collection_lifecycle import task_views
+        return {'task':task_views(c,tables,[task])[0]}
     if view in {'search','search_records'}:
         task_id = o['task_id']
         if not re.fullmatch(r'[a-f0-9]{32}', task_id):

@@ -309,6 +309,10 @@ class CollectionWriter:
             old=self._select(table,key)
             if old and (old['task_id']!=self.task_id or old['product_id']!=product):
                 raise CollectionDataError('运行汇总编号与任务或商品冲突')
+            if old and old['finished_at'] is not None and values['status']=='running':
+                return {'table':table.name,'id':old['id'],'task_id':self.task_id,'batch_id':None,'counts':{},
+                        'issues':[{'severity':'warning','code':'late_run_progress','message':'已结束详情忽略迟到的运行进度'}],
+                        'logical_key':header['logical_key'],'run_id':old['id']}
             self.mutable=old is None or old['finished_at'] is None
             values['entry_record_id']=self._entry_record(header,product) if header.get('entry_key') else (old['entry_record_id'] if old else None)
             if old and old['entry_record_id'] is not None and values['entry_record_id']!=old['entry_record_id']:
@@ -350,6 +354,9 @@ class CollectionWriter:
                         raise CollectionDataError('模块步骤必须属于运行汇总')
                     child_key['run_id']=self.root_id
                     child_values['run_id']=self.root_id
+                    prior=self._select(child,child_key)
+                    if prior and prior['finished_at'] is not None and child_values['status'] in {'running','pending'}:
+                        continue
                 elif name=='media_references':
                     owner=record.get('owner')
                     identity=[self.batch_id,header['logical_key'],record['key']]

@@ -352,7 +352,8 @@ def task_detail(task_id):
     """展示资料关联任务；参数：任务编号；返回：只读任务详情。"""
     data=browse_query('task',task_id=task_id)
     settings=current_app.config['SETTINGS']
-    return render_template('task_detail.html',active='tasks',features=FEATURES,shop_name=settings.shop_name,**data)
+    return render_template('task_detail.html',active='tasks',features=FEATURES,shop_name=settings.shop_name,
+        alerts=local_task_alerts(settings,task_id=task_id),**data)
 
 
 @pages.get('/collections/files/<int:file_id>')

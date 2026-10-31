@@ -160,7 +160,7 @@ def active():
 def recent(product_id):
     """恢复当前商品模块状态；参数：商品；返回：最近任务。"""
     settings=current_app.config['SETTINGS']
-    return jsonify(jobs=[present(state) for state in service.recent(settings,product_id)],plan=service.plan(settings,product_id))
+    return jsonify(jobs=[present(state) for state in service.recent(settings,product_id)],**service.product_status(settings,product_id))
 
 
 @collection_jobs.post('/api/collections/products/<product_id>/jobs')

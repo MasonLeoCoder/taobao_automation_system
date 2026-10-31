@@ -313,12 +313,17 @@ def detail_document(settings,item_id,*,own_task=None):
             latest=connection.execute(sa.select(runs).join(p,p.c.id==runs.c.product_id).where(
                 p.c.platform_product_id==item_id).order_by(runs.c.started_at.desc(),runs.c.id.desc()).limit(1)).mappings().first()
             if latest:
+                from ecommerce.infrastructure.storage.collection_lifecycle import run_views
+                latest=run_views(connection,store.tables,[latest])[0]
                 saved_steps=list(connection.execute(sa.select(steps).where(steps.c.run_id==latest['id']).order_by(steps.c.id)).mappings())
                 metadata=next(((step['payload'] or {}).get('run_metadata') for step in saved_steps if (step['payload'] or {}).get('run_metadata')),None)
                 result['collection_summary']={**(metadata or {}),'product_id':item_id,'task_id':latest['task_id'],
                     'batch_id':latest['source_run_key'],'status':latest['status'],'started_at':iso_value(latest['started_at']),
                     'finished_at':iso_value(latest['finished_at']),'warnings':latest['warnings'],'error':latest['error'],
-                    'steps':[(step['payload'] or {}).get('record') or {} for step in saved_steps]}
+                    'display':latest['display'],
+                    'steps':[{**((step['payload'] or {}).get('record') or {}),'name':step['module'],'requested':step['requested'],
+                              'status':step['status'],'started_at':iso_value(step['started_at']),
+                              'finished_at':iso_value(step['finished_at']),'continuation_allowed':step['continuation_allowed']} for step in saved_steps]}
             return result
     except sa.exc.SQLAlchemyError as error:
         raise MySQLStorageError(safe_error(error)) from None

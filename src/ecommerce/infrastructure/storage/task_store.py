@@ -50,6 +50,8 @@ class MySQLTaskStore:
         try:
             with self.engine.connect() as connection:
                 rows=[dict(r) for r in connection.execute(statement).mappings()]
+                from ecommerce.infrastructure.storage.collection_lifecycle import task_views
+                rows=task_views(connection,self.tables,rows)
             for row in rows:
                 for key in ('started_at','finished_at','owner_process_started_at'):
                     row[key]=iso_value(row[key])
@@ -110,8 +112,13 @@ class MySQLTaskStore:
                     apply_checkpoint(connection,self.tables,operation['recovery'],task_id)
                 if operation['op'] in {'job_runtime','job_prompt'}:
                     from ecommerce.infrastructure.storage.collection_jobs import apply_runtime
-                    apply_runtime(connection,self.tables,operation)
+                    if task is None or task['finished_at'] is None:
+                        apply_runtime(connection,self.tables,operation)
                 details=dict(operation.get('details') or {})
+                if operation['op']=='finish':
+                    from ecommerce.infrastructure.storage.collection_lifecycle import finish_runs
+                    finalized=finish_runs(connection,self.tables,operation)
+                    if finalized is not None:details['collection_finalization']=finalized
                 details['operation_fingerprint']=digest
                 connection.execute(events.insert(),{'task_id':task_id,'task_sequence':sequence,'event_type':operation['event_type'],
                     'level':operation.get('level','INFO'),'logger_name':operation.get('logger_name'),'step':operation.get('step'),
@@ -139,6 +146,7 @@ class MySQLTaskStore:
             if task['execution_key']!=execution_key or is_alive(task['owner_pid'],task['owner_process_started_at']) is not False:
                 continue
             self.apply_operation({'op':'finish','task_id':task['id'],'event_key':'recovery:'+uuid4().hex,
+                'close_collection_runs':task['name'].startswith('collection.taobao.'),
                 'time':datetime.now(BEIJING).isoformat(),'event_type':'task_recovered','state':'needs_attention','level':'WARNING',
                 'message':'上次执行进程已失效，请核对已完成的页面操作与保存结果后重新运行'})
             recovered+=1

@@ -22,7 +22,7 @@ class JobDatabaseFixture:
             connection.execute('PRAGMA foreign_keys=ON')
         self.tables['task_events'].c.id.type=sa.Integer()
         names=('tasks','task_events','collection_plans','collection_plan_executions','collection_jobs','collection_queue_states','collection_job_controls')
-        self.tables['tasks'].metadata.create_all(self.engine,tables=[self.tables[n] for n in names])
+        self.tables['tasks'].metadata.create_all(self.engine)
         self.store=object.__new__(MySQLTaskStore)
         self.store.engine,self.store.tables,self.store.settings=self.engine,self.tables,settings.mysql
         self.store.initialize=lambda:None

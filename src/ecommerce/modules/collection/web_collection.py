@@ -30,6 +30,19 @@ def plan(settings,product_id):
     return remaining_plan(validate(settings,product_id))
 
 
+def product_status(settings,product_id):
+    """一次只读返回补采计划和核对后的最近运行；参数：配置、商品；返回：进度摘要。"""
+    data=validate(settings,product_id)
+    summary=data.get('detail_summary') or {};run=summary.get('latest_run') or {}
+    view=run.get('display')
+    status=None
+    if view:
+        from ecommerce.infrastructure.storage.collection_queries import public
+        status=public({**view,'label':summary['last_attempt_label'],'task_id':run.get('task_id'),
+                       'started_at':run.get('started_at'),'finished_at':view.get('finished_at')})
+    return {'plan':remaining_plan(data),'run_status':status}
+
+
 def validate(settings, product_id, module=None):
     """校验当前商品和模块；参数：配置、平台商品编号、模块；返回：商品资料。"""
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
@@ -187,12 +200,14 @@ def public_status(settings, row):
     halted=bool(prompt.get('halted'))
     if row.get('dispatch_state') in {'claimed','started'} and not done:
         live=jobs.alive(row)
+        from ecommerce.infrastructure.storage.collection_lifecycle import execution_state
+        checked,reason=execution_state({'status':state},stop_requested=row.get('stop_requested'),alive=live)
         if live is False:
-            state,done,message='interrupted',True,'采集进程已退出；已入库资料保留，可查看恢复计划'
+            state,done,message=checked,True,reason+'已入库资料保留，可查看恢复计划。'
         elif live is None and row.get('owner_pid'):
-            state,message='unverified','无法核实采集进程；请核对进程及日志，不会自动重新采集'
+            state,message=checked,reason+'不会自动重新采集。'
     if not done:
-        if row.get('stop_requested'):
+        if row.get('stop_requested') and state!='unverified':
             state,message='stopping','停止请求已保存，等待执行器确认；对应队列已暂停'
         elif storage_pending:
             state,message='storage_pending','等待数据库确认，可以停止，不能绕过存储暂停'

@@ -30,10 +30,19 @@ def check():
                              captured_at=case.now,price_text='优惠前 ¥3.35 起',sales_text='已售 10万+')
                     case.put('product_current_sections',product_id=1,section='product_info',module='basic_info',batch_id=70)
                     case.put('collection_runs',id=80,product_id=1,status='running',started_at=case.now,task_id=case.task)
+                    import os
+                    from ecommerce.infrastructure.tasks.ownership import process_started_at
+                    from ecommerce.infrastructure.storage.time_values import database_time
+                    with case.engine.begin() as connection:
+                        task_table=case.store.tables['tasks']
+                        connection.execute(task_table.update().where(task_table.c.id==case.task).values(status='running',
+                            owner_pid=os.getpid(),owner_process_started_at=database_time(process_started_at(os.getpid()))))
                     job={'id':'b'*32,'product_id':'123','module':'basic_info','state':'succeeded',
                          'done':True,'valid':True,'mode':'single','batch_id':9999,
                          'result_url':'/collections/products/123?batch=9999','result_label':'查看资料',
                          'logs_url':'/logs?task_id='+('b'*32),'message':'成功长说明：D:/example/raw/source.json'}
+                    run_status={'state':'running','label':'执行中','task_id':case.task,'started_at':'2026-10-31T20:00:00+08:00',
+                                'finished_at':None,'note':'','counts':{'requested':1,'completed':0,'unfinished':1}}
                     page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
                     page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.__copy=text;}}});")
 
@@ -43,7 +52,7 @@ def check():
                         if request.method!='GET' or url.hostname!='127.0.0.1':
                             blocked.append(request.method);route.abort();return
                         payload=None
-                        if url.path=='/api/collections/products/123/jobs':payload={'jobs':[job],'plan':{'modules':[]}}
+                        if url.path=='/api/collections/products/123/jobs':payload={'jobs':[job],'plan':{'modules':[]},'run_status':run_status}
                         elif url.path=='/api/collection-jobs/active':payload={'jobs':[]}
                         elif url.path=='/api/collection-queue':payload={'items':[],'paused':False}
                         elif url.path=='/api/collection-jobs':payload={'jobs':[],'page':1,'pages':1,'total':0,'page_size':20,'status':'all'}
@@ -56,6 +65,14 @@ def check():
                     page.goto('http://127.0.0.1:8000/collections/products/123')
                     expect(page.locator('.pd-overview')).to_contain_text('2/9')
                     expect(page.locator('.pd-overview')).to_contain_text('执行中')
+                    # 既有轮询直接推进页头，不依赖重载页面，也不改变已加载资料来源。
+                    run_status.update(state='stopping',label='正在停止')
+                    expect(page.locator('[data-product-run-state]')).to_have_text('正在停止',timeout=10000)
+                    run_status.update(state='cancelled',label='已停止',finished_at='2026-10-31T20:02:04+08:00',task_id=job['id'])
+                    expect(page.locator('[data-product-run-state]')).to_have_text('已停止',timeout=10000)
+                    expect(page.locator('[data-product-run-end]')).to_have_text('停止于 2026-10-31 20:02:04')
+                    expect(page.locator('[data-product-run-counts]')).to_contain_text('未完成 1 个')
+                    assert ('b'*32) in page.locator('[data-product-run-task]').get_attribute('href')
                     expect(page.locator('[data-title-toggle]')).to_be_visible()
                     page.locator('[data-title-toggle]').click()
                     expect(page.locator('[data-title-toggle]')).to_have_attribute('aria-expanded','true')

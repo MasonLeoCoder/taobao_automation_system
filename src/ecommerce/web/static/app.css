@@ -198,3 +198,6 @@ img[data-image-preview-ready]{cursor:zoom-in}
 .collection-history-controls nav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
 .collection-history-controls nav span{font-size:13px;color:var(--muted)}
 @media(max-width:640px){.collection-history-controls nav{width:100%;margin-left:0;justify-content:space-between}}
+
+/* 任务编号与名称可换行，手机端不撑宽页面。 */
+.task-detail-intro>div{min-width:0}.task-detail-intro h1,.task-detail-intro p{overflow-wrap:anywhere}

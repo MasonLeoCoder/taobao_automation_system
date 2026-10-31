@@ -474,6 +474,7 @@
       if (product) {
         const recent = await api(`/api/collections/products/${product}/jobs`);
         plan = recent.plan || plan;
+        renderProductRun(recent.run_status);
         recent.jobs.forEach(job => tracked.set(job.id,job));
       }
       for (const job of tracked.values()) {
@@ -509,6 +510,39 @@
     } finally {
       busy = false;
       if (refreshAgain) { refreshAgain = false; setTimeout(refresh,0); }
+    }
+  }
+
+  function renderProductRun(status) {
+    // 复用已有轮询，只更新最近任务显示，不切换已加载的历史资料。
+    const root = document.querySelector('[data-product-run]');
+    if (!root || !status) return;
+    const format = value => {
+      if (!value) return '未记录';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '时间待核实';
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).map(part=>[part.type,part.value]));
+      return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+    };
+    const state = root.querySelector('[data-product-run-state]');
+    state.textContent = status.label;
+    state.className = 'ui-report-state ' + (['running','stopping'].includes(status.state) ? 'is-active' : ['failed','complete_with_errors'].includes(status.state) ? 'is-error' : status.state === 'complete' ? 'is-ready' : 'is-pending');
+    root.querySelector('[data-product-run-start]').textContent = `开始于 ${format(status.started_at)}`;
+    const end = root.querySelector('[data-product-run-end]');
+    end.hidden = !status.finished_at;
+    end.textContent = `${status.state === 'cancelled' ? '停止于' : '结束于'} ${format(status.finished_at)}`;
+    const note = root.querySelector('[data-product-run-note]');
+    note.hidden = !status.note; note.textContent = status.note || '';
+    const counts = status.counts || {}, line = root.querySelector('[data-product-run-counts]');
+    line.hidden = ['running','stopping'].includes(status.state) || !counts.requested;
+    line.textContent = `本次请求 ${counts.requested || 0} 个模块：已完成 ${counts.completed || 0} 个，未完成 ${counts.unfinished || 0} 个；已保存资料保留。`;
+    const task = document.querySelector('[data-product-run-task]');
+    if (task) {
+      task.hidden = !/^[a-f0-9]{32}$/.test(status.task_id || '');
+      if (!task.hidden) {
+        const url = new URL(`/tasks/${status.task_id}`,location.href);
+        url.searchParams.set('return_to',location.pathname+location.search);task.href = url.href;
+      }
     }
   }
 

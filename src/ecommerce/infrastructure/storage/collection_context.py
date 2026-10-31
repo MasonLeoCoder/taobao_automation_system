@@ -3,7 +3,7 @@ import sqlalchemy as sa
 
 DETAIL_MODULES = {'basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions'}
 RUN_LABELS = {'complete_with_errors':'已结束，存在模块错误','running':'执行中','complete':'所选模块完成','complete_with_warnings':'所选模块完成（含警告）',
-    'partial':'部分完成','failed':'失败','needs_attention':'待人工处理','interrupted':'已中断','cancelled':'已取消'}
+    'partial':'部分完成','failed':'失败','needs_attention':'待人工处理','interrupted':'已中断','cancelled':'已停止','stopping':'正在停止','unverified':'状态待核实'}
 
 
 def detail_summary(connection,tables,product_id):
@@ -14,6 +14,8 @@ def detail_summary(connection,tables,product_id):
     valid=list(connection.execute(sa.select(cur.c.module).join(b,b.c.id==cur.c.batch_id).where(
         cur.c.product_id==product_id,published).distinct()).scalars())
     latest=connection.execute(sa.select(r).where(r.c.product_id==product_id).order_by(r.c.started_at.desc(),r.c.id.desc()).limit(1)).mappings().first()
+    from ecommerce.infrastructure.storage.collection_lifecycle import run_views
+    latest=run_views(connection,tables,[latest])[0] if latest else None
     entry=connection.execute(sa.select(e.c.captured_at).where(e.c.product_id==product_id,e.c.record_type=='detail_open')
         .order_by(e.c.captured_at.desc(),e.c.id.desc()).limit(1)).first()
     captured=connection.scalar(sa.select(sa.func.max(b.c.captured_at)).where(published))
@@ -22,7 +24,7 @@ def detail_summary(connection,tables,product_id):
         '尚无已保存详情内容' if latest else '暂无详情资料')
     return {'modules':modules,'valid_modules':valid,'label':label,'has_content':bool(modules),
         'has_detail_activity':bool(modules or entry or latest),'latest_run':dict(latest or {}),
-        'last_attempt_label':RUN_LABELS.get(latest['status'],latest['status']) if latest else '未记录详情运行',
+        'last_attempt_label':RUN_LABELS.get(latest['display']['state'],latest['display']['state']) if latest else '未记录详情运行',
         'captured_at':captured,'last_attempt_at':latest['started_at'] if latest else captured or (entry[0] if entry else None)}
 
 
@@ -42,8 +44,11 @@ def observation_context(connection,tables,observation,summary=None):
         shared=connection.execute(sa.select(r).where(r.c.product_id==product_id,r.c.task_id==batch[0])
             .order_by(r.c.started_at.desc(),r.c.id.desc()).limit(1)).mappings().first()
     run=exact or shared
+    if run:
+        from ecommerce.infrastructure.storage.collection_lifecycle import run_views
+        run=run_views(connection,tables,[run])[0]
     relation='entry' if exact else 'same_task' if shared else 'other' if summary['has_detail_activity'] else 'none'
     label={'entry':'本位置是详情采集入口','same_task':'同任务已有详情，本位置非确认入口',
         'other':'本次未关联详情，可查看其他时间资料','none':'本次未关联详情，暂无详情资料'}[relation]
     return {'detail_summary':summary,'relation':relation,'relation_label':label,'context_run':dict(run or {}),
-        'execution_label':RUN_LABELS.get(run['status'],run['status']) if run else '未关联详情运行'}
+        'execution_label':RUN_LABELS.get(run['display']['state'],run['display']['state']) if run else '未关联详情运行'}

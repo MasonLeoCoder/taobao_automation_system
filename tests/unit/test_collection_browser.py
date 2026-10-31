@@ -276,6 +276,12 @@ class CollectionBrowserTests(unittest.TestCase):
                  price_text='优惠前 ¥3.35 起',sales_text='已售 10万+',captured_at=self.now)
         self.put('product_current_sections',product_id=1,section='product_info',module='basic_info',batch_id=70)
         self.put('collection_runs',id=80,product_id=1,status='running',started_at=self.now,task_id=self.task)
+        import os
+        from ecommerce.infrastructure.tasks.ownership import process_started_at
+        from ecommerce.infrastructure.storage.time_values import database_time
+        with self.engine.begin() as connection:
+            connection.execute(self.store.tables['tasks'].update().where(self.store.tables['tasks'].c.id==self.task).values(
+                status='running',owner_pid=os.getpid(),owner_process_started_at=database_time(process_started_at(os.getpid()))))
         with self.engine.connect() as conn:
             before=[dict(row) for row in conn.execute(sa.select(self.store.tables['product_info_observations'])).mappings()]
         page=self.client.get('/collections/products/123')
@@ -309,6 +315,22 @@ class CollectionBrowserTests(unittest.TestCase):
         missing=self.client.get('/modules/collection?mode=detail&input=999999')
         self.assertEqual(missing.status_code,200)
         self.assertNotIn('data-reference-product="999999"',missing.text)
+
+    def test_product_status_endpoint_preserves_serialized_timezone(self):
+        """实际查询已序列化时间，轮询接口不重复按datetime转换；参数：无；返回：断言。"""
+        from ecommerce.modules.collection import web_collection
+        self.put('collection_runs',id=80,product_id=1,status='running',started_at=self.now,task_id=self.task)
+        with self.engine.begin() as c:
+            c.execute(self.store.tables['tasks'].update().where(self.store.tables['tasks'].c.id==self.task).values(
+                status='cancelled',finished_at=self.now))
+        self.app.config['SETTINGS']=replace(self.settings,task_backend='mysql')
+        with patch.object(web_collection,'recent',return_value=[]):
+            response=self.client.get('/api/collections/products/123/jobs')
+        self.assertEqual(response.status_code,200)
+        status=response.get_json()['run_status']
+        self.assertEqual(status['state'],'cancelled')
+        self.assertEqual(status['started_at'],'2026-10-25T12:00:00.000000+08:00')
+        self.assertEqual(status['finished_at'],'2026-10-25T12:00:00.000000+08:00')
 
     def test_product_navigation_counts_and_errors_use_effective_scoped_batches(self):
         """失败不伪装为零，旧有效资料与新失败并存，关联范围不借其他运行数量。"""

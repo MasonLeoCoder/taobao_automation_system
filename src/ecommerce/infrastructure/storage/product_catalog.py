@@ -102,9 +102,16 @@ def _decorate(connection,tables,rows):
     by_id={row['id']:row for row in rows}
     from ecommerce.infrastructure.storage.detail_entry_source import attach_detail_entries
     attach_detail_entries(connection,tables,rows)
+    from ecommerce.infrastructure.storage.collection_lifecycle import run_views
+    runs=tables['collection_runs']
+    views=run_views(connection,tables,connection.execute(sa.select(runs).where(runs.c.id.in_([row['run_id'] for row in rows if row['run_id']]))).mappings())
+    states={run['id']:run['display'] for run in views}
     for row in rows:
         row.update(search_keywords=[],thumbnail_candidates=[],thumbnail=None,thumbnail_file=None,thumbnail_message='暂无缩略图',
             remaining_count=9-row['valid_count'],run_label=RUN_LABELS.get(row['run_status'],row['run_status'] or '未记录详情运行'))
+        if row['run_id'] in states:
+            row['run_display']=states[row['run_id']]
+            row['run_label']=RUN_LABELS.get(row['run_display']['state'],row['run_display']['state'])
     sources=connection.execute(sa.select(l.c.product_id,sa.func.nullif(b.c.search_keyword,'')).join(b,b.c.id==l.c.batch_id).where(
         l.c.product_id.in_(by_id),b.c.visibility=='published',b.c.module=='list').distinct().order_by(sa.func.nullif(b.c.search_keyword,''))).all()
     for product_id,keyword in sources:
