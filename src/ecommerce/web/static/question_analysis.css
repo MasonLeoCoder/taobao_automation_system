@@ -15,12 +15,18 @@
 .qa-batch-form>.ui-field{width:min(440px,100%)}.qa-batch-form .ui-field{margin:0}
 .qa-batch-form .ui-field,.qa-batch-form select{min-width:0;max-width:100%}
 .qa-batch-form>[data-qa-batch-pending]{flex-basis:100%;margin:0}
-.qa-collection-actions{display:flex;flex-direction:column;align-items:stretch;gap:8px}
-.qa-workspace .ui-action-menu>div{max-width:calc(100vw - 48px)}
-.qa-main-actions{justify-content:flex-start}.qa-main-actions>p{flex-basis:100%;margin:0}
+.qa-collection-toolbar{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px 24px}
+.qa-collection-toolbar .qa-batch-form{flex:1 1 460px;min-width:0}
+.qa-collection-actions{display:flex;flex:0 0 auto;max-width:100%;flex-wrap:wrap;align-items:center;gap:10px}
+.qa-page-heading h2,.qa-page-heading .module-job-status{margin:0}
+.qa-page-heading .module-job-status{max-width:75%;overflow-wrap:anywhere}
+.qa-analysis-panel,.qa-batch-report{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.qa-analysis-panel>p,.qa-batch-report>p{margin:0;flex:1;min-width:220px}
+.qa-analysis-actions,.qa-batch-report .module-actions{display:flex;flex-wrap:wrap;gap:10px}
 .qa-page-meta{display:flex;flex-direction:column;gap:6px}.qa-page-meta>.ui-advanced-settings{margin:0}
 .qa-list-toolbar{margin:22px 0 16px}.qa-list-toolbar h3{margin:0}.qa-sort-form label{display:flex;align-items:center;gap:8px}
 @media(max-width:600px){.qa-workspace{padding:18px}.qa-batch-form>.ui-field{width:100%}.qa-sort-form{width:100%}.qa-sort-form label{flex:1}.qa-sort-form .ui-select{min-width:0;width:100%}.qa-heading-actions{width:100%}.qa-main-actions .module-actions{gap:8px;flex-wrap:wrap}}
+@media(max-width:760px){.qa-collection-toolbar .qa-batch-form{flex-basis:100%}.qa-collection-actions{width:100%}.qa-analysis-panel>p,.qa-batch-report>p{min-width:0;flex-basis:100%}}
 .qa-reading-page{max-width:1100px;margin:0 auto;padding-top:22px;min-width:0}
 .qa-heading-row{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
 .qa-heading-row h1{margin:8px 0 10px}.qa-heading-row .ui-report-meta{margin:6px 0}

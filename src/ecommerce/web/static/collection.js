@@ -119,7 +119,8 @@
       if (button) button.textContent = '重新采集';
     }
     let logs = actions.querySelector('[data-job-logs]');
-    if (!logs) { logs = link('查看任务日志',job.logs_url); logs.dataset.jobLogs = 'true'; actions.append(logs); }
+    const sameBatch=Number(card.dataset.appliedBatch)===Number(job.batch_id);
+    if (!logs && (!card.hasAttribute('data-preserve-source-links') || sameBatch)) { logs = link(card.hasAttribute('data-preserve-source-links') ? '查看采集日志' : '查看任务日志',job.logs_url); logs.dataset.jobLogs = 'true'; actions.append(logs); }
   }
 
   function cardsFor(job) {

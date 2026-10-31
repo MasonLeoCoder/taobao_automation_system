@@ -46,6 +46,11 @@ class QuestionCardTests(unittest.TestCase):
         body=self.client.get('/collections/products/123?batch=30').text
         self.assertIn('data-collection-actions',body);self.assertIn('data-qa-batch-form',body)
         self.assertEqual(body.count('data-qa-open'),1)
+        self.assertNotIn('更多操作',body)
+        self.assertIn('qa-collection-toolbar',body)
+        self.assertIn('qa-analysis-panel',body)
+        self.assertIn('qa-batch-report',body)
+        self.assertEqual(body.count('module-job-status'),1)
 
     def test_question_read_error_does_not_enable_analysis(self):
         """明细读取异常显示重试，不冒充空数据或提供分析按钮。"""
