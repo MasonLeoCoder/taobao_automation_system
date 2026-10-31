@@ -7,7 +7,7 @@ import unittest
 import sqlalchemy as sa
 
 from ecommerce.modules.collection.queries import query
-from ecommerce.modules.collection.review_view import review_page
+from ecommerce.modules.collection.review_view import review_page,sku_distribution
 from tests.unit import test_collection_browser as fixtures
 
 
@@ -143,6 +143,50 @@ class ProductReviewTests(unittest.TestCase):
         table=self.fixture.store.tables['review_summaries']
         with self.fixture.engine.begin() as c:c.execute(table.update().where(table.c.batch_id==30).values(positive_rate_percent=100))
         self.assertEqual(self.view()['overview']['rate_text'],'100%')
+
+    def test_sku_distribution_uses_entire_batch_not_page_sort_other_batch_or_appends(self):
+        """整批25条为分母，分页/排序/追评及其他批次不改变统计。"""
+        table=self.fixture.store.tables['review_observations']
+        names=['A']*15+['B']*5+[None,'',' \t','C','c']
+        with self.fixture.engine.begin() as conn:
+            for identifier,name in enumerate(names,100):conn.execute(table.update().where(table.c.id==identifier).values(sku_text=name))
+        self.fixture.batch(32,'reviews',product_id=1)
+        self.fixture.put('review_observations',id=300,batch_id=32,position=1,content='不同批次',sku_text='A')
+        first=self.view()['comments'];second=self.view(page=2,sort_by='sku',order='asc')['comments']
+        self.assertEqual(first['sku_distribution'],second['sku_distribution'])
+        data=first['sku_distribution'];self.assertEqual((data['total'],data['sku_count'],data['missing_count']),(25,4,3))
+        self.assertEqual({r['sku']:r['count'] for r in data['rows']},{'A':15,'B':5,None:3,'C':1,'c':1})
+        self.assertEqual(data['rows'][0]['percentage_text'],'60.0%')
+        self.assertEqual(sum(r['count'] for r in data['rows']),first['detail']['total'])
+        self.assertEqual(self.view(reviews_batch=32)['comments']['sku_distribution']['rows'][0]['count'],1)
+
+    def test_sku_grouping_only_trims_edges_and_missing_is_not_literal_label(self):
+        """不合并不同大小写、内部空白、全半角或真实名为未记录规格的SKU。"""
+        raw=[{'sku':name,'count':1} for name in (' A ','A','a','Ａ','A B','AB',None,'\t','未记录规格')]
+        data=sku_distribution(raw)
+        self.assertEqual(data['total'],9);self.assertEqual(data['missing_count'],2)
+        self.assertEqual({r['sku']:r['count'] for r in data['rows']},{'A':2,'a':1,'Ａ':1,'A B':1,'AB':1,None:2,'未记录规格':1})
+        self.assertEqual(raw[0]['sku'],' A ')
+        self.assertEqual(sku_distribution([{'sku':'长尾','count':1},{'sku':'主款','count':20000}])['rows'][1]['percentage_text'],'<0.1%')
+
+    def test_empty_and_missing_sku_have_explicit_results_and_wrong_module_is_rejected(self):
+        """空批次不除零，全部缺规格仍合计100%，错误模块不读取规格。"""
+        self.assertEqual(sku_distribution([]),{'total':0,'sku_count':0,'missing_count':0,'rows':[]})
+        missing=sku_distribution([{'sku':None,'count':3}]);self.assertEqual(missing['rows'][0]['percentage_text'],'100.0%')
+        self.fixture.batch(32,'reviews',product_id=1,status='no_reviews',coverage_status='confirmed_empty')
+        data=self.view(reviews_batch=32)['comments'];self.assertEqual(data['sku_distribution']['total'],0)
+        body=self.client.get('/collections/products/123?module=reviews&reviews_batch=32').get_data(as_text=True)
+        self.assertIn('本批暂无评价可统计',body)
+        with self.assertRaises(ValueError):query(self.settings,'records',batch_id=30,with_sku_counts=True)
+
+    def test_distribution_escapes_sku_text_and_keeps_original_detail_values(self):
+        """统计及明细均按文本展示，展示分组不改原规格字段。"""
+        table=self.fixture.store.tables['review_observations']
+        with self.fixture.engine.begin() as conn:conn.execute(table.update().where(table.c.id==123).values(sku_text=' <script>危险规格</script> '))
+        data=self.view()['comments'];row=next(r for r in data['detail']['records'] if r['id']==123)
+        self.assertEqual(row['sku_text'],' <script>危险规格</script> ')
+        body=self.client.get('/collections/products/123?module=reviews').get_data(as_text=True)
+        self.assertIn('&lt;script&gt;危险规格&lt;/script&gt;',body);self.assertNotIn('<script>危险规格</script>',body)
 
 
 if __name__=='__main__':unittest.main()

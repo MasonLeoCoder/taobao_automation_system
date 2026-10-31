@@ -1,5 +1,6 @@
 """CLI/Web 共用的采集历史查询与执行期有效分区读取。"""
 from datetime import datetime
+from collections import Counter
 from decimal import Decimal
 import copy
 import re
@@ -159,12 +160,12 @@ def _question_answers(connection,tables,batch_id,questions):
         owners[answer['question_id']]['answers'].append(answer)
 
 
-def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False):
-    """查询单批次明细；参数：内部批次、明细种类、分页及可选问题；返回：原范围和观察。"""
+def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False):
+    """查询单批次明细；参数：批次、种类、分页、可选问题及整批规格计数开关；返回：原范围和观察。"""
     _page(after,limit)
     if type(batch_id) is not int or batch_id<=0 or (question_id is not None and (type(question_id) is not int or question_id<=0)):
         raise ValueError('批次及问题编号须为正整数')
-    store=collection_store(settings)
+    store=collection_store(settings);sku_counts=None
     b=store.tables['collection_batches']
     try:
         with store.engine.connect() as connection:
@@ -181,6 +182,11 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 raise ValueError('明细种类与批次模块不一致')
             if kind=='answers' and batch['module']!='questions':
                 raise ValueError('回答只属于问答批次')
+            if with_sku_counts:
+                if kind!='reviews':raise ValueError('评价规格统计只适用于评价明细')
+                # 与当前页共用已核对批次及读事务，只读取全批规格，不受分页/排序/游标影响。
+                counts=Counter(connection.execute(sa.select(table.c.sku_text).where(table.c.batch_id==batch_id)).scalars())
+                sku_counts=[{'sku':name,'count':count} for name,count in counts.items()]
             cursor=table.c.id if 'id' in table.c else table.c.batch_id
             statement=sa.select(table).where(table.c.batch_id==batch_id,cursor>after).order_by(cursor).limit(limit+1)
             if question_id:
@@ -241,6 +247,7 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
         batch.pop('result_payload',None)
         return {'batch':public(batch),'kind':kind,'records':public(rows),'has_more':has_more,
                 'next_cursor':rows[-1]['id' if 'id' in table.c else 'batch_id'] if rows else after,
+                **({'sku_counts':sku_counts} if sku_counts is not None else {}),
                 **(page_info if page is not None else {})}
     except sa.exc.SQLAlchemyError as error:
         raise MySQLStorageError(safe_error(error)) from None

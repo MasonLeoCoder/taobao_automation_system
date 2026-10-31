@@ -110,8 +110,16 @@ img[data-image-preview-ready]{cursor:zoom-in}
 .review-tags{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:14px 0 0}
 .review-tag{display:inline-flex;align-items:center;gap:8px;max-width:100%}
 .review-tag>span:first-child{min-width:0;overflow-wrap:anywhere}.review-tag-count{flex-shrink:0}
+.review-detail-heading,.review-detail-toolbar,.review-analysis-panel,.review-batch-result{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.review-detail-heading h2,.review-detail-heading .module-job-status{margin:0}.review-detail-heading .module-job-status{max-width:100%;overflow-wrap:anywhere}
+.review-detail-toolbar{align-items:flex-end;margin:20px 0 12px}.review-detail-toolbar .review-selection{flex:1;min-width:0;margin:0}.review-detail-toolbar .review-selection .ui-field{width:360px;max-width:100%;min-width:0}.review-detail-toolbar .module-actions{margin:0}
+.review-detail-meta{margin:0 0 10px}.review-detail-scope{margin-bottom:18px}.review-sku-distribution{margin:18px 0}.review-sku-scroll{max-height:360px;overflow:auto}.review-sku-table{width:100%;table-layout:fixed}.review-sku-count-col{width:100px}.review-sku-percent-col{width:90px}
+.review-analysis-panel{margin:18px 0 14px}.review-analysis-panel p,.review-batch-result p{flex:1;min-width:160px;margin:0}.review-analysis-panel .module-actions,.review-batch-result .module-actions{margin:0}.review-batch-result{margin:0 0 20px}
+@media(max-width:700px){.review-detail-toolbar{align-items:flex-start;flex-direction:column;gap:12px}.review-detail-toolbar .review-selection{width:100%;flex:initial;flex-wrap:nowrap}.review-detail-toolbar .review-selection .ui-field{flex:1;width:auto}.review-detail-toolbar .review-selection select{min-width:0}.review-detail-toolbar .module-actions{width:100%;flex-wrap:wrap}.review-sku-count-col{width:76px}.review-sku-percent-col{width:66px}}
 @media(max-width:700px){.review-overview-toolbar{align-items:flex-start;flex-direction:column;gap:12px}.review-overview-toolbar .review-selection{width:100%;flex:initial;flex-wrap:nowrap}.review-overview-toolbar .review-selection .ui-field{flex:1;width:auto}.review-overview-toolbar .review-selection select{min-width:0}.review-overview-toolbar .module-actions{width:100%;flex-wrap:wrap}.review-overview-metrics{gap:10px}}
 @media(max-width:360px){.review-overview-metrics{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){#review-comments{padding:18px}.review-sku-count-col{width:70px}.review-sku-percent-col{width:60px}}
+@media(max-width:360px){.review-detail-toolbar .review-selection{flex-wrap:wrap}.review-detail-toolbar .review-selection .ui-field{flex:0 0 100%;width:100%}}
 .review-comment-table{table-layout:fixed;min-width:860px}
 .review-order-col{width:70px}.review-author-col{width:110px}.review-sku-col{width:20%}.review-date-col{width:140px}
 .review-comment-table td{vertical-align:top;overflow-wrap:anywhere}

@@ -1,5 +1,6 @@
 """合并读取商品评价资料，保持概览、明细各自批次和来源边界。"""
-from decimal import Decimal,InvalidOperation
+from collections import Counter
+from decimal import Decimal,InvalidOperation,ROUND_HALF_UP
 
 from ecommerce.modules.collection.queries import query
 from ecommerce.modules.collection.media_view import media_preview
@@ -51,6 +52,21 @@ def _review(row):
             'media':main,'appends':appends}
 
 
+def sku_distribution(counts):
+    """按原规格及全批评价条数统计占比；参数：原规格计数；返回：仅展示用分布，不计追评。"""
+    combined=Counter()
+    for row in counts:
+        name=(row['sku'] or '').strip() or None
+        combined[name]+=row['count']
+    total=sum(combined.values());rows=[]
+    for name,count in sorted(combined.items(),key=lambda item:(-item[1],item[0] is None,item[0] or '')):
+        percent=Decimal(count)*100/total if total else Decimal(0)
+        shown=percent.quantize(Decimal('0.1'),rounding=ROUND_HALF_UP)
+        rows.append({'sku':name,'label':name if name is not None else '未记录规格','missing':name is None,
+                     'count':count,'percentage_text':'<0.1%' if count and shown==0 else str(shown)+'%'})
+    return {'total':total,'sku_count':sum(name is not None for name in combined),'missing_count':combined.get(None,0),'rows':rows}
+
+
 def review_page(settings,data,*,summary_batch=0,reviews_batch=0,page=1,sort_by=None,order=None):
     """读取同商品的两份评价资料；参数：配置、商品上下文及独立选择；返回：合并展示视图。"""
     selected,history=_batch(data,'review_summary',summary_batch)
@@ -69,8 +85,8 @@ def review_page(settings,data,*,summary_batch=0,reviews_batch=0,page=1,sort_by=N
         'tags':_tags(summary)}
     selected,history=_batch(data,'reviews',reviews_batch)
     spec=sorting(sort_by,order,{'position','content','author','sku','date','captured_at'},'date','desc')
-    detail=query(settings,'records',batch_id=selected['id'],page=page,sort_by=spec['sort'],order=spec['order'],with_context=True) if selected else {
+    detail=query(settings,'records',batch_id=selected['id'],page=page,sort_by=spec['sort'],order=spec['order'],with_context=True,with_sku_counts=True) if selected else {
         'records':[],**pagination(0,page),'sort_spec':spec}
     detail['records']=[_review(row) for row in detail['records']]
-    comments={'selected':selected,'history':history,'detail':detail}
+    comments={'selected':selected,'history':history,'detail':detail,'sku_distribution':sku_distribution(detail.pop('sku_counts',[]))}
     return {'overview':overview,'comments':comments}

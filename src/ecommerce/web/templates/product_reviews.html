@@ -32,21 +32,39 @@
 {% else %}<p class="review-empty">{{ '本次关联运行尚未保存评价概览，可选择历史资料。' if context_run else '尚无有效评价概览，可采集或选择历史资料。' }}</p>{% endif %}
 </section>
 <section class="panel review-section" id="review-comments" data-hide-success-result data-collection-module="reviews" data-latest-batch="{{ comments.history[0].id if comments.history else 0 }}">
-<h2>评价明细</h2>
-<div class="review-comment-actions">
+{% set comments_complete=comments.selected and comments.selected.status in ['complete','no_reviews'] %}
+<div class="review-detail-heading"><h2>评价明细</h2><p class="module-job-status ui-report-state {{ 'is-ready' if comments_complete else 'is-pending' if comments.selected else 'is-muted' }}" data-compact-success role="status" aria-live="polite">{{ '已确认无评价' if comments.selected and comments.selected.status=='no_reviews' else '采集完成' if comments_complete else '资料待确认' if comments.selected else '暂无明细资料' }}</p></div>
+<div class="review-detail-toolbar">
+{{ selection_form(comments,'reviews','reviews_batch','page','review-comments') }}
 {{ module_actions(comments,'reviews','明细',false) }}
+</div>
+{% if comments.selected %}
+<p class="ui-report-meta review-detail-meta">当前批次 {{ comments.selected.id }} · 明细采集时间：{{ comments.selected.captured_at|full_local_time }} · 本批已保存 {{ comments.detail.total }} 条，不代表平台全部评价。</p>
+{% if comments_complete %}{% set detail_scope=batch_scope_text(dict(comments.selected,record_counts={})) %}{% if detail_scope %}<p class="ui-report-meta review-detail-scope">{{ detail_scope }}</p>{% endif %}
+{% else %}<div class="review-detail-scope">{{ scope(comments.selected) }}</div>{% endif %}
+{% if context_run and comments.selected.run_id!=context_run %}<p class="provenance-warning">已手动切换历史明细，本批次不属于上方关联运行。</p>{% endif %}
+{% set distribution=comments.sku_distribution %}
+<details class="ui-report-fold ui-compact-fold review-sku-distribution">
+  <summary>本批评价的 SKU 分布 <small>共{{ distribution.total }}条评价</small></summary>
+  <div class="ui-report-fold-body">
+    <p>按本批全部评价的商品规格分组，不代表销量或平台全部评价；追评不重复计数。</p>
+    {% if distribution.rows %}
+    <div class="table-wrap review-sku-scroll" role="region" aria-label="本批SKU评价分布，可滚动查看全部规格" tabindex="0"><table class="ui-distribution-table review-sku-table"><colgroup><col><col class="review-sku-count-col"><col class="review-sku-percent-col"></colgroup><thead><tr><th scope="col">商品规格</th><th scope="col">评价条数</th><th scope="col">占比</th></tr></thead><tbody>
+    {% for row in distribution.rows %}<tr><td>{{ row.label }}</td><td><strong>{{ row.count }}</strong> 条</td><td>{{ row.percentage_text }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="ui-report-meta">共{{ distribution.sku_count }}种已记录规格{% if distribution.missing_count %}，{{ distribution.missing_count }}条未记录规格{% endif %}。占比四舍五入，合计可能存在微小误差。</p>
+    {% else %}<p>本批暂无评价可统计。</p>{% endif %}
+  </div>
+</details>
+{% endif %}
+<div class="ui-source-card review-analysis-panel">
+<p class="ui-form-note">{% if comments.selected %}分析范围：当前列表全部 {{ comments.detail.total }} 条评价，包含所有分页。{% else %}先采集评价或选择明细资料后可启动分析。{% endif %}</p>
 <div class="module-actions review-analysis-actions">
 {% if comments.selected and comments.detail.total and comments.selected.status=='complete' %}<a class="ui-button ui-primary" data-review-analysis="start" href="{{ url_for('review_analysis.new',product=product.platform_product_id,batch=comments.selected.id) }}">分析评价</a>{% else %}{{ control_button('分析评价',{'type':'button','disabled':true}) }}{% endif %}
 <a class="ui-button ui-secondary" data-review-analysis="history" href="{{ url_for('review_analysis.index',product=product.platform_product_id,batch=comments.selected.id if comments.selected else none) }}">查看分析记录</a>
 </div></div>
-<p class="module-job-status" role="status" aria-live="polite"></p>
-{% if comments.selected %}<p>分析范围：当前列表全部 {{ comments.detail.total }} 条评价，包含所有分页。</p>
-<p data-ra-batch-summary="{{ url_for('review_analysis.batch_summary',product=product.platform_product_id,batch=comments.selected.id) }}" role="status" aria-live="polite">正在读取本批分析记录…</p><div data-ra-batch-links class="module-actions"></div>
-{% else %}<p>先采集评价或选择明细资料后可启动分析。</p>{% endif %}
-{{ selection_form(comments,'reviews','reviews_batch','page','review-comments') }}
+{% if comments.selected %}<div class="ui-report-overview review-batch-result"><p data-ra-batch-summary="{{ url_for('review_analysis.batch_summary',product=product.platform_product_id,batch=comments.selected.id) }}" role="status" aria-live="polite">正在读取本批分析记录…</p><div data-ra-batch-links class="module-actions"></div></div>{% endif %}
 {% if comments.selected %}
-<p>{{ scope(comments.selected) }} · 批次 {{ comments.selected.id }}<br>明细采集时间：{{ comments.selected.captured_at|full_local_time }} · 本批已保存 {{ comments.detail.total }} 条，不代表平台全部评价。</p>
-{% if context_run and comments.selected.run_id!=context_run %}<p class="provenance-warning">已手动切换历史明细，本批次不属于上方关联运行。</p>{% endif %}
 <div class="table-wrap"><table class="review-comment-table"><colgroup><col class="review-order-col"><col class="review-author-col"><col><col class="review-sku-col"><col class="review-date-col"></colgroup><thead><tr>{{ sort_header('position','顺序',comments.detail.sort_spec,review_parameters) }}{{ sort_header('author','用户',comments.detail.sort_spec,review_parameters) }}{{ sort_header('content','评价内容',comments.detail.sort_spec,review_parameters) }}{{ sort_header('sku','商品规格',comments.detail.sort_spec,review_parameters) }}{{ sort_header('date','评价时间',comments.detail.sort_spec,review_parameters) }}</tr></thead><tbody>
 {% for item in comments.detail.records %}<tr data-review-id="{{ item.id }}"><td>{{ item.position }}</td><td>{{ item.author or '用户未记录' }}</td><td>
 <div class="review-body"><div id="review-text-{{ item.id }}" class="review-text">{{ item.content or '未记录评价文字' }}</div>{{ control_button("展开全文", {"type": "button", "class": "button action-button action-neutral review-toggle", "aria-expanded": "false", "aria-controls": ("review-text-" ~ (item.id)), "hidden": true}) }}</div>
