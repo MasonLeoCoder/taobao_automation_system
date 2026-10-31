@@ -26,15 +26,36 @@ def check():
                         base=f'http://127.0.0.1:{server.server_port}'
                         page.goto(base+'/collections/products/123?module=questions&batch=6');page.locator('[data-qa-open]').click()
                         dialog=page.locator('#question-analysis-dialog');expect(dialog).to_be_visible();expect(dialog.locator('[data-qa-form]')).to_be_visible()
-                        expect(dialog.get_by_text('2 个问题 · 1 条已采集回答')).to_be_visible()
+                        expect(dialog.locator('.ui-source-count strong').nth(0)).to_have_text('2')
+                        expect(dialog.locator('.ui-source-count strong').nth(1)).to_have_text('1')
+                        assert not dialog.locator('[data-qa-advanced]').evaluate('(element)=>element.open')
                         dialog.locator('button[type=submit]').click();assert not repository.history(case.settings,'123',6,analysis_type='questions')
                         # 修改模型后重新规划，公共下拉保留搜索和原生值。
+                        dialog.locator('input[name=allow_paid]').check()
                         dialog.locator('select[name=model]').select_option('deepseek-v4-pro',force=True)
                         expect(dialog.locator('select[name=model]')).to_have_value('deepseek-v4-pro')
                         expect(dialog.locator('button[type=submit]')).to_be_enabled()
+                        expect(dialog.locator('input[name=allow_paid]')).not_to_be_checked()
                         assert page.locator('main').count()==1
                         page.screenshot(path=str(output/f'dialog-{width}.png'))
                         dialog.get_by_role('button',name='关闭',exact=True).click()
+                        # 记录页也在当前页打开同一套弹窗，预览滚动不带走底部操作。
+                        page.goto(base+'/analysis/questions/products/123?batch=6')
+                        expect(page.get_by_text('本批尚未分析，点击上方“分析问答”生成报告。')).to_be_visible()
+                        page.locator('[data-qa-open]').click();expect(dialog.locator('[data-qa-form]')).to_be_visible()
+                        assert page.url==base+'/analysis/questions/products/123?batch=6'
+                        dialog.locator('details').first.locator('summary').click()
+                        dialog.locator('.ui-confirm-body').evaluate('(element)=>element.scrollTop=element.scrollHeight')
+                        expect(dialog.locator('button[type=submit]')).to_be_in_viewport()
+                        expect(dialog.get_by_role('button',name='关闭',exact=True)).to_be_in_viewport()
+                        page.route('**/api/analysis/questions/products/123',lambda route:route.fulfill(status=400,content_type='application/json',body='{"error":"测试错误：请重新核对计划"}'))
+                        dialog.locator('input[name=allow_paid]').check()
+                        dialog.locator('button[type=submit]').click()
+                        expect(dialog.locator('[data-qa-feedback]')).to_have_text('测试错误：请重新核对计划')
+                        expect(dialog.locator('button[type=submit]')).to_be_enabled()
+                        page.unroute('**/api/analysis/questions/products/123')
+                        page.screenshot(path=str(output/f'history-dialog-{width}.png'))
+                        dialog.get_by_role('button',name='取消',exact=True).click();expect(dialog).not_to_be_visible()
                         identifier=case.create_qa();data=service.preview(case.settings,'123',6);client=Mock();client.complete_messages.return_value={'text':sample_report(data['items']),'finish_reason':'stop','usage':{'total_tokens':10}}
                         runtime.execute(case.settings,identifier,Mock(),Mock(return_value=client))
                         page.goto(base+'/analysis/questions/tasks/'+identifier)

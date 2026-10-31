@@ -1,7 +1,8 @@
-/* 问答页面只维护间距、换行和滚动；外观由公共组件负责。 */
-[data-qa-form]{display:flex;flex-direction:column;gap:18px;min-width:0}
-[data-qa-form]>p{margin:0;overflow-wrap:anywhere}
-.qa-modal-content{padding:24px;overflow-y:auto}
-[data-qa-form] .ui-choice-row{display:flex;align-items:flex-start;gap:10px;line-height:1.7}
-[data-qa-form] .ui-choice-row input{flex-shrink:0}
-@media(max-width:600px){.qa-modal-content{padding:18px}[data-qa-form]{gap:16px}}
+/* 问答仅维护布局；外观复用全站确认表单与弹窗组件。 */
+[data-qa-form]{min-width:0}
+.qa-modal-content{padding:0;overflow:hidden}
+.qa-source-counts{display:flex;flex-wrap:wrap;gap:12px 32px}
+[data-qa-feedback]{overflow-wrap:anywhere}
+[data-qa-feedback]:empty{display:none}
+[data-qa-choice] .module-actions{flex-wrap:wrap;gap:10px}
+.qa-history-table{min-width:620px}

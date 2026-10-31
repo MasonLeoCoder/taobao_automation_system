@@ -91,6 +91,13 @@ class QuestionTests(TestCase):
             page=self.client.get('/analysis/questions/products/123/new?batch=6'+suffix)
             self.assertEqual(page.status_code,200);self.assertIn('data-qa-form',page.text)
         self.assertEqual(self.client.get('/analysis/questions/products/123?batch=6').status_code,200)
+        history=self.client.get('/analysis/questions/products/123?batch=6').text
+        self.assertIn('data-qa-open',history)
+        self.assertIn('本批尚未分析',history)
+        form=self.client.get('/analysis/questions/products/123/new?batch=6&dialog=1').text
+        self.assertIn('ui-confirm-footer',form)
+        self.assertIn('data-qa-cancel',form)
+        self.assertNotIn('data-qa-advanced open',form)
 
     def test_long_answer_fragments_preserve_full_text(self):
         """单题分片保持问题语境及回答编号，不丢字或改写。"""

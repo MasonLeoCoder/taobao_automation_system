@@ -8,28 +8,33 @@
   const configure = (container) => {
     const form = container.querySelector('[data-qa-form]'); if (!form) return;
     let choice=false, busy=false, revision=0;
+    const close=()=>{const dialog=form.closest('dialog');if(dialog)dialog.close();else location.href='/collections/products/'+location.pathname.split('/')[4]+'?module=questions&batch='+form.dataset.batch;};
+    form.querySelector('[data-qa-cancel]').addEventListener('click',close);
+    const revealInvalid=()=>{form.querySelectorAll('details').forEach(detail=>{if(detail.querySelector(':invalid'))detail.open=true;});};
     const feedback=form.querySelector('[data-qa-feedback]'), force=form.querySelector('[data-qa-force]');
     const submit=async (fresh=false) => {
-      if (busy || !form.reportValidity()) return;
-      busy=true;feedback.textContent='正在核对发送计划…';
+      if(busy)return;revealInvalid();if(!form.reportValidity())return;
+      busy=true;feedback.textContent='正在创建任务…';
       form.querySelector('button[type="submit"]').disabled=true;force.disabled=true;
       try {
         const data=await post(form.dataset.url,{batch_id:Number(form.dataset.batch),model:form.elements.model.value,output_tokens:Number(form.elements.output_tokens.value),input_hash:form.dataset.inputHash,plan_hash:form.dataset.planHash,allow_paid:form.elements.allow_paid.checked,force:fresh});
         if (!data.choice_required) {location.href=data.url;return;}
-        choice=true;feedback.textContent=data.message;force.hidden=false;
+        choice=true;feedback.textContent=data.message;force.hidden=false;form.querySelector('[data-qa-choice]').hidden=false;force.scrollIntoView({block:'nearest'});
         const existing=form.querySelector('[data-qa-existing]');existing.href=data.url;existing.hidden=false;
-      } catch(error) {choice=false;force.hidden=true;feedback.textContent=error.message;}
+      } catch(error) {choice=false;force.hidden=true;form.querySelector('[data-qa-choice]').hidden=true;feedback.textContent=error.message;}
       finally {busy=false;form.querySelector('button[type="submit"]').disabled=false;force.disabled=false;}
     };
     form.addEventListener('submit',event=>{event.preventDefault();submit();});
+    form.addEventListener('invalid',revealInvalid,true);
     force.addEventListener('click',()=>{if(choice)submit(true);});
     form.addEventListener('change',async event=>{
       if (!['model','output_tokens'].includes(event.target.name)) return;
       const currentRevision=++revision;
+      form.elements.allow_paid.checked=false;form.querySelector('[data-qa-choice]').hidden=true;
       const url=new URL(form.dataset.url.replace('/api/','/').replace(/\/$/, '')+'/new',location.origin);
       url.search=new URLSearchParams({batch:form.dataset.batch,model:form.elements.model.value,output_tokens:form.elements.output_tokens.value,dialog:'1'});
       form.querySelector('button[type="submit"]').disabled=true;force.hidden=true;
-      try {const response=await fetch(url);if(!response.ok)throw new Error('计划无法生成，请刷新并调整模型或输出上限。');const markup=await response.text();if(currentRevision!==revision)return;container.innerHTML=markup;configure(container);}
+      try {const response=await fetch(url);if(!response.ok)throw new Error('计划无法生成，请刷新并调整模型或输出上限。');const markup=await response.text();if(currentRevision!==revision)return;const advanced=form.querySelector('[data-qa-advanced]').open;container.innerHTML=markup;container.querySelector('[data-qa-advanced]').open=advanced;configure(container);}
       catch(error){if(currentRevision===revision)feedback.textContent=error.message;}
     });
   };
@@ -37,7 +42,7 @@
   if(document.querySelector('[data-qa-form]')&&!document.querySelector('[data-qa-container]'))configure(document);
   document.querySelectorAll('[data-qa-open]').forEach(link=>link.addEventListener('click',async event=>{
     event.preventDefault();let dialog=document.getElementById('question-analysis-dialog');
-    if(!dialog){dialog=document.createElement('dialog');dialog.id='question-analysis-dialog';dialog.className='ui-modal';dialog.innerHTML='<header class="ui-modal-header"><h2>分析问答</h2><button type="button" class="ui-button ui-secondary" aria-label="关闭">关闭</button></header><div class="ui-modal-content qa-modal-content" data-qa-container></div>';document.body.append(dialog);dialog.querySelector('button').onclick=()=>dialog.close();}
+    if(!dialog){dialog=document.createElement('dialog');dialog.id='question-analysis-dialog';dialog.className='ui-modal';dialog.setAttribute('aria-labelledby','qa-dialog-title');dialog.innerHTML='<header class="ui-modal-header"><div><p class="ui-modal-eyebrow">竞品研究 · 问大家</p><h2 id="qa-dialog-title">分析问答</h2><p>确认本批资料与分析设置，生成选品参考报告。</p></div><button type="button" class="ui-button ui-secondary ui-modal-close" aria-label="关闭">×</button></header><div class="ui-modal-content qa-modal-content" data-qa-container></div>';document.body.append(dialog);dialog.querySelector('button').onclick=()=>dialog.close();}
     const container=dialog.querySelector('[data-qa-container]');container.textContent='正在读取本批问答及发送计划…';dialog.showModal();
     try {const url=new URL(link.href);url.searchParams.set('dialog','1');const response=await fetch(url);if(!response.ok)throw new Error('无法读取分析计划，请打开分析页面核对。');container.innerHTML=await response.text();configure(container);}
     catch(error){container.textContent=error.message;}
