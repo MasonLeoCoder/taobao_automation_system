@@ -31,8 +31,25 @@ def module(key: str):
         abort(404)
     from ecommerce.modules.collection.web_collection import MODULES
     settings=current_app.config['SETTINGS']
+    # 从商品页进入范围选择时只读现有资料，陌生商品不伪造历史。
+    import re
+    from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+    from ecommerce.modules.collection.product_view import module_summaries
+    from ecommerce.modules.collection.queries import query
+    reference_product=request.args.get('input','')
+    reference=None
+    reference_error=False
+    if settings.collection_backend=='mysql' and re.fullmatch('[1-9][0-9]{0,24}',reference_product):
+        try:
+            data=query(settings,'browse_product',product_id=reference_product)
+            reference=module_summaries(data,data['history'])
+        except LookupError:
+            pass
+        except MySQLStorageError:
+            reference_error=True
     return render_template('collection_start.html',active=key,features=FEATURES,shop_name=settings.shop_name,
-        modules=MODULES,enabled=settings.task_backend=='mysql' and settings.collection_backend=='mysql')
+        modules=MODULES,enabled=settings.task_backend=='mysql' and settings.collection_backend=='mysql',
+        module_reference=reference,reference_product=reference_product,reference_error=reference_error)
 
 
 @pages.get("/api/status")
@@ -312,10 +329,12 @@ def collection_product(product_id):
     from ecommerce.web.navigation import safe_return
     settings=current_app.config['SETTINGS']
     from ecommerce.modules.collection.web_collection import remaining_plan
+    from ecommerce.modules.collection.product_view import module_summaries
     return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
-        back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),**data)
+        back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
+        module_summaries=module_summaries(data,display_history,context_run),**data)
 
 
 @pages.get('/collections/searches/<task_id>')

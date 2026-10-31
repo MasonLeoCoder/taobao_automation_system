@@ -96,6 +96,23 @@
       if (confirmed) status.textContent = '采集完成';
       status.classList.remove('is-ready','is-pending','is-active','is-error','is-muted');
       status.classList.add(confirmed ? 'is-ready' : job.state === 'failed' ? 'is-error' : job.done || job.halted ? 'is-pending' : 'is-active');
+      const note = card.querySelector('[data-success-note]');
+      if (note) {
+        note.hidden = !confirmed;
+        note.querySelector('[data-success-message]').textContent = confirmed ? job.message : '';
+      }
+    }
+    // 已加载基本信息的原批次/日志固定；新任务进度不能改写历史资料入口。
+    if (card.hasAttribute('data-fixed-source')) {
+      const runtimeLogs = card.querySelector('[data-runtime-logs]');
+      const sourceLogs = card.querySelector('[data-source-logs]');
+      const sourceTask = sourceLogs && new URL(sourceLogs.href).searchParams.get('task_id');
+      const runtimeTask = job.logs_url && new URL(job.logs_url,location.href).searchParams.get('task_id');
+      if (runtimeLogs) {
+        runtimeLogs.hidden = !job.logs_url || Boolean(sourceTask && sourceTask === runtimeTask);
+        if (job.logs_url) runtimeLogs.href = job.logs_url;
+      }
+      return;
     }
     const actions = card.querySelector('[data-collection-actions]') || card.querySelector('.module-actions');
     let result = actions.querySelector('[data-job-result]');
@@ -202,7 +219,7 @@
       const count = currentPlan ? currentPlan.modules.length : Number(button.dataset.remainingCount);
       button.dataset.remainingCount = String(count);
       button.disabled = submitting || !stateKnown || count === 0;
-      button.textContent = current?.mode === 'remaining' && current.product_id === id ? '正在采集所有…' : count ? (button.dataset.product ? `补采未完成模块（${count}）` : `采集所有（剩余 ${count} 项）`) : '已全部采集';
+      button.textContent = current?.mode === 'remaining' && current.product_id === id ? '正在补采未完成模块…' : count ? (button.dataset.product || button.hasAttribute('data-detail-plan') ? `补采未完成模块（${count}）` : `采集所有（剩余 ${count} 项）`) : button.hasAttribute('data-detail-plan') ? '所选模块无需补采' : '已全部采集';
     });
     // 一项模块只展示最新任务，批量结果与旧单模块任务不会互相覆盖。
     const latest = new Map();
@@ -557,11 +574,16 @@
     get('select-all').addEventListener('click',() => { const selected = modules.every(node => node.checked); modules.forEach(node => node.checked = !selected); update(); });
     form.addEventListener('input',update); form.addEventListener('change',update);
     const parameters = new URLSearchParams(location.search);
+    const updateSourceReference = () => document.querySelectorAll('[data-module-source-info]').forEach(node => {
+      node.hidden = get('input').value.trim() !== node.dataset.referenceProduct;
+    });
+    get('input').addEventListener('input',updateSourceReference);
     if (parameters.get('mode') === 'detail' || parameters.has('input')) {
       mode = 'detail'; get('input').value = parameters.get('input') || '';
       const selected = parameters.get('modules');
       if (selected && modules.some(node => node.value === selected)) modules.forEach(node => node.checked = node.value === selected);
     }
+    updateSourceReference();
     form.addEventListener('submit',async event => {
       event.preventDefault();
       if (submitting || !stateKnown) return;

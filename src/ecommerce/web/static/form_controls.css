@@ -305,3 +305,9 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-action-menu-secondary>summary{background:var(--control-surface);color:var(--control-label);border:1px solid var(--control-border)}
 .qa-workspace select.ui-control{overflow:hidden;text-overflow:ellipsis}
 .ui-report-source-link{color:var(--control-accent);text-decoration:underline;text-underline-offset:3px}
+/* 商品资料页公共标题、导航数量与紧凑指标，页面文件只安排位置。 */
+.ui-product-title{font-size:clamp(22px,2vw,29px);line-height:1.5;letter-spacing:0;overflow-wrap:anywhere;margin:0 0 10px}
+.ui-product-title.is-collapsed{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ui-module-count{font-size:10px;line-height:1.7;padding:0 6px;border-radius:5px;background:var(--control-surface-soft);color:var(--control-label);font-weight:500;font-variant-numeric:tabular-nums}
+.ui-summary-metric dd.ui-product-value{font-size:clamp(19px,1.8vw,27px);line-height:1.5;letter-spacing:0;overflow-wrap:anywhere}.ui-summary-metric dd.ui-product-time{font-size:18px}
+.collection-check .ui-collection-source-note{display:block;margin-top:5px;font-size:11px;font-weight:400;line-height:1.65;color:var(--control-label);overflow-wrap:anywhere}

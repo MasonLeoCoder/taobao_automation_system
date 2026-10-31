@@ -269,6 +269,69 @@ class CollectionBrowserTests(unittest.TestCase):
         self.assertEqual(absent['title'],'样例')
         self.assertEqual(absent['price_text'],'9元')
 
+    def test_product_overview_separates_coverage_running_and_fixed_basic_source(self):
+        """已有基本信息与新运行独立，入口固定来源且读取不改原数据；参数：无；返回：断言。"""
+        self.batch(70,'basic_info',product_id=1)
+        self.put('product_info_observations',id=70,batch_id=70,title='详情原始标题',shop_name='详情店铺',
+                 price_text='优惠前 ¥3.35 起',sales_text='已售 10万+',captured_at=self.now)
+        self.put('product_current_sections',product_id=1,section='product_info',module='basic_info',batch_id=70)
+        self.put('collection_runs',id=80,product_id=1,status='running',started_at=self.now,task_id=self.task)
+        with self.engine.connect() as conn:
+            before=[dict(row) for row in conn.execute(sa.select(self.store.tables['product_info_observations'])).mappings()]
+        page=self.client.get('/collections/products/123')
+        self.assertEqual(page.status_code,200)
+        self.assertIn('2/9',page.text)
+        self.assertIn('执行中',page.text)
+        self.assertIn('资料已保存',page.text)
+        self.assertIn('优惠前 ¥3.35 起',page.text)
+        self.assertIn('data-fixed-source',page.text)
+        self.assertIn('data-source-logs href="/logs?task_id='+self.task,page.text)
+        self.assertIn('批次 70',page.text)
+        self.assertNotIn('已全部采集',page.text)
+        self.assertNotIn('<h1><script>',page.text)
+        self.assertIn('data-copy-target="product-platform-id"',page.text)
+        configuration=self.client.get('/modules/collection?mode=detail&input=123&modules=basic_info')
+        self.assertEqual(configuration.status_code,200)
+        self.assertIn('data-reference-product="123"',configuration.text)
+        self.assertIn('新建批次并保留历史',configuration.text)
+        with self.engine.connect() as conn:
+            after=[dict(row) for row in conn.execute(sa.select(self.store.tables['product_info_observations'])).mappings()]
+        self.assertEqual(before,after)
+
+    def test_product_scope_reference_read_failure_does_not_fabricate_zero_counts(self):
+        """参考读取失败明确提示，陌生商品不套用其他商品资料；参数：无；返回：断言。"""
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        with patch('ecommerce.modules.collection.queries.query',side_effect=MySQLStorageError('模拟读取异常')):
+            page=self.client.get('/modules/collection?mode=detail&input=123')
+        self.assertEqual(page.status_code,200)
+        self.assertIn('历史资料暂时无法读取',page.text)
+        self.assertNotIn('data-reference-product="123"',page.text)
+        missing=self.client.get('/modules/collection?mode=detail&input=999999')
+        self.assertEqual(missing.status_code,200)
+        self.assertNotIn('data-reference-product="999999"',missing.text)
+
+    def test_product_navigation_counts_and_errors_use_effective_scoped_batches(self):
+        """失败不伪装为零，旧有效资料与新失败并存，关联范围不借其他运行数量。"""
+        from ecommerce.modules.collection.product_view import module_summaries
+        self.batch(90,'parameters',product_id=1,status='failed',captured_at=datetime(2026,10,26))
+        self.batch(91,'video',product_id=1,status='no_video')
+        self.put('product_current_sections',product_id=1,section='video',module='video',batch_id=91)
+        data=browse(self.settings,'product',product_id='123')
+        values=module_summaries(data,data['history'])
+        self.assertEqual(values['parameters']['count'],2)
+        self.assertEqual(values['parameters']['latest']['id'],90)
+        self.assertEqual(values['parameters']['valid']['id'],20)
+        self.assertEqual(values['video']['status'],'已确认无内容')
+        self.assertEqual(values['video']['count'],0)
+        self.assertIsNone(values['reviews']['count'])
+        scoped=module_summaries(data,[r for r in data['history'] if r['id']==90],80)
+        self.assertIsNone(scoped['parameters']['count'])
+        self.assertEqual(scoped['parameters']['status'],'采集异常')
+        page=self.client.get('/collections/products/123').text
+        self.assertIn('pd-module-alert',page)
+        self.assertIn('此前有效资料仍保留',page)
+        self.assertIn('无内容',page)
+
     def test_explicit_source_and_same_task_never_fill_current_gaps_with_old_data(self):
         """准确区分入口、同任务共享与其他时间，关联运行缺失模块不回退旧资料。"""
         self.put('search_records',id=70,product_id=1,record_type='detail_open',captured_at=datetime(2026,10,24))

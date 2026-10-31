@@ -1,0 +1,15 @@
+/* 商品资料页仅维护布局；控件、标题和指标外观复用公共组件。 */
+.pd-intro{align-items:flex-start;gap:28px;padding:24px 0 14px}
+.pd-identity{flex:1;min-width:0}.pd-primary-actions{flex:0 1 420px;justify-content:flex-end}
+.pd-title-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.pd-title-actions:has(>button[hidden]):not(:has(>button:not([hidden]))){display:none}
+.pd-identity-meta{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;overflow-wrap:anywhere}
+.pd-copy-feedback:empty{display:none}.pd-plan-note{margin:0 0 18px}
+.pd-overview{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px 24px;margin-bottom:12px}
+.pd-overview p{margin:4px 0 0}.pd-overview>div{min-width:0}.pd-run{flex:1}.pd-coverage{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.pd-provenance{margin:0 0 18px}.pd-navigation-note{margin:0 0 8px}.pd-tabs{align-items:center;gap:4px;margin-bottom:20px}.pd-tabs a{display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap}
+.pd-section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}.pd-section-heading p{margin:4px 0 0}
+.pd-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0 0 18px}.pd-basic-actions{margin:0 0 20px}
+.pd-runtime{margin:14px 0;overflow-wrap:anywhere}.pd-runtime:has(.module-job-status:empty){display:none}.pd-runtime>.module-job-status{display:flex;width:fit-content;max-width:100%;margin:6px 0;white-space:normal}.pd-runtime [data-success-message]{white-space:pre-wrap;overflow-wrap:anywhere}
+.pd-module-details{margin-top:18px}.pd-module-details .section-heading{margin-top:12px}.pd-module-details .cards{grid-template-columns:repeat(2,minmax(0,1fr))}.pd-module-details .card{min-width:0}.pd-module-details .card>.module-actions{justify-content:flex-start}
+@media(max-width:1100px){.pd-primary-actions{flex-basis:100%;justify-content:flex-start}.pd-intro{flex-wrap:wrap}.pd-identity{flex-basis:100%}}
+@media(max-width:700px){.pd-intro{padding-top:18px;gap:14px}.pd-metrics{grid-template-columns:1fr}.pd-module-details .cards{grid-template-columns:1fr}.pd-overview{align-items:flex-start;gap:14px}.pd-run{flex-basis:100%}.pd-tabs{gap:3px}.pd-tabs a{padding:8px}.pd-basic{padding:18px}.pd-identity-meta{gap:8px}.pd-primary-actions{gap:8px}.pd-primary-actions>a,.pd-primary-actions>button{white-space:normal}}

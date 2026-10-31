@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from 'form_controls.html' import input_control,select_control,field,range_field,control_button with context %}
+{% from 'collection_parts.html' import batch_status with context %}
 {% set module_labels={'basic_info':'基本信息','video':'视频','main_images':'主图','skus':'SKU','parameters':'商品参数','detail_images':'详情图片','review_summary':'评价概览','reviews':'评价明细','questions':'问大家'} %}
 {% block title %}商品采集{% endblock %}
 {% block breadcrumb %}商品采集{% endblock %}
@@ -22,7 +23,8 @@
 <h2>按商品采集详情</h2><p class="muted">填写商品 ID 或完整淘宝／天猫详情链接，采集你选中的模块。</p>
 <label class="collection-field" for="collection-input">商品 ID／链接{{ input_control({"id": "collection-input", "name": "input", "maxlength": "8192", "placeholder": "商品 ID，或 https://item.taobao.com/item.htm?id=…", "disabled": true, "required": true, "autocomplete": "off"}) }}</label>
 <div class="collection-module-heading"><strong>采集模块</strong>{{ control_button("全选", {"type": "button", "class": "range-button", "id": "collection-select-all"}) }}</div>
-<div class="collection-module-grid">{% for module in modules %}<label class="collection-check">{{ input_control({"type": "checkbox", "name": "modules", "value": module, "checked": true, "disabled": true}) }}{{ module_labels[module] }}</label>{% endfor %}</div>
+{% if module_reference %}<p class="ui-form-note" data-module-source-info data-reference-product="{{ reference_product }}">资料参考：商品 {{ reference_product }} 当前已保存范围。勾选已有资料仍会重新采集，新建批次并保留历史；以下时间不是实时更新承诺。</p>{% elif reference_error %}<p class="ui-report-notice">历史资料暂时无法读取，未将模块判定为已采集或零条；请核对采集历史后再选择范围。</p>{% endif %}
+<div class="collection-module-grid">{% for module in modules %}<label class="collection-check">{{ input_control({"type": "checkbox", "name": "modules", "value": module, "checked": true, "disabled": true}) }}<span>{{ module_labels[module] }}{% if module_reference %}{% set entry=module_reference[module] %}<small class="ui-collection-source-note" data-module-source-info data-reference-product="{{ reference_product }}">{{ entry.status }}{% if entry.valid %} · {{ entry.valid.captured_at|full_local_time }}{% elif entry.latest %} · 最近尝试 {{ entry.latest.captured_at|full_local_time }}{% endif %}{% if entry.valid and entry.latest and entry.latest.id!=entry.valid.id %}<br>另有较新尝试：{{ batch_status(entry.latest.status) }}{% endif %}</small>{% endif %}</span></label>{% endfor %}</div>
 <div class="collection-form-grid collection-ranges"><div class="collection-field"><label for="collection-review-range">评价数量范围</label>{% call select_control({"id": "collection-review-range", "disabled": true, "aria-label": "评价数量范围"}) %}<option value="limited">默认上限：100 条有效评价</option><option value="all">不限数量</option>{% endcall %}</div><div class="collection-field"><label for="collection-question-range">问大家数量范围</label>{% call select_control({"id": "collection-question-range", "disabled": true, "aria-label": "问大家数量范围"}) %}<option value="limited">默认上限：50 个问题</option><option value="all">不限数量</option>{% endcall %}</div></div>
 <p class="collection-help">每个问题采集全部可见回答。不限数量表示取消程序上限，实际内容以平台提供为准。已有资料也会重新采集，并保留历史。</p>
 </div>

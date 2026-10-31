@@ -45,7 +45,7 @@ class ProductReviewTests(unittest.TestCase):
                     '/collections/products/123?batch=30','/collections/products/123?batch=31']:
             response=self.client.get(url);self.assertEqual(response.status_code,200)
             body=response.get_data(as_text=True)
-            self.assertIn('>商品评价</a>',body);self.assertNotIn('>评价概览</a>',body);self.assertNotIn('>评价明细</a>',body)
+            self.assertIn('商品评价<span class="ui-module-count">',body);self.assertNotIn('>评价概览</a>',body);self.assertNotIn('>评价明细</a>',body)
             self.assertLess(body.index('id="review-overview"'),body.index('id="review-comments"'))
             for text in ['1万+','99.6%','近3个月','概览采集时间','2026-10-25 10:00:00','2026-10-25 11:00:00','100+']:
                 self.assertIn(text,body)

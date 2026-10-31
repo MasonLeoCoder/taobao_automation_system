@@ -1,0 +1,43 @@
+{% set configure_url=url_for('pages.module',key='collection',input=product.platform_product_id,mode='detail',modules=module if module in ['basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions'] else '') %}
+<section class="intro pd-intro" data-collection-product="{{ product.platform_product_id }}">
+  <div class="pd-identity">
+    <p class="eyebrow">商品资料 · 竞品研究</p>
+    <h1 id="product-index-title" class="ui-product-title" data-product-title>{{ product.display_title or '来源未提供标题' }}</h1>
+    <div class="pd-title-actions">
+      {{ control_button('展开完整名称', {'type':'button','class':'button action-button action-neutral','data-title-toggle':true,'aria-expanded':'false','aria-controls':'product-index-title','hidden':true}) }}
+      {% if product.display_title %}{{ control_button('复制商品名', {'type':'button','class':'button action-button action-neutral','data-copy-target':'product-index-title','hidden':true}) }}{% endif %}
+    </div>
+    <div class="pd-identity-meta"><span>商品 ID <span id="product-platform-id">{{ product.platform_product_id }}</span></span>{{ control_button('复制ID', {'type':'button','class':'button action-button action-neutral','data-copy-target':'product-platform-id','hidden':true}) }}<span>店铺：{{ listing.shop_name or product_info.shop_name or '未记录' }}</span></div>
+    <span class="pd-copy-feedback ui-form-note" data-copy-feedback role="status" aria-live="polite"></span>
+  </div>
+  <div class="product-collection-actions pd-primary-actions">
+    {{ control_button('补采未完成模块（' ~ collection_plan.modules|length ~ '）' if collection_plan.modules else '所选模块无需补采', {'type':'button','class':'button action-button action-primary collect-remaining','data-remaining-count':collection_plan.modules|length,'data-detail-plan':true,'disabled':not collection_plan.modules}) }}
+    <a class="button action-button action-neutral" href="{{ configure_url }}">重新采集／选择范围</a>
+    <a class="button action-button action-external" href="https://item.taobao.com/item.htm?id={{ product.platform_product_id }}" target="_blank" rel="noopener noreferrer">打开淘宝 ↗</a>
+  </div>
+</section>
+<p id="collection-plan-status" class="pd-plan-note ui-form-note" role="status" aria-live="polite">补采只处理未完成模块，已有有效资料或已确认无内容／无入口的模块会跳过；更新已有资料请先选择采集范围。</p>
+{% set recent=detail_summary.latest_run %}
+<section class="ui-source-card pd-overview" aria-label="资料覆盖与最近运行">
+  <div><span class="ui-report-eyebrow">商品已有资料</span><p class="pd-coverage"><strong>{{ detail_summary.valid_modules|length }}/9</strong> 模块有有效资料 <span class="ui-form-note">按各模块采集范围</span></p></div>
+  <div class="pd-run"><span class="ui-form-note">最近详情运行记录</span><p><span class="ui-report-state {{ 'is-active' if recent.status=='running' else 'is-error' if recent.status in ['failed','complete_with_errors'] else 'is-ready' if recent.status=='complete' else 'is-pending' if recent else 'is-muted' }}">{{ detail_summary.last_attempt_label }}</span> <span class="ui-form-note">{{ detail_summary.last_attempt_at|full_local_time }}</span></p></div>
+  <div class="module-actions"><a class="button action-button action-neutral" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module='history',return_to=back_url) }}">采集历史</a>{% if recent.task_id %}<a class="button action-button action-history" href="{{ url_for('pages.task_detail',task_id=recent.task_id,return_to=current_location()) }}">查看采集任务</a>{% endif %}</div>
+</section>
+<details class="ui-report-fold ui-compact-fold pd-provenance"><summary>资料范围与搜索来源{% if context_run %}<small>当前为关联运行范围</small>{% endif %}</summary><div class="ui-report-fold-body">
+  <p>{{ detail_summary.label }}。各模块独立保存，可能采集于不同时间；已有资料覆盖不代表最近运行已完成，也不代表平台内容全量。</p>
+  {% if source_context %}
+    <p>来自搜索：{{ source_context.observation.search_keyword or '搜索词未记录' }} · 第 {{ source_context.observation.page_number or '未知' }} 页 · 位置 {{ source_context.observation.slot_index }}<br>当时标题：{{ source_context.observation.title }} · 列表价格：{{ source_context.observation.price_text or '未确认' }}</p>
+    <p><strong>{{ source_context.relation_label }}</strong></p>
+    {% if context_run %}<p>本次关联运行：{{ context_run }} · {{ source_context.execution_label }}。各模块仅展示该运行已保存的结果，不用其他时间资料填补本次缺失。</p>{% else %}<p>以下为该商品已有资料，可能来自其他时间；不表示本次搜索采集了详情。</p>{% endif %}
+  {% else %}<p>详情资料独立保存；搜索来源在“关联搜索列表”中单独查看。</p>{% endif %}
+</div></details>
+{% if selected and context_run and selected.run_id!=context_run %}<p class="ui-report-notice" role="status">已手动切换历史批次，本批次不属于上方关联运行。</p>{% endif %}
+<p class="pd-navigation-note ui-form-note">导航数量：{{ '本次关联运行已保存资料' if context_run else '各模块最近有效资料' }}；历史批次数量以模块内容为准。</p>
+<nav class="tabs module-tabs pd-tabs" aria-label="商品模块">
+{% for code,label in labels.items() if code not in ['list','basic_info','review_summary'] %}
+  {% set entry=module_summaries.get(code) %}
+  <a class="{{ 'selected' if module==code or (module=='basic_info' and code=='basic') }}" {% if module==code or (module=='basic_info' and code=='basic') %}aria-current="page"{% endif %} href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module=code,observation=request.args.get('observation','0'),return_to=back_url) }}" {% if entry %}title="{{ entry.status }}{% if entry.valid %} · 批次 {{ entry.valid.id }} · {{ entry.valid.captured_at|full_local_time }}{% endif %}；数量为已保存记录，不代表平台全量或文件可用性"{% endif %}>
+    {{ '商品评价' if code=='reviews' else label }}{% if entry %}<span class="ui-module-count">{{ '无内容' if entry.status=='已确认无内容' else entry.count if entry.count is not none else '异常' if entry.status=='采集异常' else '无入口' if entry.status=='已确认无入口' else '未采' if entry.status=='尚未采集' else '待补' }}</span>{% endif %}
+  </a>
+{% endfor %}
+</nav>

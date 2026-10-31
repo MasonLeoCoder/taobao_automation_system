@@ -4,22 +4,19 @@
 {% from "pagination.html" import pager with context %}
 {% from "collection_parts.html" import labels, batch_status, scope, media_grid, record_table with context %}
 {% block title %}{{ product.display_title or product.platform_product_id }}{% endblock %}{% block breadcrumb %}<a href="{{ url_for('pages.collection_details') }}">商品库</a> / 商品详情{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% endblock %}
 {% block content %}
 <p class="back-link"><a class="button action-button action-neutral" href="{{ back_url }}">← 返回上一列表</a></p>
-<section class="intro" data-collection-product="{{ product.platform_product_id }}"><div><p class="eyebrow">PRODUCT DETAILS</p><h1>{{ product.display_title or '来源未提供标题' }}</h1><p>商品 ID {{ product.platform_product_id }} · {{ listing.shop_name or '店铺未记录' }}</p></div><div class="product-collection-actions">{{ control_button('采集所有（剩余 ' ~ collection_plan.modules|length ~ ' 项）' if collection_plan.modules else '已全部采集', {"type": "button", "class": "button action-button action-primary collect-remaining", "data-remaining-count": collection_plan.modules|length, "disabled": (not collection_plan.modules)}) }}<a class="button action-button action-external" href="https://item.taobao.com/item.htm?id={{ product.platform_product_id }}" target="_blank" rel="noopener noreferrer">打开淘宝商品 ↗</a></div></section>
-<p id="collection-plan-status" class="collection-plan-status" role="status" aria-live="polite">只补采未完成模块，已确认无内容的模块也会跳过。<a href="{{ url_for('pages.module',key='collection',input=product.platform_product_id,mode='detail',modules=module if module in ['basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions'] else '') }}">重新采集／配置采集范围 →</a></p>
-<section class="panel provenance-panel"><h2>详情资料与来源</h2><p>{{ detail_summary.label }} · {{ detail_summary.valid_modules|length }}/9 模块有有效资料（按各自范围）</p>
-{% if source_context %}<p>来自搜索：{{ source_context.observation.search_keyword or '搜索词未记录' }} · 第 {{ source_context.observation.page_number or '未知' }} 页 · 位置 {{ source_context.observation.slot_index }}<br>当时标题：{{ source_context.observation.title }} · 列表价格：{{ source_context.observation.price_text or '未确认' }}</p><p><strong>{{ source_context.relation_label }}</strong></p>{% if context_run %}<p>本次关联运行：{{ context_run }} · {{ source_context.execution_label }}。各模块仅展示该运行已保存的结果，不用其他时间资料填补本次缺失。</p>{% else %}<p>以下为该商品已有资料，可能来自其他时间；不表示本次搜索采集了详情。</p>{% endif %}{% if selected and context_run and selected.run_id!=context_run %}<p class="provenance-warning">已手动切换历史批次，本批次不属于上方关联运行。</p>{% endif %}
-{% else %}<p>详情资料独立保存。最后一次详情尝试：{{ detail_summary.last_attempt_label }} · {{ detail_summary.last_attempt_at | full_local_time }}。搜索来源在“关联搜索列表”中单独查看。</p>{% endif %}</section>
-<div class="tabs module-tabs" aria-label="商品模块">{% for code,label in labels.items() if code not in ['list','basic_info','review_summary'] %}<a class="{{ 'selected' if module==code or (module=='basic_info' and code=='basic') }}" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module=code,observation=request.args.get('observation','0'),return_to=back_url) }}">{{ '商品评价' if code=='reviews' else label }}</a>{% endfor %}</div>
+{% include 'product_header.html' %}
 {% if module=='basic' %}
-{% set basic_latest=display_history|selectattr('module','equalto','basic_info')|first %}
-<section class="panel" data-collection-module="basic_info"><h2>{{ '本次详情基本信息' if context_run else '有效详情基本信息' }}</h2><div class="facts"><div><small>详情标题</small><strong>{{ product_info.title or '未采到详情标题' }}</strong></div><div><small>详情销量原文</small><strong>{{ product_info.sales_text or '未采到详情销量' }}</strong></div><div><small>店铺</small><strong>{{ product_info.shop_name or '未记录' }}</strong></div><div><small>页面展示价格</small><strong>{{ product_info.price_text or '未展示或未确认' }}</strong></div><div><small>本信息采集时间</small><strong>{{ info_captured_at | full_local_time }}</strong></div></div><div class="module-actions">{% if not info_captured_at %}{{ control_button("采集基本信息", {"type": "button", "class": "button action-button action-primary module-collect", "data-module": "basic_info", "data-product": product.platform_product_id}) }}{% else %}<a class="button action-button action-primary module-result" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=info_batch_id,return_to=back_url) }}">查看资料 →</a>{% endif %}{% if basic_latest and basic_latest.id!=info_batch_id %}<a class="button action-button action-history" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=basic_latest.id,return_to=back_url) }}">查看最近采集尝试</a>{% endif %}</div><p class="module-job-status" role="status" aria-live="polite"></p>{% set basic_valid=history|selectattr('id','equalto',info_batch_id)|first %}{% if basic_valid and basic_valid.derivation_kind=='sku_basic_info_split' %}<p>本信息从原 SKU 批次 {{ basic_valid.derived_from_batch_id }} 提取，保留原观察时间；未重新访问商品。</p>{% endif %}<p>基本信息独立采集和保存，与 SKU 结果分别判断。模块可能分别采集于不同时间；页头标题是商品索引标题，不替代本次详情标题。</p>{% if listing %}<details><summary>查看独立的最近列表参考</summary><p>{{ listing.captured_at|full_local_time }} · {{ listing.title }} · 列表价格 {{ listing.price_text or '未确认' }} · {{ listing.sales_text or '销量未记录' }}</p><p>这是当时的列表观察，不替代详情价格和本次采集结果。</p></details>{% endif %}</section>
+{% include 'product_basic.html' %}
+<details class="ui-report-fold pd-module-details"><summary>各模块资料与最近尝试<small>有效资料与最近尝试分别保留</small></summary><div class="ui-report-fold-body">
 <div class="section-heading"><h2>资料概况</h2><p>有效资料与最后一次尝试分别展示。</p></div>
 <div class="cards">
 {% for code,label in labels.items() if code not in ['basic','basic_info','history','list','sources'] %}
 {% set latest=display_history|selectattr('module','equalto',code)|first %}
-{% set valid=display_history|selectattr('module','equalto',code)|selectattr('id','in',current_ids)|first %}
+{% set valid=module_summaries[code].valid %}
 <article class="card" data-collection-module="{{ code }}" data-latest-batch="{{ latest.id if latest else 0 }}"><h2>{{ label }}</h2>
 {% if valid %}<p>有效资料：{{ valid.captured_at|full_local_time }}<br>{{ scope(valid) }}</p>
 {% elif latest %}<p>暂无有效资料；已保留最近采集尝试。</p>{% else %}<p>尚未采集</p>{% endif %}
@@ -30,6 +27,7 @@
 {% if latest %}<a class="button action-button action-history" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=latest.id,observation=request.args.get('observation','0'),return_to=back_url) }}">查看上次采集尝试</a>{% endif %}
 {% endif %}</div><p class="module-job-status" role="status" aria-live="polite"></p></article>
 {% endfor %}</div>
+</div></details>
 {% elif module=='reviews' %}
 {% include 'product_reviews.html' %}
 {% elif module=='questions' %}
