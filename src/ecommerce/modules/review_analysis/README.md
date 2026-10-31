@@ -1,5 +1,7 @@
 # 评价分析
 
+2026-10-31混排依据兼容：v6_evidence先保留独立段落连续分组，v6_inline_evidence再递归拆分列表/同段的明确引文，前后分析和列表层级保留，不能明确分离则显示原样；Web及离线HTML用同一原生折叠，原Markdown及检查不变。report_v6/group_v6补充分析/每条依据间空行的格式要求，新任务保存新提示并计入已有指纹；旧任务rules/messages/报告不重写，不因查看新增调用。当前真实新稿31组/69处、旧稿18组/66处；见[兼容记录](../../../../docs/变更记录/评价原文依据混排兼容.md)。
+
 2026-10-31本地检查修复：v6_checks/reviews-local-check-v2仅兼容明确排版，不改原引文；generation正文完成与validation引用质量分开。cached/continuation按正文完整性复用，引用问题不导向付费继续。v6_report保存计数/逐项原因原文位置和inspection规则/时间/输入哈希，v6_view不在GET重写旧检查，历史按原版本显示。service.recount持派发锁并核对进程，analysis_store.save_local_report在任务行锁内核对最新报告身份及来源/原调用快照，原子追加报告与终态；异常全回滚。Web附report_id防过期，历史版本隐藏写按钮。0018/schema_v18只更新3条原生备注，旧模型迁移冻结，部署不自动重查正式任务。见[修复记录](../../../../docs/变更记录/评价引用兼容与本地检查实施记录.md)。
 
 2026-10-30新默认reviews-v6：service.preview/start读取MySQL全批，v6投影最小资料并按选中模型、输出、本地分词估算及余量生成固定计划；一请求直接报告，实际超限才N组简短发现加一次总报告，先检查汇总可行性。v6_runtime先保存实际system/user消息及用量预留，再单次请求complete_messages（非JSON模式、thinking disabled），原响应/收据/可读报告保留，无自动付费重试或加层。v6_report本地检查七章节、编号与连续初追评引用并过滤渲染；v6_view只读展示/版本/导出。没有逐条analysis_details，processed_count保持0，来源/提交尝试/引用数分开。旧V4/V5及其提示、契约和执行分支保留，preview_v4/preview_v5用于固定旧版测试，不把新任务写成旧规则。

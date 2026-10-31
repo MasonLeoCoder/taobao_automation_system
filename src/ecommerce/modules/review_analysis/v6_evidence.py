@@ -1,7 +1,7 @@
-"""只在安全HTML中将独立连续引文折叠，不修改Markdown、来源或校验结果。"""
+"""安全HTML中先合并独立引文，再折叠混排引文，不修改原稿或检查。"""
 from html.parser import HTMLParser
 import re
-from ecommerce.modules.review_analysis import v6_checks
+from ecommerce.modules.review_analysis import v6_checks,v6_inline_evidence
 
 
 class Blocks(HTMLParser):
@@ -58,7 +58,7 @@ def citation_count(block):
     return count
 
 
-def collapse(rendered):
+def collapse_independent(rendered):
     """按相邻独立引用组添加原生折叠；参数：安全HTML；返回：仅展示用HTML。"""
     parser=Blocks(rendered);parser.feed(rendered);parser.close();blocks=parser.blocks
     parts=[];cursor=0;index=0;previous=None
@@ -77,6 +77,11 @@ def collapse(rendered):
             following=citation_count(blocks[index])
             if not following:break
             count+=following;end=blocks[index]['end'];index+=1
-        parts.append('<details class="ui-report-evidence"><summary>查看原文依据（'+str(count)+'处引用）</summary><div class="ui-report-evidence-body">'+rendered[block['start']:end]+'</div></details>')
+        parts.append(v6_inline_evidence.disclosure(rendered[block['start']:end],count))
         cursor=end;previous=None
     parts.append(rendered[cursor:]);return ''.join(parts)
+
+
+def collapse(rendered):
+    """兼容独立、混排和列表引用；参数：已安全渲染HTML；返回：仅展示用HTML。"""
+    return v6_inline_evidence.collapse(collapse_independent(rendered))

@@ -119,6 +119,18 @@ class ReviewV6Tests(TestCase):
         self.assertEqual(client.complete_messages.call_count,1);self.assertEqual(data['task']['status'],'failed');self.assertIn('网络',data['task']['message'])
         self.assertEqual(data['calls'][0]['status'],'unknown');self.assertEqual(data['budget']['used_tokens'],data['calls'][0]['usage']['reserved_tokens'])
 
+    def test_layout_prompt_change_preserves_saved_rules_messages_and_report(self):
+        """新提示独立计入成品身份，旧任务/调用/原报告不重写；参数：无；返回：断言。"""
+        previous=v6.snapshot();previous['report']+='\n旧排版要求快照。'
+        with patch.object(v6,'snapshot',return_value=previous):identifier=self.start()
+        self.run_mock(identifier);before=repository.read(self.settings,identifier)
+        newer=self.start();self.assertNotEqual(newer,identifier)
+        self.assertEqual(repository.read(self.settings,identifier),before)
+        self.assertEqual(before['task']['rules'],previous)
+        self.assertEqual(before['calls'][0]['request']['messages'][0]['content'],previous['report'])
+        current=repository.read(self.settings,newer)['task']['rules']
+        for name in ('report','group'):self.assertIn('空行',current[name]);self.assertIn('列表项',current[name])
+
     def test_truncated_and_bad_reference_remain_readable(self):
         identifier=self.start();self.run_mock(identifier,finish='length');data=service.read(self.settings,identifier)
         self.assertEqual(data['task']['status'],'partial');self.assertTrue(data['v6_content']['markdown']);self.assertEqual(data['v6_content']['generation']['state'],'interrupted')
