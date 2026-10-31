@@ -122,7 +122,7 @@ def log_time_filters():
         abort(400,description='时间筛选无效，请选择有效日期时间，并确保开始时间不晚于结束时间')
 
 
-def collection_query(kind,batch_id=None,*,after_override=None,numbered=False):
+def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False):
     """解析采集筛选并调用统一业务查询；参数：种类及可选内部批次；返回：结果。"""
     from ecommerce.modules.collection.queries import query
     settings=current_app.config['SETTINGS']
@@ -135,6 +135,7 @@ def collection_query(kind,batch_id=None,*,after_override=None,numbered=False):
                 'sort_by':request.args.get('sort'),'order':request.args.get('order'),'with_context':True}
         if after_override is not None:
             parameters['after']=int(after_override)
+        if with_question_counts:parameters['with_question_counts']=True
         if kind=='products':
             parameters['keyword']=request.args.get('keyword') or None
         else:
@@ -290,7 +291,12 @@ def collection_product(product_id):
             'page':comments['detail']['page'],'sort':comments['detail']['sort_spec']['sort'],'order':comments['detail']['sort_spec']['order']}
         module='reviews'
         selected=None
-    detail=collection_query('records',selected['id'],numbered=True) if selected else None
+    from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+    try:
+        detail=collection_query('records',selected['id'],numbered=True,with_question_counts=module=='questions') if selected else None
+    except MySQLStorageError:
+        if module!='questions':raise
+        detail=None
     media=detail if selected and module in {'video','main_images','detail_images'} else None
     from ecommerce.modules.collection.queries import history_page
     try:

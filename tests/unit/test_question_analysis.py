@@ -175,3 +175,19 @@ class QuestionTests(TestCase):
         result=paragraph_layout('<p>区分：性能尚未核实；回答“没数过；没量过”，规格信息缺失。</p>')
         self.assertIn('<p>性能尚未核实；</p>',result)
         self.assertIn('回答“没数过；没量过”，规格信息缺失。</p>',result)
+
+    def test_batch_summary_keeps_old_success_and_scopes_type(self):
+        """新失败不遮盖旧成功报告，摘要仅属于当前商品与批次。"""
+        identifier=self.create_qa();data=service.preview(self.settings,'123',6);client=Mock()
+        client.complete_messages.return_value={'text':sample_report(data['items']),'finish_reason':'stop','usage':{'total_tokens':10}}
+        runtime.execute(self.settings,identifier,Mock(),Mock(return_value=client))
+        with patch.object(service,'launch'):
+            newer=service.start(self.settings,'123',batch_id=6,model=data['model'],input_hash=data['input_hash'],plan_hash=data['plan_hash'],allow_paid=True,force=True)['id']
+        repository.update_task(self.settings,newer,status='failed',active_key=None)
+        response=self.client.get('/api/analysis/questions/products/123/summary?batch=6')
+        self.assertEqual(response.status_code,200);self.assertIn(identifier,response.json['result_url'])
+        self.assertIn(newer,response.json['progress_url']);self.assertIn('此前报告保留',response.json['message'])
+        self.assertEqual(self.client.get('/api/analysis/questions/products/456/summary?batch=6').status_code,400)
+        self.put('collection_batches',id=7,product_id=1,module='questions',visibility='published',status='no_questions')
+        empty=self.client.get('/analysis/questions/products/123?batch=7')
+        self.assertEqual(empty.status_code,200);self.assertIn('本批尚未分析',empty.text)

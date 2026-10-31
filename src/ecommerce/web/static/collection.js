@@ -97,19 +97,19 @@
       status.classList.remove('is-ready','is-pending','is-active','is-error','is-muted');
       status.classList.add(confirmed ? 'is-ready' : job.state === 'failed' ? 'is-error' : job.done || job.halted ? 'is-pending' : 'is-active');
     }
-    const actions = card.querySelector('.module-actions');
+    const actions = card.querySelector('[data-collection-actions]') || card.querySelector('.module-actions');
     let result = actions.querySelector('[data-job-result]');
     if (job.done && job.result_url) {
       if (job.valid && card.hasAttribute('data-hide-success-result')) {
         result?.remove();
       } else {
-        if (!result) result = [...actions.querySelectorAll('a')].find(node => !node.matches('[data-review-analysis]') && new URL(node.href).searchParams.get('batch') === String(job.batch_id));
+        if (!result) result = [...actions.querySelectorAll('a')].find(node => !node.matches('[data-review-analysis],[data-qa-open]') && new URL(node.href).searchParams.get('batch') === String(job.batch_id));
         if (!result) { result = link('', job.result_url); result.dataset.jobResult = 'true'; actions.append(result); }
         result.dataset.jobResult = 'true';
         result.href = job.result_url;
         result.textContent = job.valid ? `${job.result_label} →` : '查看本次采集尝试';
       }
-      if (job.valid) actions.querySelector('.module-collect')?.remove();
+      if (job.valid && !card.hasAttribute('data-keep-collect')) actions.querySelector('.module-collect')?.remove();
       if (job.valid) document.querySelectorAll(`.module-collect[data-product][data-module="${job.module}"]`).forEach(button => {
         button.replaceWith(link(`${job.result_label} →`,job.result_url,'action-primary'));
       });
@@ -497,7 +497,7 @@
   document.querySelectorAll('.module-collect').forEach(button => button.addEventListener('click',async () => {
     const id = button.dataset.product || product;
     button.disabled = true;
-    const status = button.closest('.card')?.querySelector('.module-job-status');
+    const status = (button.closest('[data-collection-module]') || button.closest('.card'))?.querySelector('.module-job-status');
     try {
       const job = await api(`/api/collections/products/${id}/jobs`,{module:button.dataset.module});
       tracked.set(job.id,job); render();

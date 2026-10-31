@@ -298,3 +298,9 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-report-product{font-size:16px;line-height:1.7;color:var(--control-text);margin:0;overflow-wrap:anywhere}
 @media(max-width:600px){.ui-report-focus{padding:18px}.ui-report-product{font-size:14px}}
 .ui-report-numbered-list{list-style:none;padding:0;margin:0 0 20px}
+.qa-card .qa-question-mark{background:var(--control-selected);color:var(--control-accent);border-radius:8px;font-weight:650}
+.qa-card .qa-question{color:var(--control-text);font-weight:650}
+.qa-card .qa-author,.qa-card .qa-answer-meta,.qa-card .qa-count,.qa-card .qa-question-meta{color:var(--control-label)}
+.qa-card .qa-answer-text{color:var(--control-text)}
+.ui-action-menu-secondary>summary{background:var(--control-surface);color:var(--control-label);border:1px solid var(--control-border)}
+.qa-workspace select.ui-control{overflow:hidden;text-overflow:ellipsis}

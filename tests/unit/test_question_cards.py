@@ -36,6 +36,26 @@ class QuestionCardTests(unittest.TestCase):
         self.assertEqual(len(second['records']),2)
         self.assertTrue(all(not row['answers'] for row in second['records']))
 
+    def test_whole_batch_counts_and_no_answer_source_leak(self):
+        """顶部整批统计不随分页变动，错误批次回答不计数。"""
+        f=self.fixture;f.batch(31,'questions',product_id=1)
+        f.put('answer_observations',id=1500,batch_id=31,question_id=300,position=999,content='错批次')
+        for page in (1,2):
+            data=query(self.settings,'records',batch_id=30,page=page,with_context=True,with_question_counts=True)
+            self.assertEqual(data['question_counts'],{'questions':22,'answers':226,'incomplete':1})
+        body=self.client.get('/collections/products/123?batch=30').text
+        self.assertIn('data-collection-actions',body);self.assertIn('data-qa-batch-form',body)
+        self.assertEqual(body.count('data-qa-open'),1)
+
+    def test_question_read_error_does_not_enable_analysis(self):
+        """明细读取异常显示重试，不冒充空数据或提供分析按钮。"""
+        from unittest.mock import patch
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        with patch('ecommerce.infrastructure.storage.collection_queries.records',side_effect=MySQLStorageError('读取失败')):
+            response=self.client.get('/collections/products/123?batch=30')
+        self.assertEqual(response.status_code,200);self.assertIn('问答资料读取失败',response.text)
+        self.assertNotIn('data-qa-open',response.text)
+
     def test_cards_keep_original_text_and_do_not_use_question_preview(self):
         """卡片包含全部已存内容，不把预览当回答，不伪造头像或会员身份。"""
         for url in ['/collections/products/123?module=questions','/collections/batches/30']:

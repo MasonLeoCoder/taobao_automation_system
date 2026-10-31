@@ -162,22 +162,23 @@ def read(settings, identifier):
         return value
 
 
-def batch_choices(settings, product):
+def batch_choices(settings, product, *, analysis_type='reviews'):
     """查询可定位的评价批次；参数：配置、平台编号；返回：批次元信息，不解析评价或调用AI。"""
     with connection(settings) as (conn, tables):
         p, b = tables['products'], tables['collection_batches']
         return [dict(r) for r in conn.execute(sa.select(b.c.id, b.c.captured_at, b.c.status)
             .join(p, b.c.product_id == p.c.id).where(p.c.platform == 'taobao', p.c.platform_product_id == product,
-                b.c.module == 'reviews', b.c.visibility == 'published')
+                b.c.module == analysis_type, b.c.visibility == 'published')
             .order_by(b.c.captured_at.desc(), b.c.id.desc())).mappings()]
 
 
-def history(settings, product, batch_id=None, *, analysis_type="reviews"):
+def history(settings, product, batch_id=None, *, analysis_type="reviews", metadata_only=False):
     """查询商品或指定批次最近100次分析；参数：配置、平台编号、可选批次；返回：任务及来源、报告标记。"""
     with connection(settings) as (conn, tables):
         p, t, source, report = (tables[n] for n in ('products', 'analysis_tasks', 'analysis_sources', 'analysis_reports'))
         batches = sa.select(source.c.analysis_id, sa.func.min(source.c.batch_id).label('batch_id')).group_by(source.c.analysis_id).subquery()
-        query = sa.select(t, batches.c.batch_id, sa.exists(sa.select(report.c.id).where(report.c.analysis_id == t.c.id)).label('has_report'))
+        fields=[t.c[k] for k in ('id','status','active_key','created_at','owner')] if metadata_only else [t]
+        query = sa.select(*fields, batches.c.batch_id, sa.exists(sa.select(report.c.id).where(report.c.analysis_id == t.c.id)).label('has_report'))
         query = query.join(p, t.c.product_id == p.c.id).outerjoin(batches, batches.c.analysis_id == t.c.id).where(
             p.c.platform == 'taobao', p.c.platform_product_id == product, t.c.analysis_type == analysis_type)
         if batch_id is not None:
@@ -185,13 +186,14 @@ def history(settings, product, batch_id=None, *, analysis_type="reviews"):
         return [dict(r) for r in conn.execute(query.order_by(t.c.created_at.desc(), t.c.id.desc()).limit(100)).mappings()]
 
 
-def latest_success(settings, product, batch_id=None):
+def latest_success(settings, product, batch_id=None, *, analysis_type='reviews', metadata_only=False):
     """在完整历史中找最近成功报告；参数：配置、商品和批次；返回：任务或空，不受列表100条限制。"""
     with connection(settings) as (conn, tables):
         t, p, s, r = (tables[n] for n in ('analysis_tasks', 'products', 'analysis_sources', 'analysis_reports'))
         batch = sa.select(sa.func.min(s.c.batch_id)).where(s.c.analysis_id == t.c.id).correlate(t).scalar_subquery()
-        query = sa.select(t, batch.label('batch_id')).join(p, t.c.product_id == p.c.id).where(
-            p.c.platform == 'taobao', p.c.platform_product_id == product, t.c.analysis_type == 'reviews',
+        fields=[t.c[k] for k in ('id','status','active_key','created_at','owner')] if metadata_only else [t]
+        query = sa.select(*fields, batch.label('batch_id')).join(p, t.c.product_id == p.c.id).where(
+            p.c.platform == 'taobao', p.c.platform_product_id == product, t.c.analysis_type == analysis_type,
             t.c.status == 'succeeded', sa.exists(sa.select(r.c.id).where(r.c.analysis_id == t.c.id)))
         if batch_id is not None:
             query = query.where(sa.exists(sa.select(s.c.id).where(s.c.analysis_id == t.c.id, s.c.batch_id == batch_id)))

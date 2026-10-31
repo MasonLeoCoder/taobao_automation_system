@@ -35,8 +35,8 @@
 <a href="{{ href }}" class="ui-button ui-{{ variant }}">{{ text }}</a>
 {%- endmacro %}
 
-{% macro action_menu(label) -%}
-<details class="ui-action-menu"><summary>{{ label }} <span aria-hidden="true">⌄</span></summary><div>{{ caller() }}</div></details>
+{% macro action_menu(label,secondary=false) -%}
+<details class="ui-action-menu{{ ' ui-action-menu-secondary' if secondary }}"><summary>{{ label }} <span aria-hidden="true">⌄</span></summary><div>{{ caller() }}</div></details>
 {%- endmacro %}
 
 {% macro modal_shell(id,title,description) -%}

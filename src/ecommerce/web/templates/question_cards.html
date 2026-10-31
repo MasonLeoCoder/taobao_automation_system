@@ -7,9 +7,10 @@
 {{ inline_media(answer.media,'回答') }}
 </div>
 {% endmacro %}
-{% macro question_cards(detail) %}
-{% if product is defined and product.platform_product_id is defined and detail.batch.status in ['complete','no_questions'] %}<link rel="stylesheet" href="{{ url_for('static',filename='question_analysis.css') }}"><div class="module-actions"><a class="ui-button ui-primary" data-qa-open href="{{ url_for('question_analysis.new',product=product.platform_product_id,batch=detail.batch.id) }}">分析问答</a><a class="ui-button ui-secondary" href="{{ url_for('question_analysis.history',product=product.platform_product_id,batch=detail.batch.id) }}">查看分析记录</a></div><script src="{{ url_for('static',filename='question_analysis.js') }}" defer></script>{% endif %}
-<div class="qa-sort" role="group" aria-label="问题排序"><span>排序</span>{% for code,name in [('position','原始顺序'),('content','问题内容'),('author','提问用户'),('captured_at','采集时间')] %}<a class="button action-button {{ 'action-primary' if detail.sort_spec.sort==code else 'action-neutral' }}" href="{{ sort_url(code,detail.sort_spec,{'batch':detail.batch.id}) }}">{{ name }} {{ ('↑' if detail.sort_spec.order=='asc' else '↓') if detail.sort_spec.sort==code else '↕' }}</a>{% endfor %}</div>
+{% macro question_cards(detail,integrated=false) %}
+{% if not integrated and product is defined and product.platform_product_id is defined and detail.batch.status in ['complete','no_questions'] %}<link rel="stylesheet" href="{{ url_for('static',filename='question_analysis.css') }}"><div class="module-actions"><a class="ui-button ui-primary" data-qa-open href="{{ url_for('question_analysis.new',product=product.platform_product_id,batch=detail.batch.id) }}">分析问答</a><a class="ui-button ui-secondary" href="{{ url_for('question_analysis.history',product=product.platform_product_id,batch=detail.batch.id) }}">查看分析记录</a></div><script src="{{ url_for('static',filename='question_analysis.js') }}" defer></script>{% endif %}
+{% from 'form_controls.html' import select_control,control_button %}
+<div class="qa-list-toolbar"><h3>问题与回答</h3><form class="qa-sort-form" method="get" data-qa-sort-form><input type="hidden" name="module" value="questions"><input type="hidden" name="batch" value="{{ detail.batch.id }}"><input type="hidden" name="observation" value="{{ request.args.get('observation','0') }}"><input type="hidden" name="return_to" value="{{ request.args.get('return_to','') }}"><input type="hidden" name="order" value="{{ detail.sort_spec.order }}"><label>排序{% call select_control({'name':'sort','aria-label':'问题排序','data-searchable-select':true,'data-select-label':'问题排序'}) %}{% for code,name in [('position','原始顺序'),('content','问题内容'),('author','提问用户'),('captured_at','采集时间')] %}<option value="{{ code }}" {{ 'selected' if detail.sort_spec.sort==code }}>{{ name }}</option>{% endfor %}{% endcall %}</label>{{ control_button('升序 ↑' if detail.sort_spec.order=='asc' else '降序 ↓',{'type':'button','data-qa-order':'desc' if detail.sort_spec.order=='asc' else 'asc'},'secondary') }}<noscript>{{ control_button('应用排序') }}<a href="{{ sort_url(detail.sort_spec.sort,detail.sort_spec,{'batch':detail.batch.id}) }}">切换升降序</a></noscript></form></div>
 <div class="qa-list" role="list" aria-label="问大家">
 {% for question in detail.records %}<article class="qa-card" role="listitem" data-question-id="{{ question.id }}">
 <h3 class="qa-question"><span class="qa-question-mark" aria-hidden="true">问</span><span>{{ question.question or '问题文字未记录' }}</span></h3>
@@ -20,5 +21,5 @@
 {% if not question.answers_complete %}<p class="qa-incomplete">回答采集未完成，目前仅展示已保存内容。</p>{% endif %}
 </div></article>{% else %}<p class="qa-empty">{{ '本次已确认无问答。' if detail.batch.status=='no_questions' else '本批次没有已保存的问题。' }}</p>{% endfor %}
 </div>
-<script src="{{ url_for('static',filename='reviews.js') }}" defer></script>
+<script src="{{ url_for('static',filename='reviews.js') }}" defer></script>{% if not integrated %}<script src="{{ url_for('static',filename='question_page.js') }}" defer></script>{% endif %}
 {% endmacro %}

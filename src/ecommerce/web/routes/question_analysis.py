@@ -33,7 +33,8 @@ def invalid(error):
 def history(product):
     """读取指定批次历史；参数：平台商品；返回：历史页面，不联网。"""
     service.product_id(product);batch=int(request.args.get('batch','0'));service.integer(batch,1,2**63-1,'批次编号')
-    with repository.connection(settings()) as (conn,tables):service.store.sources(conn,tables,product,batch)
+    if not any(row['id']==batch for row in repository.batch_choices(settings(),product,analysis_type='questions')):
+        raise LookupError('问答批次不属于该商品或尚未发布。')
     rows=repository.history(settings(),product,batch,analysis_type='questions')
     for row in rows:row['created_at']=iso_value(row['created_at'])
     return render_template('question_analysis.html',mode='history',product=product,batch=batch,rows=rows,active='collections',shop_name=settings().shop_name)
@@ -46,6 +47,31 @@ def new(product):
     data=service.preview(settings(),product,int(request.args.get('batch','0')),request.args.get('model'),output)
     if request.args.get('dialog')=='1':return render_template('question_analysis_form.html',data=data,product=product)
     return render_template('question_analysis.html',mode='new',data=data,product=product,batch=data['batch']['id'],active='collections',shop_name=settings().shop_name)
+
+
+@question_analysis.get('/api/analysis/questions/products/<product>/summary')
+def summary(product):
+    """只读已应用批次的报告状态；参数：商品和批次；返回：成功报告与最近进度，不联网。"""
+    import sqlalchemy as sa
+    service.product_id(product);batch=int(request.args.get('batch','0'));service.integer(batch,1,2**63-1,'批次编号')
+    with repository.connection(settings()) as (conn,tables):
+        p,b=tables['products'],tables['collection_batches']
+        exists=conn.scalar(sa.select(b.c.id).join(p,b.c.product_id==p.c.id).where(p.c.platform_product_id==product,p.c.platform=='taobao',b.c.id==batch,b.c.module=='questions',b.c.visibility=='published'))
+        if not exists:raise LookupError('问答批次不属于该商品或尚未发布。')
+    rows=repository.history(settings(),product,batch,analysis_type='questions',metadata_only=True)
+    success=repository.latest_success(settings(),product,batch,analysis_type='questions',metadata_only=True)
+    active=next((row for row in rows if row['active_key']),None);latest=rows[0] if rows else None
+    message='本批尚未分析。'
+    if active:
+        from ecommerce.infrastructure.tasks.ownership import owner_alive
+        owner=active.get('owner') or {}
+        stopped=owner and owner_alive(owner.get('pid'),owner.get('started_at')) is False
+        message='分析进程已停止，请查看任务记录。' if stopped else '本批正在分析。'
+    elif success:message='本批已有成功报告。'+('最近一次分析未完成，此前报告保留。' if latest and latest['status']!='succeeded' else '')
+    elif latest:message='上次分析未完成，可查看进度与已保存内容。'
+    progress=active or (latest if latest and latest['status']!='succeeded' else None)
+    return jsonify(message=message,result_url=url_for('.result',task_id=success['id']) if success else None,
+        progress_url=url_for('.result',task_id=progress['id']) if progress else None)
 
 
 @question_analysis.post('/api/analysis/questions/products/<product>')

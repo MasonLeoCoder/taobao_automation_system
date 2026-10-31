@@ -160,12 +160,12 @@ def _question_answers(connection,tables,batch_id,questions):
         owners[answer['question_id']]['answers'].append(answer)
 
 
-def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False):
+def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False):
     """查询单批次明细；参数：批次、种类、分页、可选问题及整批规格计数开关；返回：原范围和观察。"""
     _page(after,limit)
     if type(batch_id) is not int or batch_id<=0 or (question_id is not None and (type(question_id) is not int or question_id<=0)):
         raise ValueError('批次及问题编号须为正整数')
-    store=collection_store(settings);sku_counts=None
+    store=collection_store(settings);sku_counts=None;question_counts=None
     b=store.tables['collection_batches']
     try:
         with store.engine.connect() as connection:
@@ -182,6 +182,13 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 raise ValueError('明细种类与批次模块不一致')
             if kind=='answers' and batch['module']!='questions':
                 raise ValueError('回答只属于问答批次')
+            if with_question_counts:
+                if kind!='questions':raise ValueError('问答统计只适用于问题明细')
+                answers=store.tables['answer_observations']
+                base=sa.select(sa.func.count()).select_from(table).where(table.c.batch_id==batch_id)
+                question_counts={'questions':connection.scalar(base),
+                    'incomplete':connection.scalar(base.where(table.c.answers_complete.is_not(True))),
+                    'answers':connection.scalar(sa.select(sa.func.count()).select_from(answers.join(table,sa.and_(answers.c.question_id==table.c.id,answers.c.batch_id==table.c.batch_id))).where(table.c.batch_id==batch_id))}
             if with_sku_counts:
                 if kind!='reviews':raise ValueError('评价规格统计只适用于评价明细')
                 # 与当前页共用已核对批次及读事务，只读取全批规格，不受分页/排序/游标影响。
@@ -248,6 +255,7 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
         return {'batch':public(batch),'kind':kind,'records':public(rows),'has_more':has_more,
                 'next_cursor':rows[-1]['id' if 'id' in table.c else 'batch_id'] if rows else after,
                 **({'sku_counts':sku_counts} if sku_counts is not None else {}),
+                **({'question_counts':question_counts} if question_counts is not None else {}),
                 **(page_info if page is not None else {})}
     except sa.exc.SQLAlchemyError as error:
         raise MySQLStorageError(safe_error(error)) from None
