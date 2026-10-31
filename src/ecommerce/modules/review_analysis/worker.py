@@ -19,7 +19,9 @@ def run(settings, task_id):
         data = repository.read(settings, task_id)
         if data['task']['status'] != 'queued':
             return 0
-        events = TaskEvents(settings, settings.task_database, 'analysis.reviews')
+        kind=data['task']['analysis_type']
+        label='问答分析' if kind=='questions' else '评价分析'
+        events = TaskEvents(settings, settings.task_database, 'analysis.'+kind)
         # 浏览器任务恢复不应接管独立AI进程。
         events.owner['execution_key'] = fingerprint({'analysis_id': task_id, 'root': str(settings.root), 'database': settings.mysql.database})
         try:
@@ -33,14 +35,14 @@ def run(settings, task_id):
                 owner={'pid': os.getpid(), 'started_at': process_started_at(os.getpid())}, message='后台已启动。')
             with event_session(events):
                 status = service.execute(settings, task_id, events)
-            events.finish('succeeded' if status == 'succeeded' else 'failed', '评价分析：' + status + '；分析编号：' + task_id)
+            events.finish('succeeded' if status == 'succeeded' else 'failed', label+'：' + status + '；分析编号：' + task_id)
             return 0 if status == 'succeeded' else 1
         except Exception:
             # 不输出上游异常或SQL参数；收据保留，人工恢复不自动重发。
             try:
                 repository.update_task(settings, task_id, status='interrupted', active_key=None, owner=None,
                     message='分析进程中断，已保存资料和响应收据保留；请查看调用记录并手动继续。')
-                events.finish('failed', '评价分析中断；分析编号：' + task_id)
+                events.finish('failed', label+'中断；分析编号：' + task_id)
             except Exception:
                 pass
             return 1

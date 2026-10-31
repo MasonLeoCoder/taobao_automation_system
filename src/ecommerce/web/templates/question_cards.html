@@ -8,6 +8,7 @@
 </div>
 {% endmacro %}
 {% macro question_cards(detail) %}
+{% if product is defined and product.platform_product_id is defined and detail.batch.status in ['complete','no_questions'] %}<link rel="stylesheet" href="{{ url_for('static',filename='question_analysis.css') }}"><div class="module-actions"><a class="ui-button ui-primary" data-qa-open href="{{ url_for('question_analysis.new',product=product.platform_product_id,batch=detail.batch.id) }}">分析问答</a><a class="ui-button ui-secondary" href="{{ url_for('question_analysis.history',product=product.platform_product_id,batch=detail.batch.id) }}">查看分析记录</a></div><script src="{{ url_for('static',filename='question_analysis.js') }}" defer></script>{% endif %}
 <div class="qa-sort" role="group" aria-label="问题排序"><span>排序</span>{% for code,name in [('position','原始顺序'),('content','问题内容'),('author','提问用户'),('captured_at','采集时间')] %}<a class="button action-button {{ 'action-primary' if detail.sort_spec.sort==code else 'action-neutral' }}" href="{{ sort_url(code,detail.sort_spec,{'batch':detail.batch.id}) }}">{{ name }} {{ ('↑' if detail.sort_spec.order=='asc' else '↓') if detail.sort_spec.sort==code else '↕' }}</a>{% endfor %}</div>
 <div class="qa-list" role="list" aria-label="问大家">
 {% for question in detail.records %}<article class="qa-card" role="listitem" data-question-id="{{ question.id }}">

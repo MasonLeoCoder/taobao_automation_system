@@ -446,6 +446,9 @@ def execute(settings, task_id, events):
     """执行一次恢复轮次；参数：任务和通用日志会话；返回：终态，不自动重试。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version']=='questions-v1':
+        from ecommerce.modules.question_analysis.runtime import execute as execute_questions
+        return execute_questions(settings,task_id,events,create_client)
     if task['rule_version']==v6.VERSION:return v6_runtime.execute(settings,task_id,events,create_client)
     if task['rule_version']==v5.VERSION:return v5_runtime.execute(settings,task_id,events,create_client)
     if task['rule_version']==v4.VERSION:return v4_runtime.execute(settings,task_id,events,create_client)

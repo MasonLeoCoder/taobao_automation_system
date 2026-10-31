@@ -94,12 +94,17 @@ def product_context(conn, tables, identity):
     return context
 
 
-def create(settings, product, batch_id, rules, parameters, provider, model, rule_version, expected_hash, force=False):
+def create(settings, product, batch_id, rules, parameters, provider, model, rule_version, expected_hash, force=False, *, analysis_type="reviews"):
     """事务创建并防止重复任务；参数：来源、固定规则和参数、预览哈希；返回：任务与是否新建。"""
     with connection(settings, True) as (conn, tables):
         p, t, src = (tables[n] for n in ('products', 'analysis_tasks', 'analysis_sources'))
         conn.execute(sa.select(p.c.id).where(p.c.platform == 'taobao', p.c.platform_product_id == product).with_for_update()).all()
-        identity, batch, items = sources(conn, tables, product, batch_id,full_batch=rule_version=='reviews-v6')
+        if analysis_type == 'questions':
+            from ecommerce.modules.question_analysis.store import sources as question_sources
+            identity, batch, items = question_sources(conn,tables,product,batch_id)
+        elif analysis_type == 'reviews':
+            identity, batch, items = sources(conn, tables, product, batch_id,full_batch=rule_version=='reviews-v6')
+        else:raise ValueError('分析类型无效。')
         if fingerprint(items) != expected_hash:
             raise ValueError('资料已变化，请刷新确认后再分析。')
         if parameters.get('plan') and product_context(conn, tables, identity) != parameters['plan']['context']:
@@ -107,7 +112,7 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
         digest = fingerprint({'product': identity['id'], 'batch': batch['id'], 'items': items, 'rules': rules,
                               'parameters': {k:v for k,v in parameters.items() if k not in {'max_calls','max_tokens','config_file','budget_history','budget_mode','validation_history','supplement_history','active_supplement'}},
                               'provider': provider, 'model': model, 'rule_version': rule_version})
-        if rule_version=='reviews-v6':
+        if rule_version in ('reviews-v6','questions-v1'):
             # 成品身份只含影响分析结果的内容，不因价格、预算、分词器或容量资料更新而重收费用。
             digest=fingerprint({'product':identity['id'],'batch':batch['id'],'items':items,'rules':rules,
                 'title':parameters['plan']['context'].get('title'),'provider':provider,'model':model,'rule_version':rule_version,
@@ -118,7 +123,7 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
             selected=next((r for r in existing if r['status']=='succeeded'),existing[0]) if rule_version=='reviews-v6' else existing[0]
             return dict(active or selected), False
         now = database_now()
-        row = dict(id=uuid4().hex, product_id=identity['id'], analysis_type='reviews', fingerprint=digest, active_key=digest,
+        row = dict(id=uuid4().hex, product_id=identity['id'], analysis_type=analysis_type, fingerprint=digest, active_key=digest,
                    status='queued', provider=provider, model=model, rule_version=rule_version, rules=rules, parameters=parameters,
                    source_count=len(items), processed_count=0, usage={}, message='已保存资料，等待后台启动。', owner=None,
                    execution_task_id=None, created_at=now, updated_at=now)
@@ -126,7 +131,8 @@ def create(settings, product, batch_id, rules, parameters, provider, model, rule
         scope = {key: str(batch[key]) if key == 'captured_at' else batch.get(key) for key in
                  ('captured_at', 'coverage_status', 'requested_limit', 'stop_reason', 'end_confirmed', 'source_batch_key', 'task_id')}
         for position, item in enumerate(items, 1):
-            conn.execute(src.insert().values(id=uuid4().hex, analysis_id=row['id'], batch_id=batch['id'], review_id=item['id'],
+            conn.execute(src.insert().values(id=uuid4().hex, analysis_id=row['id'], batch_id=batch['id'], review_id=item['id'] if analysis_type=='reviews' else None,
+                **({'question_id':item['id']} if analysis_type=='questions' else {}),
                 position=position, snapshot=item, content_hash=fingerprint(item), scope=scope))
         return row, True
 
@@ -166,14 +172,14 @@ def batch_choices(settings, product):
             .order_by(b.c.captured_at.desc(), b.c.id.desc())).mappings()]
 
 
-def history(settings, product, batch_id=None):
+def history(settings, product, batch_id=None, *, analysis_type="reviews"):
     """查询商品或指定批次最近100次分析；参数：配置、平台编号、可选批次；返回：任务及来源、报告标记。"""
     with connection(settings) as (conn, tables):
         p, t, source, report = (tables[n] for n in ('products', 'analysis_tasks', 'analysis_sources', 'analysis_reports'))
         batches = sa.select(source.c.analysis_id, sa.func.min(source.c.batch_id).label('batch_id')).group_by(source.c.analysis_id).subquery()
         query = sa.select(t, batches.c.batch_id, sa.exists(sa.select(report.c.id).where(report.c.analysis_id == t.c.id)).label('has_report'))
         query = query.join(p, t.c.product_id == p.c.id).outerjoin(batches, batches.c.analysis_id == t.c.id).where(
-            p.c.platform == 'taobao', p.c.platform_product_id == product, t.c.analysis_type == 'reviews')
+            p.c.platform == 'taobao', p.c.platform_product_id == product, t.c.analysis_type == analysis_type)
         if batch_id is not None:
             query = query.where(batches.c.batch_id == batch_id)
         return [dict(r) for r in conn.execute(query.order_by(t.c.created_at.desc(), t.c.id.desc()).limit(100)).mappings()]

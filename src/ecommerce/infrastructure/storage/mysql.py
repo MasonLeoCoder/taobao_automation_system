@@ -9,7 +9,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import URL
 
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v18 import REVISION, PREVIOUS_REVISION, build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v19 import REVISION, PREVIOUS_REVISION, build_metadata
 from ecommerce.infrastructure.storage.mysql_checks import check_expression_tree
 from ecommerce.shared.config import MySQLSettings,mysql_password
 
