@@ -133,3 +133,22 @@ class QuestionTests(TestCase):
         data=service.read(self.settings,identifier);self.assertEqual(client.complete_messages.call_count,1)
         self.assertEqual(data['calls'][0]['status'],'unknown');self.assertEqual(data['task']['status'],'failed')
         self.assertEqual(repository.budget_status(data['task']['parameters'],data['calls'])['used_calls'],1)
+
+    def test_reading_groups_quotes_and_preserves_report(self):
+        """只读目录、明确标签及引用分组保留原稿，含义不明确不自动分类。"""
+        from ecommerce.modules.question_analysis.view import reading,emphasize
+        items=service.preview(self.settings,'123',6)['items']
+        text=sample_report(items)+'\n\n【问题10】原文：“会不会掉胶？”\n\n【问题10｜回答20】原文：“我使用两周没有掉胶”'
+        content={'markdown':text,'validation':checks.check(text,'stop',items)};original=copy.deepcopy(content)
+        result=reading(content)
+        self.assertEqual(len(result['sections']),7);self.assertTrue(result['sections'][0]['lead'])
+        rendered=''.join(s['html'] for s in result['sections'])
+        self.assertIn('2处引用',rendered);self.assertIn('qa-citation-3',rendered);self.assertIn('#answer-20',rendered)
+        self.assertEqual(content,original)
+        self.assertIn('ui-report-key-label',emphasize('<p>先补资料：检查规格。</p>'))
+        self.assertEqual(emphasize('<p>用户问会不会掉胶。</p>'),'<p>用户问会不会掉胶。</p>')
+        self.assertEqual(emphasize('<p><strong>先补资料：检查规格。</strong></p>'),'<p><strong>先补资料：检查规格。</strong></p>')
+        listed=emphasize('<p>待核实事项：规格未确认；长度未提供。</p>')
+        self.assertIn('<ul>',listed);self.assertIn('规格未确认；',listed)
+        quoted={'markdown':text+'\n\n> ## 总体判断\n> 引用内标题不应进入报告目录。','validation':checks.check(text,'stop',items)}
+        self.assertEqual(len(reading(quoted)['sections']),7)

@@ -1,5 +1,14 @@
 /* 问答预览和显式收费操作；显示文字只用安全文本节点。 */
 (() => {
+  const directory=document.querySelector('[data-qa-directory]');
+  if(directory){const narrow=matchMedia('(max-width:1000px)');directory.open=!narrow.matches;narrow.addEventListener('change',event=>{directory.open=!event.matches;});}
+  const reveal=(target)=>{for(let node=target.parentElement;node;node=node.parentElement)if(node.tagName==='DETAILS')node.open=true;};
+  document.querySelectorAll('[data-qa-source],[data-qa-jump]').forEach(link=>link.addEventListener('click',()=>{
+    const target=document.getElementById(link.hash.slice(1));if(!target)return;reveal(target);if(target.tagName==='DETAILS')target.open=true;
+    if(link.hasAttribute('data-qa-source')){const back=document.querySelector('[data-qa-source-back]');if(back){back.href='#'+link.dataset.qaReturn;back.hidden=false;target.before(back);}}
+  }));
+  const sourceBack=document.querySelector('[data-qa-source-back]');
+  if(sourceBack)sourceBack.addEventListener('click',()=>{const target=document.getElementById(sourceBack.hash.slice(1));if(target)reveal(target);});
   const token = () => document.querySelector('meta[name="workbench-token"]').content;
   const post = async (url, value) => {
     const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json','X-Collection-Token':token()},body:JSON.stringify(value)});

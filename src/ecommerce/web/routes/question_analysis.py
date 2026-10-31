@@ -58,20 +58,8 @@ def start(product):
 
 def render_report(content):
     """安全正文中按引用位置折叠；参数：持久报告；返回：安全HTML，不改原稿。"""
-    text=content['markdown'];replacements=[]
-    # 随机标记避免原稿中相同普通文字误替换。
-    from uuid import uuid4
-    prefix='QAEVIDENCE'+uuid4().hex
-    for entry in reversed(content['validation']['citations']):
-        if entry['quote'] is None:continue
-        token=prefix+str(entry['index']);label=html.escape(entry['marker']);quote=html.escape(entry['quote'])
-        anchor='#question-'+str(entry['question_id']) if entry['question_id'] else '#qa-checks'
-        replacements.append((token,'<details class="ui-report-evidence"><summary>查看原文依据 · '+label+'</summary><div class="ui-report-evidence-body"><div class="ui-report-evidence-item"><a href="'+anchor+'">'+label+'</a> 原文：“'+quote+'”</div></div></details>'))
-        text=text[:entry['start']]+token+text[entry['end']:]
-    rendered=report.render(text)
-    for token,value in replacements:
-        rendered=rendered.replace('<p>'+token+'</p>',value).replace(token,value)
-    return rendered
+    from ecommerce.modules.question_analysis.view import evidence_html
+    return evidence_html(content)
 
 
 @question_analysis.get('/analysis/questions/tasks/<task_id>')
@@ -91,7 +79,8 @@ def result(task_id):
             body=render_template('question_analysis_export.html',data=data,content=content,rendered=render_report(content));mime='text/html'
         else:raise ValueError('下载格式无效。')
         return Response(body,content_type=mime+'; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="questions-{task_id}.{download}"'})
-    return render_template('question_analysis.html',mode='result',data=data,content=content,rendered=render_report(content) if content else '',
+    from ecommerce.modules.question_analysis.view import reading
+    return render_template('question_analysis.html',reading=reading(content) if content else None,mode='result',data=data,content=content,rendered=render_report(content) if content else '',
         product=data['product']['platform_product_id'],batch=data['sources'][0]['batch_id'],active='collections',shop_name=settings().shop_name)
 
 

@@ -59,8 +59,16 @@ def check():
                         identifier=case.create_qa();data=service.preview(case.settings,'123',6);client=Mock();client.complete_messages.return_value={'text':sample_report(data['items']),'finish_reason':'stop','usage':{'total_tokens':10}}
                         runtime.execute(case.settings,identifier,Mock(),Mock(return_value=client))
                         page.goto(base+'/analysis/questions/tasks/'+identifier)
+                        expect(page.locator('.qa-report-body .ui-report-focus')).to_have_count(1)
+                        expect(page.locator('[data-qa-directory] nav a')).to_have_count(7)
+                        assert page.locator('[data-qa-directory]').evaluate('(element)=>element.open')==(width>1000)
+                        expect(page.get_by_text('测试商品',exact=True)).to_be_visible()
                         evidence=page.locator('.ui-report-evidence');expect(evidence).to_have_count(1);assert evidence.get_attribute('open') is None
                         evidence.locator('summary').click();expect(evidence.locator('.ui-report-evidence-item')).to_be_visible()
+                        evidence.locator('[data-qa-source]').click()
+                        expect(page.locator('#answer-20')).to_be_visible()
+                        page.locator('[data-qa-source-back]').click()
+                        expect(evidence.locator('.ui-report-evidence-item')).to_be_in_viewport()
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
                         page.screenshot(path=str(output/f'report-{width}.png'))
                         page.goto(base+'/analysis/questions/products/123?batch=6');expect(page.get_by_text('查看报告与进度')).to_be_visible()
