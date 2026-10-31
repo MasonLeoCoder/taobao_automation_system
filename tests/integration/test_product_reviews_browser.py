@@ -1,6 +1,7 @@
 """商品评价合并页的隔离浏览器验证，不访问淘宝或真实媒体来源。"""
 import hashlib
 import os
+from pathlib import Path
 import unittest
 
 from playwright.sync_api import expect
@@ -50,8 +51,8 @@ class ProductReviewsBrowserTests(unittest.TestCase):
         expect(overview).to_contain_text('25个评价标签')
         expect(comments).to_contain_text('25条评价')
         expect(comments).to_contain_text('采集范围未记录')
-        expect(overview.locator('.review-overview-table')).to_contain_text('99.6%')
-        expect(overview.locator('.review-overview-table')).to_contain_text('近3个月')
+        expect(overview.locator('.review-overview-metrics')).to_contain_text('99.6%')
+        expect(overview.locator('.review-overview-metrics')).to_contain_text('近3个月')
         tags=overview.locator('.review-tag')
         expect(tags).to_have_count(25)
         expect(overview.get_by_role('navigation',name='分页')).to_have_count(0)
@@ -104,8 +105,8 @@ class ProductReviewsBrowserTests(unittest.TestCase):
         self.goto('/collections/products/123?batch=31&page=2&tag_page=2')
         overview=self.page.locator('#review-overview');comments=self.page.locator('#review-comments')
         overview.locator('select').select_option('32');overview.get_by_role('button',name='查看',exact=True).click()
-        expect(overview.locator('.review-overview-table')).to_contain_text('历史总数')
-        expect(overview.locator('.review-overview-table')).to_contain_text('100%')
+        expect(overview.locator('.review-overview-metrics')).to_contain_text('历史总数')
+        expect(overview.locator('.review-overview-metrics')).to_contain_text('100%')
         expect(comments.locator('tbody tr')).to_have_count(5)
         expect(comments).to_contain_text('批次 31')
         self.assertEqual(self.host.errors,[])
@@ -122,6 +123,52 @@ class ProductReviewsBrowserTests(unittest.TestCase):
         row['state']='running';jobs.save(self.host.settings,row);self.host.publish(row)
         expect(self.page.locator('#collection-attention')).to_be_visible(timeout=7000)
         expect(self.page.locator('#collection-attention')).to_contain_text('等待人工登录淘宝')
+        self.assertEqual(self.host.errors,[])
+
+    def test_overview_tags_precede_metrics_and_responsive_controls_keep_both_logs(self):
+        """标签在指标上方、全量换行，两个日志及独立历史选择保留。"""
+        self.goto();overview=self.page.locator('#review-overview')
+        for width in (1440,768,390,320):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            tags=overview.locator('.review-tags');metrics=overview.locator('.review-overview-metrics')
+            self.assertLess(tags.bounding_box()['y']+tags.bounding_box()['height'],metrics.bounding_box()['y'])
+            expect(tags.locator('.review-tag')).to_have_count(25)
+            expect(overview.locator('.ui-summary-metric')).to_have_count(2)
+            expect(overview.locator('[data-job-logs]')).to_have_count(1)
+            expect(self.page.locator('#review-comments [data-job-logs]')).to_have_count(1)
+            self.assertIn('task_id='+self.fixture.task,overview.locator('[data-job-logs]').get_attribute('href'))
+            self.assertTrue(overview.evaluate('(n)=>n.scrollWidth<=n.clientWidth+1'))
+            if width<=360:
+                boxes=overview.locator('.ui-summary-metric').all()
+                self.assertGreater(boxes[1].bounding_box()['y'],boxes[0].bounding_box()['y'])
+            if os.environ.get('REVIEW_LAYOUT_OUTPUT'):
+                output=Path(os.environ['REVIEW_LAYOUT_OUTPUT']);output.mkdir(parents=True,exist_ok=True)
+                overview.screenshot(path=str(output/f'overview-{width}.png'))
+        self.assertEqual(self.host.errors,[])
+
+    def test_compact_success_does_not_hide_failed_pending_or_unconfirmed_messages(self):
+        """仅成功且确认入库时简写，暂停/失败/待入库仍完整显示。"""
+        job={'id':'f'*32,'product_id':'123','module':'review_summary','mode':'single','batch_id':30,
+             'result_url':'/collections/products/123?batch=30','logs_url':'/logs?task_id='+'f'*32,
+             'created_at':'2026-10-31T12:00:00+08:00','done':True,'valid':True,'state':'succeeded','message':'本模块已保存并确认入库'}
+        self.context.route('**/api/collections/products/123/jobs',lambda route:route.fulfill(json={'jobs':[dict(job)]}))
+        self.context.route('**/api/collection-jobs/'+'f'*32,lambda route:route.fulfill(json=dict(job)))
+        cases=[('succeeded',True,True,False,'本模块已保存并确认入库','采集完成'),
+               ('succeeded',True,False,False,'结果仍待核对','采集完成：结果仍待核对'),
+               ('storage_pending',False,False,False,'等待数据库恢复，不能确认入库','等待入库：等待数据库恢复，不能确认入库'),
+               ('failed',True,False,False,'原始失败原因完整保留','采集失败：原始失败原因完整保留'),
+               ('running',False,False,True,'等待人工处理','采集已中断（保留现场）：等待人工处理')]
+        for state,done,valid,halted,message,expected in cases:
+            job.update(state=state,done=done,valid=valid,halted=halted,message=message)
+            self.goto();status=self.page.locator('#review-overview .module-job-status')
+            expect(status).to_have_text(expected)
+            self.assertEqual(self.page.locator('#review-overview .module-job-status').count(),1)
+        for extra,prefix in [({'failures':[{'module':'questions'}]},'已结束，存在模块错误'),
+                             ({'skipped_count':1},'已结束（含跳过项目）'),
+                             ({'halted':True},'采集已中断（保留现场）')]:
+            job.update({'state':'succeeded','done':True,'valid':True,'halted':False,'failures':[],
+                        'skipped_count':0,'message':'仍需完整展示的说明',**extra})
+            self.goto();expect(self.page.locator('#review-overview .module-job-status')).to_have_text(prefix+'：仍需完整展示的说明')
         self.assertEqual(self.host.errors,[])
 
 

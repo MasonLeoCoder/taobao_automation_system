@@ -12,17 +12,24 @@
 {% endmacro %}
 {% set overview=reviews_view.overview %}{% set comments=reviews_view.comments %}
 <section class="panel review-section" id="review-overview" data-hide-success-result data-collection-module="review_summary" data-latest-batch="{{ overview.history[0].id if overview.history else 0 }}">
-<h2>评价概览</h2>
+{% set overview_complete=overview.selected and overview.selected.status in ['complete','no_reviews'] %}
+<div class="review-overview-heading"><h2>评价概览</h2><p class="module-job-status ui-report-state {{ 'is-ready' if overview_complete else 'is-pending' if overview.selected else 'is-muted' }}" data-compact-success role="status" aria-live="polite">{{ '已确认无评价' if overview.selected and overview.selected.status=='no_reviews' else '采集完成' if overview_complete else '资料待确认' if overview.selected else '暂无概览资料' }}</p></div>
+<div class="review-overview-toolbar">
 {{ selection_form(overview,'review_summary','summary_batch','tag_page','review-overview') }}
+{{ module_actions(overview,'review_summary','概览',false) }}
+</div>
 {% if overview.selected %}
-<p>{{ scope(overview.selected) }} · 批次 {{ overview.selected.id }}</p>
+<p class="ui-report-meta review-overview-meta">当前批次 {{ overview.selected.id }} · 概览采集时间：{{ overview.selected.captured_at|full_local_time }}</p>
+{% if not overview_complete %}<div class="provenance-warning review-overview-warning">{{ scope(overview.selected) }}</div>{% endif %}
 {% if context_run and overview.selected.run_id!=context_run %}<p class="provenance-warning">已手动切换历史概览，本批次不属于上方关联运行。</p>{% endif %}
-<div class="table-wrap"><table class="review-overview-table"><thead><tr><th>评价总数</th><th>好评率</th><th>好评率统计周期</th><th>概览采集时间</th></tr></thead><tbody><tr><td>{{ overview.summary.count_raw or '未记录' }}</td><td>{{ overview.rate_text }}</td><td>{{ overview.summary.period_raw or '未记录' }}</td><td>{{ overview.selected.captured_at|full_local_time }}</td></tr></tbody></table></div>
-<h3>评价标签</h3>
-{% if overview.tags %}<ul class="review-tags" aria-label="评价标签">{% for item in overview.tags %}<li class="review-tag"><span>{{ item.label }}</span><span class="review-tag-count">{{ item.count_text }}</span></li>{% endfor %}</ul>
+<div class="review-overview-tags-heading"><h3>评价标签</h3><span class="ui-report-meta">{{ overview.tags|length }}个评价标签</span></div>
+{% if overview.tags %}<ul class="review-tags ui-review-tags" aria-label="评价标签">{% for item in overview.tags %}<li class="review-tag"><span>{{ item.label }}</span><span class="review-tag-count">{{ item.count_text }}</span></li>{% endfor %}</ul>
 {% else %}<p class="review-empty">{{ '本次已确认无评价。' if overview.selected.status=='no_reviews' else '本次没有保存评价标签。' }}</p>{% endif %}
+<dl class="review-overview-metrics" aria-label="平台评价指标">
+  <div class="ui-summary-metric"><dt>平台评价总数</dt><dd>{{ overview.summary.count_raw or '未记录' }}</dd></div>
+  <div class="ui-summary-metric"><dt>好评率</dt><dd>{{ overview.rate_text }}</dd><dd class="ui-summary-metric-note">统计周期：{{ overview.summary.period_raw or '未记录' }}</dd></div>
+</dl>
 {% else %}<p class="review-empty">{{ '本次关联运行尚未保存评价概览，可选择历史资料。' if context_run else '尚无有效评价概览，可采集或选择历史资料。' }}</p>{% endif %}
-{{ module_actions(overview,'review_summary','概览') }}
 </section>
 <section class="panel review-section" id="review-comments" data-hide-success-result data-collection-module="reviews" data-latest-batch="{{ comments.history[0].id if comments.history else 0 }}">
 <h2>评价明细</h2>

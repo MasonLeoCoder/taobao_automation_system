@@ -90,6 +90,13 @@
     if (job.done && job.batch_id && Number(card.dataset.latestBatch) > Number(job.batch_id)) return;
     const status = card.querySelector('.module-job-status');
     status.textContent = `${stateLabel(job)}：${job.message}`;
+    // 概览只压缩已确认成功的提示；失败、暂停和待入库仍保留完整信息。
+    if (status.hasAttribute('data-compact-success')) {
+      const confirmed = job.done && job.valid && job.state === 'succeeded' && stateLabel(job) === '采集完成';
+      if (confirmed) status.textContent = '采集完成';
+      status.classList.remove('is-ready','is-pending','is-active','is-error','is-muted');
+      status.classList.add(confirmed ? 'is-ready' : job.state === 'failed' ? 'is-error' : job.done || job.halted ? 'is-pending' : 'is-active');
+    }
     const actions = card.querySelector('.module-actions');
     let result = actions.querySelector('[data-job-result]');
     if (job.done && job.result_url) {
