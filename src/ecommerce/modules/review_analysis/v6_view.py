@@ -2,7 +2,7 @@
 import copy
 import html
 import re
-from ecommerce.modules.review_analysis import v6_report,v6_runtime,v6_checks
+from ecommerce.modules.review_analysis import v6_report,v6_runtime,v6_checks,v6_evidence
 
 
 def reading_view(rendered):
@@ -36,9 +36,9 @@ def enrich(settings,data,version=None):
         for index,entry in enumerate(entries,1):
             entry.update(index=index,reason='此处保留旧规则检查结果，请打开最新版本后本地重新检查。',
                 original_text=None,marker='旧版引用')
-    content['html'],data['report_navigation']=reading_view(v6_report.render(content['markdown']))
+    content['html'],data['report_navigation']=reading_view(v6_evidence.collapse(v6_report.render(content['markdown'])))
     data['report_created_short']=data['report']['created_at'].strftime('%Y-%m-%d %H:%M') if data['report'] else ''
-    for phase in content['phases']:phase['html']=v6_report.render(phase['text'])
+    for phase in content['phases']:phase['html']=v6_evidence.collapse(v6_report.render(phase['text']))
     data['v6_content']=content
     data['is_latest_report']=bool(data['report'] and data['reports'] and data['report']['id']==data['reports'][-1]['id'])
     data['needs_local_recovery']=any(c['status']=='inflight' for c in data['calls'])

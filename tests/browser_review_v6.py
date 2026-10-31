@@ -36,6 +36,8 @@ def check(output):
                         expect(page.locator('.ra-overview-metrics')).to_contain_text('评价样本 2 条')
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
                         page.screenshot(path=str(output/f'report-{width}.png'))
+                        # 该模拟稿把说明与引文放在同段，必须保留展开，不能连分析一起隐藏。
+                        expect(page.locator('[data-report-document] .ui-report-evidence')).to_have_count(0)
                         page.locator('.ra-v6-report a[href="#review-8"]').click();expect(page.locator('#review-8')).to_have_attribute('open','')
                         page.locator('#report-citations > summary').click()
                         with page.expect_navigation():page.get_by_role('button',name='重新检查已有报告（不调用AI）').click()

@@ -43,6 +43,11 @@ def check(output):
                         expect(page.locator('#ra-progress')).to_contain_text('报告已生成')
                         first_section=page.locator('#report-section-1').bounding_box();assert 0<=first_section['y'] and first_section['y']+first_section['height']<height
                         assert not page.locator('#report-citations').get_attribute('open')
+                        evidence=page.locator('[data-report-document] .ui-report-evidence').first
+                        expect(evidence).not_to_have_attribute('open','');expect(evidence.locator('summary')).to_contain_text('66处引用')
+                        expect(evidence.locator('a').first).not_to_be_visible()
+                        evidence.locator('summary').focus();page.keyboard.press('Enter');expect(evidence.locator('a').first).to_be_visible()
+                        evidence.locator('summary').click();expect(evidence.locator('a').first).not_to_be_visible()
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
                         page.screenshot(path=str(output/f'overview-{width}.png'))
                         page.locator('.ui-action-menu > summary').click();expect(page.get_by_text('可阅读报告 · HTML',exact=True)).to_be_visible()
@@ -65,6 +70,8 @@ def check(output):
                         page.locator('#report-citations > summary').click();expect(page.get_by_text('此版本保留旧规则检查结果',exact=False)).to_be_visible()
                         export=page.request.get(base+'/analysis/reviews/tasks/'+identifier+'/export?format=html');assert export.status==200
                         page.set_content(export.text());assert page.locator('form,script,img').count()==0
+                        offline_evidence=page.locator('[data-report-document] .ui-report-evidence').first
+                        expect(offline_evidence.locator('a').first).not_to_be_visible();offline_evidence.locator('summary').click();expect(offline_evidence.locator('a').first).to_be_visible()
                         page.locator('#report-citations > summary').click()
                         expect(page.get_by_text('引用核对：共 66 处',exact=False)).to_be_visible()
                         after=repository.read(case.settings,identifier);assert after['calls']==before['calls'] and after['sources']==before['sources'] and after['reports'][0]==before['reports'][0]
