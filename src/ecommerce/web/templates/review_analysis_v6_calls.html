@@ -1,0 +1,12 @@
+{% if not exporting %}<details class="ui-report-fold" id="analysis-resume"><summary>调用记录与历史版本</summary><div class="ui-report-fold-body"><p>原调用状态和错误保留当时记录；上方报告生成与引用检查展示本版本结果。</p>
+{% if task.status not in ['queued','running'] or task.appears_interrupted %}
+{% if data.needs_local_recovery %}{{ control_button('核对已有响应收据（不调用AI）',{'type':'button','data-ra-recover':url_for('review_analysis.recover',task_id=task.id)}) }}{% endif %}
+{% if data.resume_budget.required_calls and not report.generation.complete and not data.needs_local_recovery and not data.resume_budget.get('blocked') and data.is_latest_report %}<details><summary>查看剩余请求与费用，确认后继续</summary><form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}" data-plan-hash="{{ data.resume_budget.plan_hash }}">
+<p>剩余 {{ data.resume_budget.required_calls }} 次请求；已完整保存、消息一致的请求不重发。需要新增用量预留 {{ data.resume_budget.minimum_tokens-data.budget.used_tokens }} Token，含报告输出上限及余量。</p>
+<label>{{ input_control({'type':'checkbox','name':'increase_budget'}) }} 明确调整总额度（不自动增加）</label>
+{% call field('继续后的Token总上限') %}{{ input_control({'type':'number','name':'max_tokens','value':data.resume_budget.suggested_tokens,'min':task.parameters.max_tokens,'max':5000000,'required':true,'disabled':true}) }}{% endcall %}
+{% call field('继续后的请求次数总上限') %}{{ input_control({'type':'number','name':'max_calls','value':data.resume_budget.suggested_calls,'min':task.parameters.max_calls,'max':200,'required':true,'disabled':true}) }}{% endcall %}
+<label>{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }} 允许剩余请求及调用费用</label><label>{{ input_control({'type':'checkbox','name':'acknowledge_unknown'}) }} 已核对未知请求，了解重发可能重复计费</label>
+{{ control_button('确认费用后继续',{'type':'submit'}) }}<p class="ra-feedback" role="status"></p></form></details>{% endif %}{% endif %}
+{% for call in data.calls %}<details><summary>{{ '报告' if call.chunk_index==0 else '分组 '+call.chunk_index|string }} · {{ call.status }} · {{ call.usage.get('total_tokens','未知') }} Token</summary><p>{{ call.error }}</p>{{ text_preview(call.request.prompt) }}{% if call.response %}<details><summary>原始返回（未改写）</summary>{{ text_preview(call.response.text) }}</details>{% endif %}</details>{% endfor %}
+<h3>报告历史</h3>{% for old in data.reports %}<p><a href="{{ url_for('review_analysis.result',task_id=task.id,version=old.version) }}">版本 {{ old.version }}</a> · {{ old.created_at.strftime('%Y-%m-%d %H:%M') }}</p>{% endfor %}</div></details>{% endif %}

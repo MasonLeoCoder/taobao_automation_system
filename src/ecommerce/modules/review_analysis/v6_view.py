@@ -1,6 +1,20 @@
 """新报告读取与安全渲染，查看和导出不创建AI客户端。"""
 import copy
+import html
+import re
 from ecommerce.modules.review_analysis import v6_report,v6_runtime,v6_checks
+
+
+def reading_view(rendered):
+    """为已安全渲染正文附加目录锚点；参数：HTML；返回：展示HTML和目录，不写报告。"""
+    sections=[]
+    def heading(match):
+        """仅为已知章节添加程序生成的锚点；参数：标题；返回：安全标签。"""
+        label=html.unescape(re.sub(r'<[^>]*>','',match[2]))
+        if not any(name in label for name in v6_checks.SECTIONS):return match[0]
+        identity='report-section-'+str(len(sections)+1);sections.append({'id':identity,'label':label})
+        return '<h'+match[1]+' id="'+identity+'">'+match[2]+'</h'+match[1]+'>'
+    return re.sub(r'<h([123])>(.*?)</h\1>',heading,rendered,flags=re.S),sections
 
 
 def enrich(settings,data,version=None):
@@ -22,7 +36,8 @@ def enrich(settings,data,version=None):
         for index,entry in enumerate(entries,1):
             entry.update(index=index,reason='此处保留旧规则检查结果，请打开最新版本后本地重新检查。',
                 original_text=None,marker='旧版引用')
-    content['html']=v6_report.render(content['markdown'])
+    content['html'],data['report_navigation']=reading_view(v6_report.render(content['markdown']))
+    data['report_created_short']=data['report']['created_at'].strftime('%Y-%m-%d %H:%M') if data['report'] else ''
     for phase in content['phases']:phase['html']=v6_report.render(phase['text'])
     data['v6_content']=content
     data['is_latest_report']=bool(data['report'] and data['reports'] and data['report']['id']==data['reports'][-1]['id'])

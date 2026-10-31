@@ -33,10 +33,11 @@ def check(output):
                     with patch.object(service,'create_client',side_effect=AssertionError('只读页面不得创建AI客户端')):
                         assert page.goto(base+'/analysis/reviews/tasks/'+task).status==200
                         expect(page.get_by_role('heading',name='用户痛点',exact=True)).to_be_visible()
-                        expect(page.get_by_text('本批来源 2 条',exact=False)).to_be_visible()
+                        expect(page.locator('.ra-overview-metrics')).to_contain_text('评价样本 2 条')
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
                         page.screenshot(path=str(output/f'report-{width}.png'))
                         page.locator('.ra-v6-report a[href="#review-8"]').click();expect(page.locator('#review-8')).to_have_attribute('open','')
+                        page.locator('#report-citations > summary').click()
                         with page.expect_navigation():page.get_by_role('button',name='重新检查已有报告（不调用AI）').click()
                         page.goto(base+'/analysis/reviews/tasks/'+task+'?version=1');expect(page.get_by_text('历史版本，仅供查看',exact=False)).to_be_visible()
                         export=page.request.get(base+'/analysis/reviews/tasks/'+task+'/export?format=html');assert export.status==200

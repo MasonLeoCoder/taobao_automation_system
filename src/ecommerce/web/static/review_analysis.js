@@ -76,11 +76,21 @@
     loadBatchSummary();
   }
   function openSource() {
-    if (!/^#review-\d+$/.test(location.hash)) return;
+    if (!/^#(?:review-\d+|report-(?:section-\d+|citations|sources|usage|metadata)|citation-check-\d+|analysis-resume)$/.test(location.hash)) return;
     const target=document.querySelector(location.hash);
+    if (!target) return;
     if (target instanceof HTMLDetailsElement) target.open=true;
+    let parent=target.parentElement?.closest('details');
+    while(parent){parent.open=true;parent=parent.parentElement?.closest('details');}
+    requestAnimationFrame(()=>target.scrollIntoView({block:'start'}));
   }
   openSource();window.addEventListener('hashchange',openSource);
+  document.addEventListener('click',event=>{
+    if(event.target.closest('a[href^="#"]')) setTimeout(openSource,0);
+    document.querySelectorAll('.ui-action-menu[open]').forEach(menu=>{if(!menu.contains(event.target)) menu.open=false;});
+  });
+  document.addEventListener('keydown',event=>{if(event.key==='Escape')document.querySelectorAll('.ui-action-menu[open]').forEach(menu=>{menu.open=false;menu.querySelector('summary').focus();});});
+  if(matchMedia('(max-width:1100px)').matches) document.querySelectorAll('.ra-report-directory').forEach(directory=>directory.open=false);
   async function post(url, data) {
     let response,result;
     try { response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Collection-Token': token}, body: JSON.stringify(data)}); }
@@ -234,7 +244,11 @@
       fact_text:row.querySelector('[name=fact_text]').value}))}), () => location.reload());
   document.querySelectorAll('[data-ra-recount]').forEach(button => button.addEventListener('click', async () => {
     button.disabled = true;
-    try { await post(button.dataset.raRecount, button.dataset.raReportId ? {report_id:button.dataset.raReportId} : {}); location.reload(); }
+    try {
+      const result=await post(button.dataset.raRecount, button.dataset.raReportId ? {report_id:button.dataset.raReportId} : {});
+      if(button.dataset.raReportId){const next=new URL(location.href);next.searchParams.set('version',String(result.version));next.hash='report-citations';location.assign(next.href);}
+      else location.reload();
+    }
     catch(error) { document.querySelector('#ra-global-feedback').textContent = error.message; button.disabled = false; }
   }));
   const task = document.querySelector('[data-ra-task]');

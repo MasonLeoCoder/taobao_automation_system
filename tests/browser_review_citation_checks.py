@@ -18,7 +18,10 @@ def check(output):
         browser=playwright.chromium.launch(headless=True)
         try:
             for width,height in ((1440,1000),(390,844)):
-                case=CitationWorkflowTests();case.setUp();identifier=case.seed(legacy=True);before=repository.read(case.settings,identifier)
+                case=CitationWorkflowTests();case.setUp();identifier=case.seed(legacy=True)
+                with case.engine.begin() as conn:
+                    table=case.tables['products'];conn.execute(table.update().where(table.c.id==1).values(platform_product_id='1234567890123'))
+                before=repository.read(case.settings,identifier)
                 server=make_server('127.0.0.1',0,case.app);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
                 base=f'http://127.0.0.1:{server.server_port}';page=browser.new_page(viewport={'width':width,'height':height})
                 page.on('pageerror',lambda error:errors.append(str(error)))
@@ -30,25 +33,39 @@ def check(output):
                 try:
                     with patch.object(service,'create_client',side_effect=AssertionError('本地检查不得调用AI')),patch.object(service,'launch',side_effect=AssertionError('本地检查不得启动付费进程')):
                         page.goto(base+'/analysis/reviews/tasks/'+identifier)
+                        page.locator('#report-citations > summary').click()
                         expect(page.get_by_text('此版本保留旧规则检查结果',exact=False)).to_be_visible()
                         assert repository.read(case.settings,identifier)==before
                         assert page.locator('[data-ra-resume]').count()==0
                         with page.expect_navigation():page.get_by_role('button',name='重新检查已有报告（不调用AI）').click()
+                        expect(page.locator('#report-citations')).to_have_attribute('open','')
+                        page.goto(base+'/analysis/reviews/tasks/'+identifier);page.evaluate('scrollTo(0,0)')
                         expect(page.locator('#ra-progress')).to_contain_text('报告已生成')
+                        first_section=page.locator('#report-section-1').bounding_box();assert 0<=first_section['y'] and first_section['y']+first_section['height']<height
+                        assert not page.locator('#report-citations').get_attribute('open')
+                        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+                        page.screenshot(path=str(output/f'overview-{width}.png'))
+                        page.locator('.ui-action-menu > summary').click();expect(page.get_by_text('可阅读报告 · HTML',exact=True)).to_be_visible()
+                        menu_box=page.locator('.ui-action-menu > div').bounding_box();assert menu_box['x']>=0 and menu_box['x']+menu_box['width']<=width+1
+                        page.keyboard.press('Escape');assert page.locator('.ui-action-menu').get_attribute('open') is None
+                        if width<1100:page.locator('.ra-report-directory > summary').click()
+                        page.locator('.ra-report-directory a[href="#report-section-5"]').click()
+                        expect(page.locator('#report-section-5')).to_be_in_viewport()
+                        page.locator('.ra-report-notice a').click();expect(page.locator('#report-citations')).to_have_attribute('open','')
                         expect(page.get_by_text('引用核对：共 66 处，65 处通过，1 处待核对',exact=False)).to_be_visible()
                         expect(page.get_by_text('有效引用涉及 33 条评价',exact=False)).to_be_visible()
                         assert page.locator('[data-ra-resume]').count()==0
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
-                        page.screenshot(path=str(output/f'overview-{width}.png'))
                         problem=page.locator('#citation-check-1');problem.locator('summary').click()
                         expect(problem.get_by_role('heading',name='AI引用')).to_be_visible();expect(problem.get_by_role('heading',name='对应原文')).to_be_visible()
                         expect(problem).to_contain_text('省略号');problem.scroll_into_view_if_needed();page.screenshot(path=str(output/f'comparison-{width}.png'))
                         problem.get_by_role('link',name='定位评价原文').click();expect(page.locator('#review-601')).to_have_attribute('open','')
                         page.goto(base+'/analysis/reviews/tasks/'+identifier+'?version=1');expect(page.get_by_text('历史版本，仅供查看',exact=False)).to_be_visible()
                         assert page.locator('[data-ra-recount]').count()==0
-                        expect(page.get_by_text('此版本保留旧规则检查结果',exact=False)).to_be_visible()
+                        page.locator('#report-citations > summary').click();expect(page.get_by_text('此版本保留旧规则检查结果',exact=False)).to_be_visible()
                         export=page.request.get(base+'/analysis/reviews/tasks/'+identifier+'/export?format=html');assert export.status==200
                         page.set_content(export.text());assert page.locator('form,script,img').count()==0
+                        page.locator('#report-citations > summary').click()
                         expect(page.get_by_text('引用核对：共 66 处',exact=False)).to_be_visible()
                         after=repository.read(case.settings,identifier);assert after['calls']==before['calls'] and after['sources']==before['sources'] and after['reports'][0]==before['reports'][0]
                         assert len(after['reports'])==2 and after['task']['status']=='succeeded'

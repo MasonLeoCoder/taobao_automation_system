@@ -1,41 +1,49 @@
-{% from 'form_controls.html' import field,input_control,control_button,text_preview %}
+{% from 'form_controls.html' import field,input_control,control_button,text_preview,action_link,action_menu %}
 {% set report=data.v6_content %}
-<section class="page-heading"><h1>竞品与选品评价报告</h1><p>商品 {{ data.product.platform_product_id }} · {{ task.model }} · 来源批次 {{ data.sources[0].batch_id if data.sources else '未记录' }}</p>
-{% if not exporting %}<p><a href="{{ url_for('pages.collection_product',product_id=data.product.platform_product_id,module='reviews',reviews_batch=data.sources[0].batch_id) }}#review-comments">返回评价明细</a> · <a href="{{ url_for('review_analysis.index',product=data.product.platform_product_id,batch=data.sources[0].batch_id) }}">查看分析记录</a></p>{% endif %}</section>
-<section class="panel" data-ra-task="{{ task.id }}" data-ra-active="{{ 'true' if not exporting and task.status in ['queued','running'] and not task.appears_interrupted else 'false' }}">
-<h2>报告进度与来源</h2><p id="ra-progress" role="status">{{ data.display_message }}</p>
-<p>本批来源 {{ report.coverage.source_count }} 条 · 提交尝试涉及 {{ report.coverage.submitted_count }} 条 · 已通过原文对应检查的引用来源 {{ report.coverage.referenced_count }} 条。</p>
-<p class="ui-form-note">{{ report.coverage.scope_note }} 本批仅为已采集样本，不能代表平台全部评价或市场需求；引用可定位不等于分析语义或性能已验证。</p>
-<p>报告生成：{{ {'available':'报告已生成','incomplete_sections':'章节不完整，保留可读部分','insufficient_information':'资料不足说明，未调用AI','not_generated':'尚未生成','empty':'未返回可读内容','interrupted':'返回中断，保留可读部分'}.get(report.generation.state,report.generation.state) }}。</p>
-<p>引用核对：共 {{ report.validation.counts.citation_count }} 处，{{ report.validation.counts.valid_count }} 处通过，{{ report.validation.counts.pending_count }} 处待核对；有效引用涉及 {{ report.validation.counts.valid_source_count }} 条评价{% if not report.validation.counts.citation_count and report.origin!='local_empty' %}，引用依据尚未核对{% endif %}。</p>
-{% if data.legacy_inspection %}<p>此版本保留旧规则检查结果，尚未使用新规则重新检查；原任务状态未自动修改。</p>
-{% elif report.inspection %}<p>检查规则 {{ report.inspection.rule_version }} · 检查时间 {{ report.inspection.checked_at }} · {{ {'execution':'生成后本地检查','local_recheck':'主动本地重新检查','receipt_recovery':'响应收据本地检查'}.get(report.inspection.origin,report.inspection.origin) }}。</p>{% endif %}
-<p>实际已知输入 {{ task.usage.get('prompt_tokens',0) }} · 输出 {{ task.usage.get('completion_tokens',0) }} · 合计 {{ task.usage.get('total_tokens',0) }} Token；未知用量请求 {{ task.usage.get('unknown_calls',0) }} 次。已请求 {{ data.calls|length }}/{{ task.parameters.max_calls }} 次。</p>
-<p>当前占用用量 {{ data.budget.used_tokens }}/{{ task.parameters.max_tokens }}（未知请求保留额度）；查看、下载和本地检查不调用AI。</p>
-{% if data.report %}<p>报告版本 {{ data.report.version }} · {{ data.report.created_at }}{% if not data.is_latest_report %} · 历史版本，仅供查看{% endif %}。</p>{% endif %}
-{% if not exporting %}<p><a href="{{ url_for('review_analysis.export',task_id=task.id,format='md',version=data.report.version if data.report else none) }}">下载Markdown报告</a> · <a href="{{ url_for('review_analysis.export',task_id=task.id,format='html',version=data.report.version if data.report else none) }}">下载可读HTML</a> · <a href="{{ url_for('review_analysis.export',task_id=task.id,version=data.report.version if data.report else none) }}">下载JSON与依据</a></p>
-{% if task.status not in ['queued','running'] and data.is_latest_report %}{{ control_button('重新检查已有报告（不调用AI）',{'type':'button','data-ra-recount':url_for('review_analysis.recount',task_id=task.id),'data-ra-report-id':data.report.id},'secondary') }}{% endif %}<p id="ra-global-feedback" role="status"></p>{% endif %}
+<div class="ra-reading-page">
+<section class="ra-report-heading">
+  <p class="ui-report-eyebrow">竞品研究 · 评价洞察</p>
+  <h1>竞品与选品评价报告</h1>
+  <p class="ui-report-meta">商品 {{ data.product.platform_product_id }} <span>·</span> {{ task.model }} <span>·</span> 来源批次 {{ data.sources[0].batch_id if data.sources else '未记录' }}{% if data.report %} <span>·</span> 版本 {{ data.report.version }}{% endif %}</p>
+  {% if not exporting %}<div class="ui-report-toolbar ra-report-toolbar">
+    <div class="ra-report-links">{{ action_link('← 返回评价明细',url_for('pages.collection_product',product_id=data.product.platform_product_id,module='reviews',reviews_batch=data.sources[0].batch_id)+'#review-comments') }}{{ action_link('查看分析记录',url_for('review_analysis.index',product=data.product.platform_product_id,batch=data.sources[0].batch_id)) }}</div>
+    {% call action_menu('下载报告') %}<a href="{{ url_for('review_analysis.export',task_id=task.id,format='html',version=data.report.version if data.report else none) }}">可阅读报告 · HTML</a><a href="{{ url_for('review_analysis.export',task_id=task.id,format='md',version=data.report.version if data.report else none) }}">可编辑文字 · Markdown</a><a href="{{ url_for('review_analysis.export',task_id=task.id,version=data.report.version if data.report else none) }}">完整数据与依据 · JSON</a>{% endcall %}
+  </div>{% endif %}
 </section>
+<section class="ui-report-overview" data-ra-task="{{ task.id }}" data-ra-active="{{ 'true' if not exporting and task.status in ['queued','running'] and not task.appears_interrupted else 'false' }}" aria-label="报告概览">
+  <div class="ra-overview-row"><span class="ui-report-state {{ 'is-ready' if report.generation.complete else 'is-pending' }}">{{ '正在生成' if task.status in ['queued','running'] and not task.appears_interrupted else {'available':'报告已生成','incomplete_sections':'章节待完成','insufficient_information':'资料不足','not_generated':'尚未生成','empty':'暂无正文','interrupted':'返回中断'}.get(report.generation.state,'请查看状态') }}</span>
+  <div class="ra-overview-metrics"><span>评价样本 <strong>{{ report.coverage.source_count }}</strong> 条</span><span>引用匹配 <strong>{{ report.validation.counts.valid_count }}/{{ report.validation.counts.citation_count }}</strong> 处</span><span>有效引用来源 <strong>{{ report.coverage.referenced_count }}</strong> 条</span></div></div>
+  <p id="ra-progress" role="status" class="ui-report-runtime" {% if report.generation.complete and not data.legacy_inspection and task.status not in ['queued','running'] %}hidden{% endif %}>{{ data.display_message }}</p>
+  {% if not data.is_latest_report and data.report %}<p class="ui-report-runtime">历史版本，仅供查看 · {{ data.report_created_short }}</p>{% endif %}
+  {% if task.usage.get('unknown_calls',0) %}<p class="ui-report-runtime">有 {{ task.usage.unknown_calls }} 次请求用量未知，<a href="#report-usage">查看用量明细 →</a></p>{% endif %}
+</section>
+{% if report.validation.counts.pending_count or data.legacy_inspection or (report.generation.complete and not report.validation.counts.citation_count and report.origin!='local_empty') %}<div class="ui-report-notice ra-report-notice"><span>{{ report.validation.counts.pending_count|string+'处引用待核对' if report.validation.counts.pending_count else '旧规则检查结果，可在本地重新检查' if data.legacy_inspection else '引用依据待核对' }}</span><a href="#report-citations">查看核对详情 →</a></div>{% endif %}
 {% if report.generation.issues %}<section class="panel"><h2>报告生成问题</h2><ul>{% for issue in report.generation.issues %}<li>{{ issue }}</li>{% endfor %}</ul></section>{% endif %}
-{% if report.validation.counts.pending_count %}<section class="panel"><h2>待核对引用</h2><p>以下仅核对文字是否连续对应，不替代对结论含义的人工确认。</p>
-{% for item in report.validation.citations if not item.valid %}<details id="citation-check-{{ item.index }}"><summary>第 {{ item.index }} 处 · {{ '评价 '+item.review_id|string if item.review_id else '编号未识别' }} · {{ item.reason }}</summary>
+{% if not exporting and (task.status not in ['queued','running'] or task.appears_interrupted) and not report.generation.complete and (data.resume_budget.required_calls or data.needs_local_recovery) %}<div class="ui-report-notice ra-report-notice"><span>本轮尚有未完成工作，请先核对已有结果及剩余计划。</span><a href="#analysis-resume">查看剩余计划与记录 →</a></div>{% endif %}
+{% if report.markdown %}<div class="ra-reading-layout">
+  {% if data.report_navigation %}<details class="ui-report-directory ra-report-directory" open><summary>报告目录</summary><nav aria-label="报告目录">{% for item in data.report_navigation %}<a href="#{{ item.id }}">{{ '%02d'|format(loop.index) }} <span>{{ item.label }}</span></a>{% endfor %}<a href="#report-citations">引用核对 ↗</a></nav></details>{% endif %}
+  <section class="ui-report-paper ra-v6-report" data-report-document><p class="ui-report-eyebrow">评价分析报告</p>{{ report.html|safe }}</section>
+</div>{% endif %}
+{% if report.phases %}<details class="ui-report-fold" {{ 'open' if not report.markdown }}><summary>已保存的分组要点 <small>{{ report.phases|length }}组</small></summary><div class="ui-report-fold-body">{% for phase in report.phases %}<details><summary>分组 {{ phase.index }} · {{ phase.review_ids|length }} 条来源</summary><div class="ra-v6-report">{{ phase.html|safe }}</div></details>{% endfor %}<p>分组只覆盖各自来源；未生成总报告时仍可查看。</p></div></details>{% endif %}
+<details class="ui-report-fold" id="report-citations"><summary>引用核对与原文对照 <small>{{ report.validation.counts.pending_count }}处待核对</small></summary><div class="ui-report-fold-body">
+<p>引用核对：共 {{ report.validation.counts.citation_count }} 处，{{ report.validation.counts.valid_count }} 处通过，{{ report.validation.counts.pending_count }} 处待核对；有效引用涉及 {{ report.validation.counts.valid_source_count }} 条评价。</p>
+<p>以下仅核对文字是否连续对应，不替代结论含义的人工确认。</p>
+{% if data.legacy_inspection %}<p>此版本保留旧规则检查结果，尚未使用新规则重新检查；原任务状态未自动修改。</p>{% endif %}
+{% if report.validation.counts.pending_count %}<h2>待核对引用</h2>{% for item in report.validation.citations if not item.valid %}<details id="citation-check-{{ item.index }}"><summary>第 {{ item.index }} 处 · {{ '评价 '+item.review_id|string if item.review_id else '编号未识别' }} · {{ item.reason }}</summary>
 <div class="ra-citation-compare"><div><h3>AI引用</h3><p>{{ item.marker }}</p><blockquote>{{ item.quote if item.quote is not none else '引用格式未识别，请查看报告原稿。' }}</blockquote></div><div><h3>对应原文</h3><blockquote>{{ item.original_text if item.original_text is not none else '未找到可明确对应的原文，不猜测编号或初追评。' }}</blockquote></div></div>
-{% if item.review_id and data.source_by_review.get(item.review_id) %}<p><a href="#review-{{ item.review_id }}">定位评价原文 →</a></p>{% endif %}</details>{% endfor %}</section>{% endif %}
-{% if report.markdown %}<section class="panel ra-v6-report"><h2>详细分析报告</h2>{{ report.html|safe }}</section>{% endif %}
-{% if report.validation.issues %}<section class="panel"><h2>引用与内容核对提示</h2><ul>{% for issue in report.validation.issues %}<li>{{ issue }}</li>{% endfor %}</ul><p>局部问题没有自动触发付费改写。资料不足不能补写成事实，语义和采购判断仍需结合原文及实物验证。</p></section>{% endif %}
-{% if report.issues %}<section class="panel"><h2>本轮处理说明</h2><ul>{% for issue in report.issues %}<li>{{ issue }}</li>{% endfor %}</ul></section>{% endif %}
-{% if report.phases %}<section class="panel"><h2>已保存的分组要点</h2>{% for phase in report.phases %}<details><summary>分组 {{ phase.index }} · {{ phase.review_ids|length }} 条来源</summary><div class="ra-v6-report">{{ phase.html|safe }}</div></details>{% endfor %}<p>分组只覆盖各自来源；未生成总报告时仍可查看，不把片段当额外买家。</p></section>{% endif %}
-<section class="panel"><h2>本批基础资料</h2><p>带追评记录 {{ report.basic_statistics.with_append_count }} 条。规格数量按原规格文字统计，不合并推测同义规格：</p><ul>{% for sku,count in report.basic_statistics.sku_counts.items() %}<li>{{ sku }}：{{ count }}条</li>{% endfor %}</ul></section>
-<section class="panel"><h2>原文依据</h2>{% for src in data.sources %}<details id="review-{{ src.review_id }}"><summary>评价 {{ src.review_id }} · {{ src.snapshot.sku or '未记录规格' }}</summary><p>初评：{{ src.snapshot.text }}</p>{% for append in src.snapshot.appends %}<p>{{ append.segment }}：{{ append.text }}</p>{% endfor %}</details>{% endfor %}</section>
-{% if not exporting %}<section class="panel" id="analysis-resume"><h2>剩余计划与原始调用记录</h2><p>原调用状态和错误保留当时记录；上方报告生成与引用检查展示本版本结果。</p>
-{% if task.status not in ['queued','running'] or task.appears_interrupted %}
-{% if data.needs_local_recovery %}{{ control_button('核对已有响应收据（不调用AI）',{'type':'button','data-ra-recover':url_for('review_analysis.recover',task_id=task.id)}) }}{% endif %}
-{% if data.resume_budget.required_calls and not report.generation.complete and not data.needs_local_recovery and not data.resume_budget.get('blocked') and data.is_latest_report %}<details><summary>查看剩余请求与费用，确认后继续</summary><form data-ra-resume data-url="{{ url_for('review_analysis.resume',task_id=task.id) }}" data-plan-hash="{{ data.resume_budget.plan_hash }}">
-<p>剩余 {{ data.resume_budget.required_calls }} 次请求；已完整保存、消息一致的请求不重发。需要新增用量预留 {{ data.resume_budget.minimum_tokens-data.budget.used_tokens }} Token，含报告输出上限及余量。</p>
-<label>{{ input_control({'type':'checkbox','name':'increase_budget'}) }} 明确调整总额度（不自动增加）</label>
-{% call field('继续后的Token总上限') %}{{ input_control({'type':'number','name':'max_tokens','value':data.resume_budget.suggested_tokens,'min':task.parameters.max_tokens,'max':5000000,'required':true,'disabled':true}) }}{% endcall %}
-{% call field('继续后的请求次数总上限') %}{{ input_control({'type':'number','name':'max_calls','value':data.resume_budget.suggested_calls,'min':task.parameters.max_calls,'max':200,'required':true,'disabled':true}) }}{% endcall %}
-<label>{{ input_control({'type':'checkbox','name':'allow_paid','required':true}) }} 允许剩余请求及调用费用</label><label>{{ input_control({'type':'checkbox','name':'acknowledge_unknown'}) }} 已核对未知请求，了解重发可能重复计费</label>
-{{ control_button('确认费用后继续',{'type':'submit'}) }}<p class="ra-feedback" role="status"></p></form></details>{% endif %}{% endif %}
-{% for call in data.calls %}<details><summary>{{ '报告' if call.chunk_index==0 else '分组 '+call.chunk_index|string }} · {{ call.status }} · {{ call.usage.get('total_tokens','未知') }} Token</summary><p>{{ call.error }}</p>{{ text_preview(call.request.prompt) }}{% if call.response %}<details><summary>原始返回（未改写）</summary>{{ text_preview(call.response.text) }}</details>{% endif %}</details>{% endfor %}
-<h3>报告历史</h3>{% for old in data.reports %}<p><a href="{{ url_for('review_analysis.result',task_id=task.id,version=old.version) }}">版本 {{ old.version }}</a> · {{ old.created_at }}</p>{% endfor %}</section>{% endif %}
+{% if item.review_id and data.source_by_review.get(item.review_id) %}<p><a href="#review-{{ item.review_id }}">定位评价原文 →</a></p>{% endif %}</details>{% endfor %}{% endif %}
+{% if report.validation.issues %}<ul>{% for issue in report.validation.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
+{% if report.inspection %}<p class="ui-report-meta">规则 {{ report.inspection.rule_version }} · {{ report.inspection.checked_at }} · {{ {'execution':'生成后本地检查','local_recheck':'主动本地重新检查','receipt_recovery':'响应收据本地检查'}.get(report.inspection.origin,report.inspection.origin) }}</p>{% endif %}
+{% if not exporting %}{% if task.status not in ['queued','running'] and data.is_latest_report %}{{ control_button('重新检查已有报告（不调用AI）',{'type':'button','data-ra-recount':url_for('review_analysis.recount',task_id=task.id),'data-ra-report-id':data.report.id},'secondary') }}{% endif %}<p id="ra-global-feedback" role="status"></p>{% endif %}
+</div></details>
+<details class="ui-report-fold" id="report-sources"><summary>评价原文 <small>{{ report.coverage.source_count }}条</small></summary><div class="ui-report-fold-body">{% for src in data.sources %}<details id="review-{{ src.review_id }}"><summary>评价 {{ src.review_id }} · {{ src.snapshot.sku or '未记录规格' }}</summary><p>初评：{{ src.snapshot.text }}</p>{% for append in src.snapshot.appends %}<p>{{ append.segment }}：{{ append.text }}</p>{% endfor %}</details>{% endfor %}</div></details>
+<details class="ui-report-fold" id="report-metadata"><summary>来源与基础资料</summary><div class="ui-report-fold-body">
+<p>本批来源 {{ report.coverage.source_count }} 条 · 提交尝试涉及 {{ report.coverage.submitted_count }} 条 · 有效引用来源 {{ report.coverage.referenced_count }} 条。</p><p>{{ report.coverage.scope_note }} 本批仅为已采集样本，不代表平台全部评价或市场需求；引用可定位不等于分析语义或性能已验证。</p>
+{% if data.report %}<p>报告版本 {{ data.report.version }} · {{ data.report_created_short }}</p>{% endif %}
+<p>带追评记录 {{ report.basic_statistics.with_append_count }} 条，规格按原文字统计：</p><ul>{% for sku,count in report.basic_statistics.sku_counts.items() %}<li>{{ sku }}：{{ count }}条</li>{% endfor %}</ul>
+{% if report.issues %}<h3>本轮处理说明</h3><ul>{% for issue in report.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
+</div></details>
+<details class="ui-report-fold" id="report-usage"><summary>用量明细 <small>{{ task.usage.get('total_tokens',0) }} Token · {{ data.calls|length }}次请求</small></summary><div class="ui-report-fold-body"><dl class="ra-report-facts"><div><dt>已知输入</dt><dd>{{ task.usage.get('prompt_tokens',0) }} Token</dd></div><div><dt>已知输出</dt><dd>{{ task.usage.get('completion_tokens',0) }} Token</dd></div><div><dt>未知用量请求</dt><dd>{{ task.usage.get('unknown_calls',0) }}次</dd></div><div><dt>请求次数 / 上限</dt><dd>{{ data.calls|length }} / {{ task.parameters.max_calls }}</dd></div><div><dt>当前占用 / 总上限</dt><dd>{{ data.budget.used_tokens }} / {{ task.parameters.max_tokens }} Token</dd></div></dl><p>未知请求保留额度；查看、下载及本地检查不调用AI。</p></div></details>
+{% include 'review_analysis_v6_calls.html' %}
+<p class="ui-report-footnote">报告用于辅助研究与选品，采购判断请结合原文、供应商资料和样品验证。</p>
+</div>

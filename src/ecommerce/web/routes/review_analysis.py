@@ -205,7 +205,11 @@ def export(task_id):
             try:data=v6_view.enrich(settings(),data,int(request.args['version']))
             except ValueError:raise ValueError('报告版本无效。') from None
         if request.args.get('format')=='html':
-            return Response(render_template('review_analysis_v6_export.html',data=data,task=data['task']),content_type='text/html; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="review_analysis_{task_id}.html"'})
+            from pathlib import Path
+            assets=Path(current_app.static_folder)
+            controls=(assets/'form_controls.css').read_text(encoding='utf-8')
+            styles=controls+(assets/'review_analysis.css').read_text(encoding='utf-8')
+            return Response(render_template('review_analysis_v6_export.html',data=data,task=data['task'],report_styles=styles),content_type='text/html; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="review_analysis_{task_id}.html"'})
         if request.args.get('format')=='md':
             return Response(data['v6_content']['markdown'],content_type='text/markdown; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="review_analysis_{task_id}.md"'})
     if data['task']['rule_version'] in (v4.VERSION,v5.VERSION):
