@@ -121,7 +121,7 @@ class ReviewV6Tests(TestCase):
 
     def test_truncated_and_bad_reference_remain_readable(self):
         identifier=self.start();self.run_mock(identifier,finish='length');data=service.read(self.settings,identifier)
-        self.assertEqual(data['task']['status'],'partial');self.assertTrue(data['v6_content']['markdown']);self.assertEqual(data['v6_content']['validation']['state'],'interrupted')
+        self.assertEqual(data['task']['status'],'partial');self.assertTrue(data['v6_content']['markdown']);self.assertEqual(data['v6_content']['generation']['state'],'interrupted')
         result=v6_report.check('## 总体判断\n【评价8｜初评】原文：“原文不存在”','stop',[{'id':8,'text':'原文','appends':[]}])
         self.assertEqual(result['state'],'needs_review');self.assertFalse(result['citations'][0]['valid'])
 

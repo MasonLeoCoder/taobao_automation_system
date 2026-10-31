@@ -1,5 +1,6 @@
 """新直接报告在独立MySQL的真实事务验证，模拟接口，外层事务全部回滚。"""
 from contextlib import contextmanager
+import copy
 from dataclasses import replace
 import json
 import os
@@ -12,7 +13,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from ecommerce.shared.config import load_settings
 from ecommerce.infrastructure.storage.mysql import create_mysql_engine
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v17 import build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v18 import build_metadata
 from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.modules.review_analysis import service
@@ -47,7 +48,8 @@ class MySQLReviewV6Tests(TestCase):
                 client=Mock()
                 def complete(messages,**options):
                     """模拟实际两条消息；参数：消息、选项；返回：报告和用量。"""
-                    return {'text':report_for(json.loads(messages[-1]['content'])),'finish_reason':'stop','usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}}
+                    text=report_for(json.loads(messages[-1]['content'])).replace('【评价','【')+f'\n\n【{review}｜初评】原文：“脱敏……初评”'
+                    return {'text':text,'finish_reason':'stop','usage':{'prompt_tokens':10,'completion_tokens':10,'total_tokens':20}}
                 client.complete_messages.side_effect=complete
                 with patch.object(repository,'collection_store',return_value=SimpleNamespace(engine=Proxy(),tables=tables)),patch.object(service,'launch') as launch,patch.object(service,'create_client',return_value=client):
                     preview=service.preview(settings,product,b);self.assertEqual(preview['planned_calls'],1)
@@ -55,12 +57,22 @@ class MySQLReviewV6Tests(TestCase):
                     self.assertEqual(service.execute(settings,task,Mock()),'succeeded');data=service.read(settings,task)
                     self.assertEqual(data['task']['processed_count'],0);self.assertEqual(data['details'],[]);self.assertEqual(data['task']['usage']['total_tokens'],20)
                     self.assertEqual(len(data['calls'][0]['request']['messages']),2);self.assertFalse(data['calls'][0]['request']['json_mode'])
-                    self.assertEqual(data['v6_content']['validation']['state'],'complete');self.assertEqual(data['v6_content']['coverage']['submitted_count'],1)
+                    self.assertEqual(data['v6_content']['validation']['state'],'needs_review');self.assertEqual(data['v6_content']['coverage']['submitted_count'],1)
+                    self.assertTrue(data['v6_content']['generation']['complete']);self.assertEqual(data['v6_content']['validation']['counts']['pending_count'],1)
                     reused=service.start(settings,product,batch_id=b,model=preview['model'],input_hash=preview['input_hash'],allow_paid=True,max_tokens=preview['default_tokens']+1000)
                     self.assertEqual(reused['id'],task);self.assertTrue(reused['choice_required']);launch.assert_called_once()
                     self.assertEqual(client.complete_messages.call_count,1)
-                    service.recount(settings,task);self.assertEqual(len(repository.read(settings,task)['reports']),2)
+                    old=copy.deepcopy(data['report']['content']);old.pop('generation');old.pop('inspection')
+                    old['validation']={'state':'needs_review','complete':False,'citations':[],'issues':['脱敏旧规则未识别。']};old['coverage']['referenced_count']=0
+                    conn.execute(tables['analysis_reports'].update().where(tables['analysis_reports'].c.id==data['report']['id']).values(content=old))
+                    conn.execute(tables['analysis_tasks'].update().where(tables['analysis_tasks'].c.id==task).values(status='partial',message='脱敏旧规则未识别。'))
+                    conn.execute(tables['analysis_calls'].update().where(tables['analysis_calls'].c.analysis_id==task).values(status='invalid'))
+                    before_check=repository.read(settings,task)
+                    service.recount(settings,task,report_id=data['report']['id']);checked=repository.read(settings,task)
+                    self.assertEqual(len(checked['reports']),2);self.assertEqual(checked['task']['status'],'succeeded')
+                    self.assertEqual(checked['calls'],before_check['calls']);self.assertEqual(checked['reports'][0],before_check['reports'][0]);self.assertEqual(checked['sources'],before_check['sources'])
+                    self.assertEqual(checked['report']['content']['inspection']['origin'],'local_recheck');self.assertEqual(checked['report']['content']['validation']['counts']['valid_count'],1)
             finally:transaction.rollback()
             after={n:conn.scalar(sa.select(sa.func.count()).select_from(t)) for n,t in tables.items()};self.assertEqual(before,after)
             if os.environ.get('ECOMMERCE_MYSQL_REPORT'):
-                Path(os.environ['ECOMMERCE_MYSQL_REPORT']).write_text(json.dumps({'passed':True,'synthetic':True,'rolled_back':True,'task_id':task,'product_id':p,'platform_product_id':product,'batch_id':b,'review_id':review,'report_id':data['report']['id'],'mock_calls':1,'real_ai_calls':0,'before':before,'after':after},indent=2),encoding='utf-8')
+                Path(os.environ['ECOMMERCE_MYSQL_REPORT']).write_text(json.dumps({'passed':True,'synthetic':True,'rolled_back':True,'task_id':task,'product_id':p,'platform_product_id':product,'batch_id':b,'review_id':review,'report_id':checked['report']['id'],'mock_calls':1,'real_ai_calls':0,'local_checks':checked['report']['content']['validation']['counts'],'before':before,'after':after},indent=2),encoding='utf-8')

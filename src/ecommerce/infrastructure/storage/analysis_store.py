@@ -340,6 +340,31 @@ def save_report(settings, identifier, content):
         return version
 
 
+def check_inputs(data):
+    """绑定检查时的来源和原调用快照；参数：同次聚合；返回：规范哈希，不包含本机密钥。"""
+    return fingerprint({'sources':[(s['id'],s['content_hash'],s['snapshot']) for s in sorted(data['sources'],key=lambda s:s['position'])],
+        'calls':[(c['id'],c['status'],c['request'],c['response']) for c in sorted(data['calls'],key=lambda c:c['id'])]})
+
+
+def save_local_report(settings,identifier,content,expected_report_id,expected_inputs,updates):
+    """终态任务行锁内追加本地检查及状态；参数：报告、原版本/输入哈希、状态；返回：版本，冲突不写入。"""
+    if set(updates)!={'status','message','owner','active_key'} or updates['owner'] is not None or updates['active_key'] is not None:
+        raise ValueError('本地检查状态更新无效。')
+    with connection(settings,True) as (conn,tables):
+        task=task_row(conn,tables,identifier,True)
+        if task['status'] in {'queued','running'}:raise ValueError('分析运行期间不能重新检查报告。')
+        r=tables['analysis_reports'];latest=conn.execute(sa.select(r).where(r.c.analysis_id==identifier).order_by(r.c.version.desc()).limit(1)).mappings().one_or_none()
+        if (latest['id'] if latest else None)!=expected_report_id:raise ValueError('报告版本已变化，请刷新后重新检查。')
+        current={}
+        for key,name in (('sources','analysis_sources'),('calls','analysis_calls')):
+            current[key]=[dict(row) for row in conn.execute(sa.select(tables[name]).where(tables[name].c.analysis_id==identifier)).mappings()]
+        if check_inputs(current)!=expected_inputs:raise ValueError('检查期间来源或调用已变化，未保存过期检查结果。')
+        version=(latest['version'] if latest else 0)+1
+        conn.execute(r.insert().values(id=uuid4().hex,analysis_id=identifier,version=version,content=content,created_at=database_now()))
+        conn.execute(tables['analysis_tasks'].update().where(tables['analysis_tasks'].c.id==identifier).values(**updates,updated_at=database_now()))
+        return version
+
+
 def correct(settings, identifier, detail_id, expected_revision, result, reason):
     """乐观锁保存人工修订；参数：任务、明细、旧版本、完整结果及原因；返回：无。"""
     with connection(settings, True) as (conn, tables):

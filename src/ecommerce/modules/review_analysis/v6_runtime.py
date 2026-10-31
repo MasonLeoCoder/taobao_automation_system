@@ -7,7 +7,7 @@ from ecommerce.infrastructure.ai.capabilities import Counter
 from ecommerce.infrastructure.storage import analysis_store as repository
 from ecommerce.infrastructure.storage.task_store import fingerprint
 from ecommerce.infrastructure.tasks.ownership import atomic_json
-from ecommerce.modules.review_analysis import v6,v6_report
+from ecommerce.modules.review_analysis import v6,v6_report,v6_checks
 
 
 def cached(data,index,values):
@@ -16,7 +16,7 @@ def cached(data,index,values):
     return next((c for c in reversed(data['calls']) if c['kind']=='report' and c['chunk_index']==index
         and c['request'].get('request_hash')==digest and c['request'].get('messages')==values and c['response'] and c['response']['finish_reason']=='stop'
         and isinstance(c['response'].get('text'),str) and c['response']['text'].strip()
-        and (index!=0 or v6_report.check(c['response']['text'],c['response']['finish_reason'],[s['snapshot'] for s in data['sources']])['complete'])),None)
+        and (index!=0 or v6_checks.generation(c['response']['text'],c['response']['finish_reason'])['complete'])),None)
 
 
 def completed(data):
@@ -50,9 +50,9 @@ def remaining_budget(data):
         'suggested_tokens':max(parameters['max_tokens'],minimum),'suggested_calls':max(parameters['max_calls'],len(data['calls'])+supplement['required_calls'])}
 
 
-def build_report(settings,task_id,issues=None):
-    """从持久返回本地重建并检查，不调用AI；参数：配置、任务、说明；返回：版本。"""
-    data=repository.read(settings,task_id);groups,final=completed(data);plan=data['task']['parameters']['plan']
+def compose(data,issues=None,origin='execution'):
+    """用同一份持久快照计算报告；参数：聚合、说明、检查来源；返回：报告JSON，不写库。"""
+    groups,final=completed(data);plan=data['task']['parameters']['plan']
     phases=[{'index':c['chunk_index'],'review_ids':c['request']['source_ids'],'text':c['response']['text']} for c in groups] if plan['mode']=='grouped' else []
     if final is None:
         # 截断正文也保留可读，但不能据此复用为完整结果。
@@ -60,8 +60,25 @@ def build_report(settings,task_id,issues=None):
         if last:final=last
     if plan['mode']=='local_empty':
         response={'text':'\n\n'.join('## '+s+'\n本批评价没有可分析的文字，资料不足。' for s in v6_report.SECTIONS),'finish_reason':'stop'}
-        return repository.save_report(settings,task_id,v6_report.content(data,response,issues=issues,local=True))
-    return repository.save_report(settings,task_id,v6_report.content(data,final['response'] if final else None,phases,issues))
+        return v6_report.content(data,response,issues=issues,local=True,origin=origin)
+    return v6_report.content(data,final['response'] if final else None,phases,issues,origin=origin)
+
+
+def build_report(settings,task_id,issues=None,origin='execution'):
+    """执行期间从持久返回追加报告；参数：配置、任务、说明；返回：版本，不联网。"""
+    return repository.save_report(settings,task_id,compose(repository.read(settings,task_id),issues,origin))
+
+
+def recheck(settings,data,expected_report_id=None):
+    """明确操作后原子追加检查并更新终态；参数：配置、同次读取、可选页面报告身份；返回：版本。"""
+    if expected_report_id is not None and (not data['report'] or data['report']['id']!=expected_report_id):
+        raise ValueError('报告版本已变化，请刷新后重新检查；未修改已有结果。')
+    report=compose(data,['本次仅重新检查已保存原报告，未调用AI，原文未改写。'],'local_recheck')
+    state='succeeded' if report['generation']['complete'] else 'partial' if report['markdown'] or report['phases'] else 'failed'
+    version=repository.save_local_report(settings,data['task']['id'],report,
+        data['report']['id'] if data['report'] else None,repository.check_inputs(data),
+        {'status':state,'message':v6_report.message(report),'owner':None,'active_key':None})
+    return {'version':version,'ai_calls':0}
 
 
 def recover_saved(settings,task_id,*,update_state=True):
@@ -74,11 +91,11 @@ def recover_saved(settings,task_id,*,update_state=True):
             response=json.loads(path.read_text(encoding='utf-8'));good=response.get('finish_reason')=='stop' and bool(response.get('text','').strip())
             repository.finish_call(settings,task_id,call['id'],'succeeded' if good else 'invalid',response,'已有收据本地补写，未联网。')
         else:repository.finish_call(settings,task_id,call['id'],'unknown',None,'没有可恢复响应，结果及用量未知，未重发。')
-    version=build_report(settings,task_id,['已核对本任务保存的原响应；未调用AI。'])
+    version=build_report(settings,task_id,['已核对本任务保存的原响应；未调用AI。'],'receipt_recovery')
     if update_state:
         current=repository.read(settings,task_id);report=current['report']['content']
-        state='succeeded' if report['validation']['complete'] else 'partial' if report['markdown'] or report['phases'] else 'failed'
-        repository.update_task(settings,task_id,status=state,owner=None,active_key=None,message='已有返回已本地核对，未重新请求AI；原文和用量保留。')
+        state='succeeded' if report['generation']['complete'] else 'partial' if report['markdown'] or report['phases'] else 'failed'
+        repository.update_task(settings,task_id,status=state,owner=None,active_key=None,message=v6_report.message(report))
     return {'id':task_id,'version':version,'ai_calls':0,'added_count':0}
 
 
@@ -111,8 +128,8 @@ def execute(settings,task_id,events,client_factory):
         atomic_json(directory/(call_id+'.json'),response)
         good=response.get('finish_reason')=='stop' and isinstance(response.get('text'),str) and bool(response['text'].strip())
         message='' if good else '响应未完整结束或没有可读内容，原返回与用量已保存；未自动重试。'
-        if good and index==0 and not v6_report.check(response['text'],response['finish_reason'],[s['snapshot'] for s in current['sources']])['complete']:
-            good=False;message='报告缺少必要章节或有效原文引用，可读内容已保留；未自动付费补写。'
+        if good and index==0 and not v6_checks.generation(response['text'],response['finish_reason'])['complete']:
+            good=False;message='报告缺少必要章节，可读内容已保留；未自动付费补写。'
         repository.finish_call(settings,task_id,call_id,'succeeded' if good else 'invalid',response,message)
         events.emit('analysis_call_finished','报告原返回及用量已保存',details={'analysis_id':task_id,'call_id':call_id,'status':'succeeded' if good else 'invalid'})
         if not good:raise ValueError(message)
@@ -137,9 +154,9 @@ def execute(settings,task_id,events,client_factory):
             build_report(settings,task_id)
     except ValueError as error:
         issues.append(str(error));build_report(settings,task_id,issues)
-    current=repository.read(settings,task_id);report=current['report']['content'];complete=report['validation']['complete']
+    current=repository.read(settings,task_id);report=current['report']['content'];complete=report['generation']['complete']
     status='succeeded' if complete else 'partial' if report['markdown'] or report['phases'] else 'failed'
-    message='报告已生成；'+('本地完整性及引用检查通过，分析仍待人工核对。' if report['validation']['state']=='complete' else '报告可阅读，存在需要核对的引用或章节。') if complete else '报告生成未完成，已保存可读内容及原返回。'
+    message=v6_report.message(report)
     if issues:message+=' 原因：'+issues[-1]
     if plan['mode']=='local_empty':message='本批评价没有可分析的文字；已保存本地资料不足说明，未调用AI。'
     repository.update_task(settings,task_id,status=status,active_key=None,owner=None,message=message)

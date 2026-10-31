@@ -151,9 +151,12 @@ def start(settings, product, *, batch_id, model, input_hash, max_calls=None, max
         launch(settings, row['id'])
     choice_required=not created and not row['active_key']
     message='已创建新的分析任务。' if created else '已有相同设置的分析正在执行，将打开已有进度，不重复发送评价。' if row['active_key'] else '已有相同资料与设置的分析记录，请选择查看、从头重新分析或继续未完成部分。'
+    can_continue=choice_required and row['status'] in ('failed','partial','interrupted')
+    if can_continue and row['rule_version']==v6.VERSION and not v6_runtime.continuation(repository.read(settings,row['id']))['required_calls']:
+        can_continue=False;message='已有报告正文已完整返回；引用问题请在报告内本地重新检查，不需要付费继续。'
     return {'id': row['id'], 'reused': not created,'choice_required':choice_required,
             'status':row['status'],'message':message,
-            'can_continue':choice_required and row['status'] in ('failed','partial','interrupted')}
+            'can_continue':can_continue}
 
 
 def read(settings, task_id):
@@ -360,6 +363,8 @@ def resume(settings, task_id, *, allow_paid=False, acknowledge_unknown=False, ma
             if needs_local_recovery(current):
                 raise ValueError('已有可利用的AI返回，请先执行“重新校验已有返回”；本次未发起付费请求。')
             required = remaining_budget(current)
+            if row['rule_version']==v6.VERSION and required['required_calls']==0:
+                raise ValueError('报告正文已完整生成；引用问题请本地重新检查，无需付费继续。')
             if plan_hash is not None and plan_hash != required['plan_hash']:
                 raise ValueError('剩余评价或补处理计划已变化，请刷新预览后再确认费用。')
             parameters = dict(row['parameters'])
@@ -423,13 +428,17 @@ def correct(settings, task_id, detail_id, *, expected_revision, kind, points, ex
     return {'version': build_report(settings, task_id, issues=['已按人工修订重新统计，原AI综合文字已移除；未重新调用AI。'])}
 
 
-def recount(settings, task_id):
+def recount(settings, task_id, *, report_id=None):
     """主动重新统计并形成新版本；参数：任务；返回：版本，不联网。"""
     data = read(settings, task_id)
     if data['task']['status'] in {'queued', 'running'}:
         raise ValueError('运行期间不能重新统计。')
     if data['task']['rule_version']==v6.VERSION:
-        return {'version':v6_runtime.build_report(settings,task_id,['从已保存原报告重新检查章节与引用；未调用AI，原文未改写。'])}
+        with shop_lock(settings.workspace/'storage/analysis_dispatch'/task_id):
+            data=read(settings,task_id);owner=data['task'].get('owner') or {}
+            if owner and owner_alive(owner.get('pid'),owner.get('started_at')) is not False:
+                raise ValueError('原执行进程存活或身份未知，不能同时重新检查。')
+            return v6_runtime.recheck(settings,data,report_id)
     return {'version': build_report(settings, task_id, issues=['从已保存明细重新统计；未调用AI，原综合文字未沿用。'])}
 
 

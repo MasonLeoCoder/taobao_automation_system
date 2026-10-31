@@ -234,7 +234,7 @@
       fact_text:row.querySelector('[name=fact_text]').value}))}), () => location.reload());
   document.querySelectorAll('[data-ra-recount]').forEach(button => button.addEventListener('click', async () => {
     button.disabled = true;
-    try { await post(button.dataset.raRecount, {}); location.reload(); }
+    try { await post(button.dataset.raRecount, button.dataset.raReportId ? {report_id:button.dataset.raReportId} : {}); location.reload(); }
     catch(error) { document.querySelector('#ra-global-feedback').textContent = error.message; button.disabled = false; }
   }));
   const task = document.querySelector('[data-ra-task]');

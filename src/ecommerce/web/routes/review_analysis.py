@@ -191,8 +191,8 @@ def correct(task_id, detail_id):
 @review_analysis.post('/api/analysis/reviews/tasks/<task_id>/recount')
 def recount(task_id):
     """本地重新统计；参数：任务；返回：版本，不调用AI。"""
-    payload(set())
-    return jsonify(service.recount(settings(), task_id))
+    values=payload({'report_id'})
+    return jsonify(service.recount(settings(), task_id,**values))
 
 
 @review_analysis.get('/analysis/reviews/tasks/<task_id>/export')

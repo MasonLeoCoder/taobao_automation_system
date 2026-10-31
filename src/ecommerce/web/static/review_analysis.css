@@ -18,3 +18,5 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 
 /* 直接报告仅负责正文布局，交互控件继续使用公共组件。 */
 .ra-v6-report{min-width:0;overflow-wrap:anywhere}.ra-v6-report table{width:100%;table-layout:fixed}.ra-v6-report th,.ra-v6-report td{overflow-wrap:anywhere}.ra-v6-report pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.ra-citation-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.ra-citation-compare blockquote{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}
+@media(max-width:700px){.ra-citation-compare{grid-template-columns:minmax(0,1fr)}}
