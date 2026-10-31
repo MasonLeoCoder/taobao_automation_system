@@ -152,3 +152,26 @@ class QuestionTests(TestCase):
         self.assertIn('<ul>',listed);self.assertIn('规格未确认；',listed)
         quoted={'markdown':text+'\n\n> ## 总体判断\n> 引用内标题不应进入报告目录。','validation':checks.check(text,'stop',items)}
         self.assertEqual(len(reading(quoted)['sections']),7)
+
+    def test_explicit_numbered_paragraphs_keep_every_word_and_reference(self):
+        """明确连续圈号逐项显示，保留否定/条件/编号及引号里的圈号。"""
+        import html,re
+        from ecommerce.modules.question_analysis.view import paragraph_layout
+        original='<p>实际提及的因素：①黏性强度（问题165、166）；②是否掉胶，未证实（问题165）；③价格，回答说“选①不选②”（回答1107）。</p>'
+        rendered=paragraph_layout(original)
+        self.assertEqual(rendered.count('<li>'),3)
+        self.assertEqual(html.unescape(re.sub('<[^>]*>','',rendered)),html.unescape(re.sub('<[^>]*>','',original)))
+        for value in ('<p>比较①和②两个方案。</p>','<p>因素：①甲；③乙。</p>','<p>因素：①甲；②“未完整引号。</p>','<blockquote><p>因素：①甲；②乙。</p></blockquote>','<p><strong>因素：</strong>①甲；②乙。</p>'):
+            self.assertEqual(paragraph_layout(value),value)
+
+    def test_source_caption_and_explicit_explanation_layout(self):
+        """只合并紧邻折叠的独立提示，区分按引号外分号换段，不增造分类。"""
+        from ecommerce.modules.question_analysis.view import paragraph_layout
+        evidence='<details class="ui-report-evidence"><summary>查看原文依据 · 2处引用</summary><div>原文</div></details>'
+        self.assertNotIn('依据原文：',paragraph_layout('<p>依据原文：</p>\n'+evidence))
+        self.assertIn('依据原文：',paragraph_layout('<p>依据原文：需要进一步核对。</p>\n'+evidence))
+        self.assertIn('依据原文：',paragraph_layout('<p>依据原文：</p><p>其他说明。</p>'+evidence))
+        self.assertEqual(paragraph_layout('<p>依据原文：</p>'),'<p>依据原文：</p>')
+        result=paragraph_layout('<p>区分：性能尚未核实；回答“没数过；没量过”，规格信息缺失。</p>')
+        self.assertIn('<p>性能尚未核实；</p>',result)
+        self.assertIn('回答“没数过；没量过”，规格信息缺失。</p>',result)

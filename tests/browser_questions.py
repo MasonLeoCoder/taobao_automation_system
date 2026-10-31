@@ -56,13 +56,19 @@ def check():
                         page.unroute('**/api/analysis/questions/products/123')
                         page.screenshot(path=str(output/f'history-dialog-{width}.png'))
                         dialog.get_by_role('button',name='取消',exact=True).click();expect(dialog).not_to_be_visible()
-                        identifier=case.create_qa();data=service.preview(case.settings,'123',6);client=Mock();client.complete_messages.return_value={'text':sample_report(data['items']),'finish_reason':'stop','usage':{'total_tokens':10}}
+                        identifier=case.create_qa();data=service.preview(case.settings,'123',6);client=Mock()
+                        text=sample_report(data['items']).replace('## 购买顾虑与决策因素\n\n脱敏测试内容。','## 购买顾虑与决策因素\n\n实际提及的因素：①黏性（问题10）；②规格，尚未核实（问题11）；③价格，缺少报价。\n\n区分：性能未验证；规格信息缺失。')
+                        text=text.replace('\n\n【问题','\n\n依据原文：\n\n【问题')
+                        client.complete_messages.return_value={'text':text,'finish_reason':'stop','usage':{'total_tokens':10}}
                         runtime.execute(case.settings,identifier,Mock(),Mock(return_value=client))
                         page.goto(base+'/analysis/questions/tasks/'+identifier)
                         expect(page.locator('.qa-report-body .ui-report-focus')).to_have_count(1)
                         expect(page.locator('[data-qa-directory] nav a')).to_have_count(7)
                         assert page.locator('[data-qa-directory]').evaluate('(element)=>element.open')==(width>1000)
                         expect(page.get_by_text('测试商品',exact=True)).to_be_visible()
+                        expect(page.locator('#qa-section-3 .qa-numbered-list>li')).to_have_count(3)
+                        expect(page.get_by_text('依据原文：',exact=True)).to_have_count(0)
+                        page.locator('#qa-section-3').screenshot(path=str(output/f'paragraph-{width}.png'))
                         evidence=page.locator('.ui-report-evidence');expect(evidence).to_have_count(1);assert evidence.get_attribute('open') is None
                         evidence.locator('summary').click();expect(evidence.locator('.ui-report-evidence-item')).to_be_visible()
                         evidence.locator('[data-qa-source]').click()

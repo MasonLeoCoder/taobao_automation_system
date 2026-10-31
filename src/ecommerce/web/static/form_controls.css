@@ -297,3 +297,4 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-report-focus p:last-child{margin-bottom:0}.ui-report-key-label{color:var(--control-accent);font-weight:650}
 .ui-report-product{font-size:16px;line-height:1.7;color:var(--control-text);margin:0;overflow-wrap:anywhere}
 @media(max-width:600px){.ui-report-focus{padding:18px}.ui-report-product{font-size:14px}}
+.ui-report-numbered-list{list-style:none;padding:0;margin:0 0 20px}

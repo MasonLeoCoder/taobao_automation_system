@@ -58,8 +58,8 @@ def start(product):
 
 def render_report(content):
     """安全正文中按引用位置折叠；参数：持久报告；返回：安全HTML，不改原稿。"""
-    from ecommerce.modules.question_analysis.view import evidence_html
-    return evidence_html(content)
+    from ecommerce.modules.question_analysis.view import evidence_html,paragraph_layout
+    return paragraph_layout(evidence_html(content))
 
 
 @question_analysis.get('/analysis/questions/tasks/<task_id>')
@@ -76,7 +76,11 @@ def result(task_id):
         if download=='md':body=content['markdown'];mime='text/markdown'
         elif download=='json':body=json.dumps(data,ensure_ascii=False,default=str);mime='application/json'
         elif download=='html':
-            body=render_template('question_analysis_export.html',data=data,content=content,rendered=render_report(content));mime='text/html'
+            # 阅读版内嵌现有公共样式，离线打开也保持逐项排列，不重复显示列表编号。
+            styles=[]
+            for filename in ('form_controls.css','question_analysis.css'):
+                with current_app.open_resource('static/'+filename) as resource:styles.append(resource.read().decode('utf-8'))
+            body=render_template('question_analysis_export.html',data=data,content=content,rendered=render_report(content),styles='\n'.join(styles));mime='text/html'
         else:raise ValueError('下载格式无效。')
         return Response(body,content_type=mime+'; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="questions-{task_id}.{download}"'})
     from ecommerce.modules.question_analysis.view import reading
