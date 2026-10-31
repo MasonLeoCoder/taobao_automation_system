@@ -32,3 +32,16 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 @media(max-width:600px){.ra-reading-page{padding-top:22px}.ra-overview-row{align-items:flex-start;gap:12px}.ra-overview-metrics{gap:10px 18px}.ra-report-toolbar{gap:12px}.ra-reading-layout{margin:18px 0;gap:12px}.ra-report-links{gap:8px}.ra-report-notice{gap:8px}.ra-report-facts{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:600px){.ra-report-toolbar>.ui-action-menu{margin-left:auto}}
 @media(max-width:600px){.ra-reading-page{padding-top:16px}.ra-report-toolbar{margin:16px 0}}
+
+/* 历史页只设置排列及滚动边界，颜色和控件复用公共组件。 */
+.ra-history-page{max-width:1220px;margin:0 auto;padding:30px 0 12px;min-width:0}
+.ra-history-heading,.ra-history-latest,.ra-history-record-heading{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.ra-history-heading{align-items:flex-start;margin-bottom:24px}.ra-history-heading>div,.ra-history-panel,.ra-history-latest>div{min-width:0}
+.ra-history-heading p:last-child,.ra-history-latest p,.ra-history-record-heading p{margin-bottom:0}
+.ra-history-heading>.ui-button,.ra-history-latest>.ui-button{flex-shrink:0}
+.ra-history-toolbar{display:grid;grid-template-columns:minmax(220px,420px) auto minmax(0,1fr) auto;align-items:end;gap:12px}
+.ra-history-toolbar>.ui-field{margin:0;min-width:0}.ra-history-apply{grid-column:2}.ra-history-start{grid-column:4}
+.ra-history-notice{margin-top:20px}.ra-history-latest{margin:24px 0}.ra-history-latest h2{margin-bottom:6px}.ra-history-latest .ui-report-meta{overflow-wrap:anywhere}
+.ra-history-record-heading{margin:24px 0 14px}.ra-history-record-heading h2{margin:0}
+.ra-history-table-wrap{max-width:100%;min-width:0}.ra-history-table{min-width:900px}.ra-history-table td:first-child,.ra-history-table td:last-child{white-space:nowrap}
+@media(max-width:700px){.ra-history-page{padding-top:24px}.ra-history-heading{flex-wrap:wrap;gap:14px}.ra-history-panel{padding:18px}.ra-history-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}.ra-history-toolbar>.ui-field{grid-column:1/-1}.ra-history-apply{grid-column:1}.ra-history-start{grid-column:2}.ra-history-latest{flex-direction:column;align-items:stretch;gap:14px}.ra-history-latest>.ui-button{align-self:flex-start}}
