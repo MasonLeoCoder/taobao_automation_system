@@ -87,7 +87,31 @@ def fragment(nodes,start,end):
 
 def disclosure(body,count):
     """生成统一默认关闭的依据控件；参数：安全正文、引用数；返回：安全HTML。"""
-    return '<details class="ui-report-evidence"><summary>查看原文依据（'+str(count)+'处引用）</summary><div class="ui-report-evidence-body">'+body+'</div></details>'
+    return '<details class="ui-report-evidence"><summary>查看原文依据（'+str(count)+'处引用）</summary><div class="ui-report-evidence-body">'+evidence_rows(body)+'</div></details>'
+
+
+def evidence_rows(body):
+    """把纯引文段落按每处引用分行，保留字词、标点和链接；参数：安全HTML；返回：展示HTML。"""
+    parts=[]
+    for node in Tree(body).root.children:
+        if not isinstance(node,Element) or node.tag!='p' or not all(inline(child) for child in node.children):
+            parts.append(raw(node));continue
+        visible=node.text;spans=[];cursor=0
+        for marker in v6_checks.MARKER.finditer(visible):
+            if marker.start()<cursor:continue
+            identity=v6_checks.metadata(marker[1]);quote,end=v6_checks.quoted(visible,marker.end())
+            if visible[cursor:marker.start()].strip(' \t\r\n。；;，,') or identity is None or quote is None:break
+            if 'href="#review-'+str(identity['review_id'])+'"' not in fragment(node.children,marker.start(),marker.end()):break
+            if spans:spans[-1]=(spans[-1][0],marker.start())
+            spans.append((marker.start() if spans else 0,end));cursor=end
+        else:
+            if spans and not visible[cursor:].strip(' \t\r\n。；;，,'):
+                # 分隔标点及原空白留在所属条目中，不改写或丢弃原引文。
+                spans[-1]=(spans[-1][0],len(visible))
+                parts.extend('<p class="ui-report-evidence-item">'+fragment(node.children,start,end)+'</p>' for start,end in spans)
+                continue
+        parts.append(node.raw)
+    return ''.join(parts)
 
 
 def split_inline(nodes):

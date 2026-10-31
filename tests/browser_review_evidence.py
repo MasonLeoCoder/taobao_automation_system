@@ -41,8 +41,14 @@ def check(output):
                         expect(document.get_by_text('后续分析始终可见。',exact=True)).to_be_visible()
                         expect(document.get_by_text('子场景：',exact=True)).to_be_visible()
                         first=evidence.first;expect(first.locator('summary')).to_have_text('查看原文依据（2处引用）')
+                        expect(first.locator('.ui-report-evidence-item')).to_have_count(2)
+                        expect(document.locator('.ui-report-evidence-item')).to_have_count(10)
                         expect(first.locator('a').first).not_to_be_visible()
                         first.locator('summary').focus();page.keyboard.press('Enter');expect(first.locator('a').first).to_be_visible()
+                        rows=first.locator('.ui-report-evidence-item')
+                        assert rows.evaluate_all('(nodes)=>nodes.every(n=>n.querySelectorAll("a").length===1)')
+                        boxes=[rows.nth(i).bounding_box() for i in range(2)]
+                        assert boxes[1]['y']>=boxes[0]['y']+boxes[0]['height']-1
                         first.locator('summary').click();expect(first.locator('a').first).not_to_be_visible()
                         document.get_by_text('场景甲：',exact=True).scroll_into_view_if_needed()
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
@@ -57,6 +63,7 @@ def check(output):
                         assert exported.status==200;page.set_content(exported.text())
                         document=page.locator('[data-report-document]');offline=document.locator('.ui-report-evidence')
                         expect(offline).to_have_count(7);assert page.locator('script,form,img').count()==0
+                        expect(offline.first.locator('.ui-report-evidence-item')).to_have_count(2)
                         expect(document.get_by_text('场景甲：',exact=True)).to_be_visible()
                         expect(offline.first.locator('a').first).not_to_be_visible()
                         offline.first.locator('summary').click();expect(offline.first.locator('a').first).to_be_visible()

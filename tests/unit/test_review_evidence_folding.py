@@ -32,7 +32,7 @@ class EvidenceFoldingTests(TestCase):
     def test_formatting_entities_and_original_links_preserved(self):
         raw='**【评价1 | 初评】** 原文：“A & B < C。”\n\n'+quote(1,'同源另一段，不能当额外买家。')
         safe=v6_report.render(raw);result=v6_evidence.collapse(safe)
-        self.assertIn('查看原文依据（2处引用）',result);self.assertIn(safe,result)
+        self.assertIn('查看原文依据（2处引用）',result);self.assert_preserved(raw,result)
         self.assertNotIn('<script>',result);self.assertEqual(result.count('href="#review-1"'),2)
 
     def test_label_only_paragraph_is_combined_without_removing_real_text(self):
@@ -105,6 +105,22 @@ class EvidenceFoldingTests(TestCase):
         raw='场景：'+quote(1)+quote(2)+' 后续建议。'
         result=v6_evidence.collapse(v6_report.render(raw))
         self.assertIn('查看原文依据（2处引用）',result);self.assert_preserved(raw,result)
+
+    def test_each_reference_has_own_row_for_independent_mixed_and_list_formats(self):
+        for raw in (quote(1)+' '+quote(2),quote(1)+'\n\n'+quote(2),'场景：'+quote(1)+' '+quote(2),'- 场景：'+quote(1)+' '+quote(2)):
+            with self.subTest(raw=raw):
+                result=v6_evidence.collapse(v6_report.render(raw))
+                self.assertEqual(result.count('class="ui-report-evidence"'),1)
+                self.assertEqual(result.count('class="ui-report-evidence-item"'),2)
+                self.assertIn('查看原文依据（2处引用）',result);self.assert_preserved(raw,result)
+                self.assertEqual(v6_evidence.collapse(result),result)
+
+    def test_rows_preserve_repeated_source_append_labels_long_text_and_separators(self):
+        raw='场景：'+quote(1,'带 < > & “嵌套引号” 的长原文。'*30)+'； '+quote(1)+' '+quote(1).replace('初评','追评1')
+        result=v6_evidence.collapse(v6_report.render(raw))
+        self.assertEqual(result.count('class="ui-report-evidence-item"'),3)
+        self.assertIn('查看原文依据（3处引用）',result);self.assert_preserved(raw,result)
+        self.assertIn('追评1',result)
 
     def assert_preserved(self,source,result):
         """对照所有可见文字及有序链接，忽略新增控件和排版空白；参数：原稿、展示；返回：断言。"""
