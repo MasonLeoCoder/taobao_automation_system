@@ -1,5 +1,11 @@
 /* 问答预览和显式收费操作；显示文字只用安全文本节点。 */
 (() => {
+  const historyFilter=document.querySelector('[data-qa-history-filter]');
+  if(historyFilter){const select=historyFilter.elements.batch,initial=select.value,pending=historyFilter.querySelector('[data-qa-history-pending]'),button=historyFilter.querySelector('button[type=submit]');
+    select.addEventListener('change',()=>{pending.hidden=select.value===initial;});
+    historyFilter.addEventListener('submit',event=>{if(button.disabled){event.preventDefault();return;}button.disabled=true;button.textContent='正在读取…';});
+    addEventListener('pageshow',()=>{button.disabled=false;button.textContent='查看';pending.hidden=select.value===initial;});
+  }
   const directory=document.querySelector('[data-qa-directory]');
   if(directory){const narrow=matchMedia('(max-width:1000px)');directory.open=!narrow.matches;narrow.addEventListener('change',event=>{directory.open=!event.matches;});}
   const reveal=(target)=>{for(let node=target.parentElement;node;node=node.parentElement)if(node.tagName==='DETAILS')node.open=true;};

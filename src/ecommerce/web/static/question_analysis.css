@@ -6,6 +6,10 @@
 [data-qa-feedback]:empty{display:none}
 [data-qa-choice] .module-actions{flex-wrap:wrap;gap:10px}
 .qa-history-table{min-width:620px}
+.qa-history-pending{grid-column:1/-1;margin:0}
+.qa-history-reason{margin:8px 0 0;min-width:160px;max-width:260px;white-space:normal;overflow-wrap:anywhere}
+.qa-history-scroll-hint{display:none}
+@media(max-width:700px){.qa-history-page .ra-history-record-heading{flex-wrap:wrap;gap:8px}.qa-history-page .ra-history-record-heading h2{flex-shrink:0}.qa-history-scroll-hint{display:block;margin:0 0 10px}}
 .qa-numbered-list>li{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px;margin:10px 0}
 .qa-explanation{margin:22px 0}
 .qa-workspace{display:flex;flex-direction:column;gap:18px}

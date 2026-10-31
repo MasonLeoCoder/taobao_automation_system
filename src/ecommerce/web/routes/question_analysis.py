@@ -1,12 +1,9 @@
 """问答分析页面，写操作复用本机来源与令牌守卫。"""
-import html
 import json
-import re
 from flask import Blueprint,request,render_template,current_app,jsonify,Response,url_for
 from ecommerce.web.routes.review_analysis import protect,payload
 from ecommerce.modules.question_analysis import service,report,checks,runtime
 from ecommerce.infrastructure.storage import analysis_store as repository
-from ecommerce.infrastructure.storage.time_values import iso_value
 from ecommerce.infrastructure.ai.client import AIError
 from ecommerce.shared.exceptions import TaskBusy
 
@@ -32,12 +29,11 @@ def invalid(error):
 @question_analysis.get('/analysis/questions/products/<product>')
 def history(product):
     """读取指定批次历史；参数：平台商品；返回：历史页面，不联网。"""
-    service.product_id(product);batch=int(request.args.get('batch','0'));service.integer(batch,1,2**63-1,'批次编号')
-    if not any(row['id']==batch for row in repository.batch_choices(settings(),product,analysis_type='questions')):
-        raise LookupError('问答批次不属于该商品或尚未发布。')
-    rows=repository.history(settings(),product,batch,analysis_type='questions')
-    for row in rows:row['created_at']=iso_value(row['created_at'])
-    return render_template('question_analysis.html',mode='history',product=product,batch=batch,rows=rows,active='collections',shop_name=settings().shop_name)
+    raw=request.args.get('batch')
+    try:batch='all' if raw=='all' else int(raw) if raw else None
+    except ValueError:raise ValueError('批次编号无效。') from None
+    data=service.history_page(settings(),product,batch)
+    return render_template('question_analysis_history.html',product=product,**data,active='collections',shop_name=settings().shop_name)
 
 
 @question_analysis.get('/analysis/questions/products/<product>/new')

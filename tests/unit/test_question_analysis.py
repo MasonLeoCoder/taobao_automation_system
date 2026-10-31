@@ -191,3 +191,40 @@ class QuestionTests(TestCase):
         self.put('collection_batches',id=7,product_id=1,module='questions',visibility='published',status='no_questions')
         empty=self.client.get('/analysis/questions/products/123?batch=7')
         self.assertEqual(empty.status_code,200);self.assertIn('本批尚未分析',empty.text)
+
+    def test_history_filters_and_saved_time_are_read_only(self):
+        """跨批次查看不改分析范围，报告时间读取保存元信息，最新失败不遮住成功。"""
+        from datetime import datetime
+        self.put('collection_batches',id=7,product_id=1,module='questions',visibility='published',status='complete')
+        self.put('question_observations',id=12,batch_id=7,position=1,question='另一批',answers_complete=True)
+        identifier=self.create_qa();data=service.preview(self.settings,'123',6);client=Mock()
+        client.complete_messages.return_value={'text':sample_report(data['items']),'finish_reason':'stop','usage':{'total_tokens':10}}
+        runtime.execute(self.settings,identifier,Mock(),Mock(return_value=client))
+        with repository.connection(self.settings,True) as (conn,tables):
+            conn.execute(tables['analysis_tasks'].update().where(tables['analysis_tasks'].c.id==identifier).values(created_at=datetime(2026,10,1,10)))
+            conn.execute(tables['analysis_reports'].update().where(tables['analysis_reports'].c.analysis_id==identifier).values(created_at=datetime(2026,10,2,11)))
+        before=repository.read(self.settings,identifier)
+        page=self.client.get('/analysis/questions/products/123?batch=6')
+        self.assertEqual(page.status_code,200);self.assertIn('报告保存于 2026-10-02 11:00:00',page.text);self.assertIn('2026-10-01 10:00:00',page.text)
+        self.assertIn('来源 2 个问题',page.text);self.assertIn('最近100条上限',page.text)
+        self.assertEqual(repository.read(self.settings,identifier),before)
+        other=service.history_page(self.settings,'123',7);self.assertEqual(other['tasks'],[]);self.assertIsNone(other['latest_result'])
+        all_data=service.history_page(self.settings,'123','all');self.assertEqual(len(all_data['tasks']),1);self.assertFalse(all_data['can_start'])
+        all_page=self.client.get('/analysis/questions/products/123?batch=all')
+        self.assertEqual(all_page.status_code,200);self.assertNotIn('data-qa-open',all_page.text)
+        with self.assertRaises(LookupError):service.history_page(self.settings,'456',6)
+        # 最近100条全部失败时，成功提示卡仍须能找到更早的报告。
+        from datetime import timedelta
+        with repository.connection(self.settings,True) as (conn,tables):
+            tasks=[];sources=[]
+            for index in range(101):
+                task=dict(before['task'],id=f'{1000+index:032x}',status='failed',active_key=None,owner=None,
+                    created_at=datetime(2026,10,3)+timedelta(seconds=index),message='报告未完成。原因：脱敏测试失败原因')
+                tasks.append(task)
+                for position,source in enumerate(before['sources']):sources.append(dict(source,id=f'{3000+index*2+position:032x}',analysis_id=task['id']))
+            conn.execute(tables['analysis_tasks'].insert(),tasks);conn.execute(tables['analysis_sources'].insert(),sources)
+        limited=service.history_page(self.settings,'123',6)
+        self.assertEqual(len(limited['tasks']),100)
+        self.assertNotIn(identifier,{t['id'] for t in limited['tasks']})
+        self.assertEqual(limited['latest_result']['id'],identifier)
+        self.assertEqual(limited['latest_task']['brief_reason'],'脱敏测试失败原因')

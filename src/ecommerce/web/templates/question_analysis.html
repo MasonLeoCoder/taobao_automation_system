@@ -4,9 +4,8 @@
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='review_analysis.css') }}"><link rel="stylesheet" href="{{ url_for('static',filename='question_analysis.css') }}"><script src="{{ url_for('static',filename='question_analysis.js') }}" defer></script>{% endblock %}
 {% block content %}
 {% if mode=='result' %}{% include 'question_analysis_reading.html' %}{% else %}
-<div class="ra-reading-page"><h1>{{ '问大家分析记录' if mode=='history' else '问大家竞品与选品报告' if mode=='result' else '分析问答' }}</h1><p>商品 {{ product }} · 来源批次 {{ batch }}</p>
+<div class="ra-reading-page"><h1>分析问答</h1><p>商品 {{ product }} · 来源批次 {{ batch }}</p>
 <div class="ra-report-toolbar">{{ action_link('返回问大家',url_for('pages.collection_product',product_id=product,module='questions',batch=batch)) }}{% if mode!='history' %}{{ action_link('查看分析记录',url_for('question_analysis.history',product=product,batch=batch)) }}{% endif %}</div>
 {% if mode=='new' %}<section class="panel" data-qa-container>{% include 'question_analysis_form.html' %}</section>
-{% elif mode=='history' %}<section class="panel"><div class="module-actions"><a class="ui-button ui-primary" data-qa-open href="{{ url_for('question_analysis.new',product=product,batch=batch) }}">分析问答</a></div><p>最近100条记录，查看不调用AI。</p><div class="table-wrap"><table class="qa-history-table"><thead><tr><th>创建时间</th><th>模型</th><th>状态</th><th>问题数</th><th>查看</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.created_at|full_local_time }}</td><td>{{ row.model }}</td><td>{{ {'succeeded':'已完成','partial':'部分完成','failed':'失败','interrupted':'中断','queued':'等待启动','running':'分析中'}.get(row.status,row.status) }}</td><td>{{ row.source_count }}</td><td><a href="{{ url_for('question_analysis.result',task_id=row.id) }}">查看报告与进度</a></td></tr>{% else %}<tr><td colspan="5">本批尚未分析，点击上方“分析问答”生成报告。</td></tr>{% endfor %}</tbody></table></div></section>
 {% endif %}</div>
 {% endif %}{% endblock %}

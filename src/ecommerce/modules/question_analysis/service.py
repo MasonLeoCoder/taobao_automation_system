@@ -44,3 +44,36 @@ def read(settings,task_id):
     data=repository.read(settings,identifier(task_id))
     if data['task']['analysis_type']!='questions' or data['task']['rule_version']!=planner.VERSION:raise LookupError('问答分析记录不存在。')
     return data
+
+
+def history_page(settings,product,batch=None):
+    """读取问答历史范围、最近成功报告和轻量表格；参数：商品、批次/all；返回：只读模型。"""
+    import re
+    import sqlalchemy as sa
+    from ecommerce.infrastructure.tasks.ownership import owner_alive
+    product_id(product)
+    batches=repository.batch_choices(settings,product,analysis_type='questions')
+    all_batches=batch=='all'
+    selected=None if all_batches else batch if batch is not None else batches[0]['id'] if batches else None
+    if selected is not None:
+        integer(selected,1,2**63-1,'批次编号')
+        if not any(b['id']==selected for b in batches):raise LookupError('问答批次不属于该商品或尚未发布。')
+    with repository.connection(settings) as (conn,tables):
+        p=tables['products']
+        identity=conn.execute(sa.select(p.c.display_title).where(p.c.platform=='taobao',p.c.platform_product_id==product)).first()
+        if identity is None:raise LookupError('商品尚未入库。')
+        can_start=False
+        if selected and next(b for b in batches if b['id']==selected)['status']=='complete':
+            q=tables['question_observations'];can_start=bool(conn.scalar(sa.select(sa.func.count()).select_from(q).where(q.c.batch_id==selected)))
+    tasks=repository.history(settings,product,selected,analysis_type='questions',display_only=True)
+    success=repository.latest_success(settings,product,selected,analysis_type='questions',display_only=True)
+    for task in tasks:
+        owner=task.get('owner') or {}
+        task['appears_interrupted']=task['status'] in ('queued','running') and bool(owner) and owner_alive(owner.get('pid'),owner.get('started_at')) is False
+        message=re.sub(r'\s+',' ',task.get('message') or '').strip()
+        message=re.split(r'原因[:：]',message,maxsplit=1)[-1].strip()
+        task['brief_reason']=(message[:64]+'…' if len(message)>64 else message) if task['status'] in ('failed','partial','interrupted') or task['appears_interrupted'] else ''
+    if success:success['report_info']=repository.latest_report_info(settings,success['id'])
+    return {'batches':batches,'all_batches':all_batches,'selected_batch':selected,'can_start':can_start,
+        'product_title':identity[0] or '商品名称未记录','tasks':tasks,'latest_result':success,'latest_task':tasks[0] if tasks else None,
+        'active_task':next((t for t in tasks if t['status'] in ('queued','running') and not t['appears_interrupted']),None)}

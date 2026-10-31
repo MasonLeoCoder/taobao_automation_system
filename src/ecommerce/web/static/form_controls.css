@@ -304,3 +304,4 @@ body:has(.ui-modal[open]){overflow:hidden}
 .qa-card .qa-answer-text{color:var(--control-text)}
 .ui-action-menu-secondary>summary{background:var(--control-surface);color:var(--control-label);border:1px solid var(--control-border)}
 .qa-workspace select.ui-control{overflow:hidden;text-overflow:ellipsis}
+.ui-report-source-link{color:var(--control-accent);text-decoration:underline;text-underline-offset:3px}
