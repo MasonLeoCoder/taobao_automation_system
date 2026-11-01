@@ -106,12 +106,14 @@ class CollectionJobStore:
         connection.execute(statement.on_duplicate_key_update(execution_key=statement.inserted.execution_key))
         return connection.execute(sa.select(q).where(q.c.execution_key==key).with_for_update()).mappings().one()
 
-    def submit(self, row, *, submission_key=None, origin='web'):
+    def submit(self, row, *, submission_key=None, origin='web', reuse_pending_module=None):
         """原子保存固定申请并合并重复提交；参数：申请、提交编号、来源；返回：申请编号。"""
         from ecommerce.shared.config import mysql_settings_from_payload
         mysql_settings_from_payload(row['config']['mysql'])
         j = self.tables['collection_jobs']
         identifier(row['id'])
+        if reuse_pending_module is not None and (reuse_pending_module!='skus' or row.get('module')!='skus' or row.get('modules')!=['skus']):
+            raise ValueError('SKU更新复用仅允许单SKU模块申请')
         if submission_key is not None:
             identifier(submission_key)
         spec = {key:row.get(key) for key in ('product_id','module','mode','modules','options','resume_task_id','resume_revision','cleanup_tasks')}
@@ -124,6 +126,15 @@ class CollectionJobStore:
                     if previous['payload'].get('request_spec') != spec:
                         raise JobConflict('同一个提交编号不能改变采集参数，请重新提交')
                     return previous['id']
+            if reuse_pending_module:
+                t=self.tables['tasks']
+                pending=sa.or_(j.c.dispatch_state.in_(PENDING),sa.and_(j.c.dispatch_state=='started',t.c.finished_at.is_(None)))
+                statement=self._statement().where(j.c.execution_key==row['execution_key'],pending,
+                    j.c.payload['product_id'].as_string()==row['product_id']).order_by(j.c.created_at.desc(),j.c.id.desc())
+                for existing in c.execute(statement).mappings():
+                    payload=existing['payload']
+                    if payload.get('module')==reuse_pending_module or reuse_pending_module in (payload.get('modules') or []):
+                        return existing['id']
             previous = c.scalar(sa.select(j.c.id).where(j.c.execution_key==row['execution_key'],j.c.request_key==digest))
             if previous:
                 return previous

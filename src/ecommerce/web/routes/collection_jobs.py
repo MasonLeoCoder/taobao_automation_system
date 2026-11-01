@@ -161,11 +161,29 @@ def recent(product_id):
     """恢复当前商品模块状态；参数：商品；返回：最近任务。"""
     settings=current_app.config['SETTINGS']
     states=service.recent(settings,product_id)
-    extra=service.product_status(settings,product_id,with_overview=request.args.get('overview')=='1',states=states)
+    with_sku_update=request.args.get('sku_update')=='1'
+    if with_sku_update:
+        known={job['id'] for job in states}
+        states+= [job for job in service.active(settings) if job['product_id']==product_id and job['id'] not in known]
+    extra=service.product_status(settings,product_id,with_overview=request.args.get('overview')=='1',states=states,
+        **({'with_sku_update':True} if with_sku_update else {}))
     if 'overview' in extra:
         from ecommerce.web.collection_overview import present as overview_present
         extra['overview']=overview_present(extra['overview'],product_id)
+    if 'sku_update' in extra:
+        from ecommerce.web.sku_update import present as sku_present
+        extra['sku_update']=sku_present(extra['sku_update'],product_id)
     return jsonify(jobs=[present(state) for state in states],**extra)
+
+
+@collection_jobs.post('/api/collections/products/<product_id>/sku-update')
+def update_skus(product_id):
+    """明确确认后只采集本商品全部SKU；参数：商品及confirm=true；返回：新申请或已有在途申请。"""
+    body=request.get_json()
+    if not isinstance(body,dict) or set(body)!={'confirm'} or body['confirm'] is not True:
+        raise ValueError('请确认更新本商品全部SKU信息')
+    return jsonify(present(service.start_sku_update(current_app.config['SETTINGS'],product_id,
+        submission_key=request.headers.get('X-Submission-Id')))),202
 
 
 @collection_jobs.post('/api/collections/products/<product_id>/jobs')

@@ -30,7 +30,7 @@ def plan(settings,product_id):
     return remaining_plan(validate(settings,product_id))
 
 
-def product_status(settings,product_id,*,with_overview=False,states=None):
+def product_status(settings,product_id,*,with_overview=False,states=None,with_sku_update=False):
     """一次只读返回补采计划和核对后的最近运行；参数：配置、商品；返回：进度摘要。"""
     data=validate(settings,product_id,with_overview=with_overview)
     summary=data.get('detail_summary') or {};run=summary.get('latest_run') or {}
@@ -44,6 +44,9 @@ def product_status(settings,product_id,*,with_overview=False,states=None):
     if with_overview:
         from ecommerce.modules.collection.collection_overview import build
         result['overview']=build(data,states or [])
+    if with_sku_update:
+        from ecommerce.modules.collection.sku_update import build
+        result['sku_update']=build(data,states or [])
     return result
 
 
@@ -138,8 +141,14 @@ def start_remaining(settings,product_id,*,submission_key=None):
     return _start(settings,product_id,'remaining','remaining',submission_key=submission_key)
 
 
+def start_sku_update(settings,product_id,*,submission_key=None):
+    """另开SKU采集并保留旧尝试；参数：配置、商品及提交键；返回：新申请或同商品在途申请。"""
+    validate(settings,product_id,'skus')
+    return _start(settings,product_id,'skus','single',submission_key=submission_key,reuse_pending_module='skus')
+
+
 def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cleanup_tasks=None,identifier=None,
-           submission_key=None,resume_revision=None,origin='web',frozen_modules=None):
+           submission_key=None,resume_revision=None,origin='web',frozen_modules=None,reuse_pending_module=None):
     """先入库申请，再尝试领取；参数：配置、固定范围及来源；返回：数据库公开状态。"""
     from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
@@ -170,7 +179,8 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
         row.update(resume_task_id=resume_task_id,resume_revision=resume_revision)
     if cleanup_tasks:
         row['cleanup_tasks']=cleanup_tasks
-    identifier=persistence.submit(row,submission_key=submission_key,origin=origin)
+    identifier=persistence.submit(row,submission_key=submission_key,origin=origin,
+        **({'reuse_pending_module':reuse_pending_module} if reuse_pending_module else {}))
     from ecommerce.modules.collection.dispatch import dispatch_next
     try:
         dispatch_next(settings,identifier=identifier if resume_task_id else None,manual=bool(resume_task_id))

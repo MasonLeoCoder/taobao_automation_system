@@ -497,7 +497,7 @@
       const pending = [...tracked.values()].filter(job => !job.done && !active.jobs.some(other => other.id === job.id));
       for (const job of pending) tracked.set(job.id,await api(endpoint(job)));
       if (product) {
-        const recent = await api(`/api/collections/products/${product}/jobs${document.querySelector('[data-collection-overview]') ? '?overview=1' : ''}`);
+        const recent = await api(`/api/collections/products/${product}/jobs${document.querySelector('[data-sku-update]') ? '?sku_update=1' : document.querySelector('[data-collection-overview]') ? '?overview=1' : ''}`);
         plan = recent.plan || plan;
         renderProductRun(recent.run_status);
         if (recent.overview) {
@@ -506,6 +506,11 @@
           document.dispatchEvent(new CustomEvent('collection-overview-updated',{detail:recent.overview}));
         }
         recent.jobs.forEach(job => tracked.set(job.id,job));
+        const sku=document.querySelector('[data-sku-update]');
+        if(sku){
+          sku.skuUpdateSnapshot=recent.sku_update || null;
+          document.dispatchEvent(new CustomEvent(recent.sku_update ? 'collection-sku-update-state' : 'collection-sku-update-error',{detail:recent.sku_update}));
+        }
       }
       for (const job of tracked.values()) {
         if (job.done && !refreshedCatalogJobs.has(job.id) && document.querySelector(`.collect-remaining[data-product="${job.product_id}"]`)) {
@@ -527,6 +532,7 @@
       if (requestedHistoryVersion !== historyVersion) { refreshAgain = true; return; }
       stateKnown = false;
       document.dispatchEvent(new CustomEvent('collection-overview-error'));
+      document.dispatchEvent(new CustomEvent('collection-sku-update-error'));
       const submit = document.getElementById('collection-submit');
       if (submit) submit.disabled = true;
       document.querySelectorAll('[data-start-job]').forEach(button => button.disabled = true);
@@ -576,6 +582,17 @@
       }
     }
   }
+
+  document.addEventListener('collection-sku-update-request',async event=>{
+    const {resolve,reject}=event.detail;
+    if(!product || !stateKnown || submitting){reject(new Error('任务状态尚未确认，请稍后再试。'));return;}
+    submitting=true;render();
+    try{
+      const job=await api(`/api/collections/products/${product}/sku-update`,{confirm:true});
+      tracked.set(job.id,job);render();resolve(job);
+    }catch(error){reject(error);}
+    finally{submitting=false;render();await refresh();}
+  });
 
   document.querySelectorAll('.module-collect,[data-overview-collect]').forEach(button => button.addEventListener('click',async () => {
     const id = button.dataset.product || product;
