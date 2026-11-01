@@ -93,21 +93,7 @@ def check():
                     expect(page.locator('[data-runtime-logs]')).to_be_visible()
                     assert page.locator('[data-source-logs]').get_attribute('href')==logs
                     assert page.get_by_role('link',name='查看本批资料',exact=True).get_attribute('href')==source
-                    # 必须展开模块概况，检查真实计算颜色；有文字节点不代表文字可读。
-                    page.locator('.pd-module-details>summary').click()
-                    controls=page.locator('.pd-module-details .action-primary')
-                    for index in range(controls.count()):
-                        control=controls.nth(index)
-                        expect(control).to_be_visible()
-                        assert control.text_content().strip()
-                        expect(control).to_have_css('color','rgb(255, 255, 255)')
-                        control.hover();expect(control).to_have_css('color','rgb(255, 255, 255)')
-                    page.mouse.move(0,0)
-                    page.locator('.pd-module-details>summary').focus();page.keyboard.press('Tab')
-                    focused=page.locator('.pd-module-details .action-primary:focus-visible')
-                    expect(focused).to_have_count(1)
-                    expect(focused).to_have_css('color','rgb(255, 255, 255)')
-                    assert page.locator('[data-source-logs]').get_attribute('href')==logs
+                    assert page.locator('[data-collection-overview]').count()==0
                     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
                     page.screenshot(path=str(output/f'overview-{width}.png'),full_page=True)
                     page.get_by_role('link',name='更新基本信息',exact=True).click()

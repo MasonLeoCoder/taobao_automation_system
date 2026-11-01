@@ -11,8 +11,8 @@
     <span class="pd-copy-feedback ui-form-note" data-copy-feedback role="status" aria-live="polite"></span>
   </div>
   <div class="product-collection-actions pd-primary-actions">
-    {{ control_button('补采未完成模块（' ~ collection_plan.modules|length ~ '）' if collection_plan.modules else '所选模块无需补采', {'type':'button','class':'button action-button action-primary collect-remaining','data-remaining-count':collection_plan.modules|length,'data-detail-plan':true,'disabled':not collection_plan.modules}) }}
-    <a class="button action-button action-neutral" href="{{ configure_url }}">重新采集／选择范围</a>
+    {% if module!='overview' %}{{ control_button('补采未完成模块（' ~ collection_plan.modules|length ~ '）' if collection_plan.modules else '所选模块无需补采', {'type':'button','class':'button action-button action-primary collect-remaining','data-remaining-count':collection_plan.modules|length,'data-detail-plan':true,'disabled':not collection_plan.modules}) }}
+    <a class="button action-button action-neutral" href="{{ configure_url }}">重新采集／选择范围</a>{% endif %}
     <a class="button action-button action-external" href="https://item.taobao.com/item.htm?id={{ product.platform_product_id }}" target="_blank" rel="noopener noreferrer">打开淘宝 ↗</a>
   </div>
 </section>
@@ -35,6 +35,7 @@
 {% if selected and context_run and selected.run_id!=context_run %}<p class="ui-report-notice" role="status">已手动切换历史批次，本批次不属于上方关联运行。</p>{% endif %}
 <p class="pd-navigation-note ui-form-note">导航数量：{{ '本次关联运行已保存资料' if context_run else '各模块最近有效资料' }}；历史批次数量以模块内容为准。</p>
 <nav class="tabs module-tabs pd-tabs" aria-label="商品模块">
+<a class="{{ 'selected' if module=='overview' }}" {% if module=='overview' %}aria-current="page"{% endif %} href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module='overview',return_to=back_url) }}">采集概况</a>
 {% for code,label in labels.items() if code not in ['list','basic_info','review_summary'] %}
   {% set entry=module_summaries.get(code) %}
   <a class="{{ 'selected' if module==code or (module=='basic_info' and code=='basic') }}" {% if module==code or (module=='basic_info' and code=='basic') %}aria-current="page"{% endif %} href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module=code,observation=request.args.get('observation','0'),return_to=back_url) }}" {% if entry %}title="{{ entry.status }}{% if entry.valid %} · 批次 {{ entry.valid.id }} · {{ entry.valid.captured_at|full_local_time }}{% endif %}；数量为已保存记录，不代表平台全量或文件可用性"{% endif %}>

@@ -307,11 +307,30 @@ def _browse(c, tables, view, **o):
                 info={**(observed['payload'] or {}),**info}
         runs,steps=tables['collection_runs'],tables['collection_steps']
         last_steps={}
-        for step in c.execute(sa.select(steps).join(runs,runs.c.id==steps.c.run_id).where(
+        for step in c.execute(sa.select(steps,runs.c.task_id,runs.c.started_at.label('run_started_at')).join(runs,runs.c.id==steps.c.run_id).where(
                 runs.c.product_id==product['id'],steps.c.requested.is_(True)).order_by(runs.c.started_at.desc(),runs.c.id.desc(),steps.c.id.desc())).mappings():
             last_steps.setdefault(step['module'],step)
-        no_entry=[module for module,step in last_steps.items() if step['status']=='skipped' and (step['payload'] or {}).get('stop_reason')=='entry_not_found']
+        no_entry=[module for module,step in last_steps.items() if step['status']=='skipped' and
+                  ((step['payload'] or {}).get('record') or step['payload'] or {}).get('stop_reason')=='entry_not_found']
+        attempts={}
+        if o.get('with_overview'):
+            from ecommerce.infrastructure.storage.collection_lifecycle import run_views
+            run_ids={step['run_id'] for step in last_steps.values()}
+            checked={run['id']:run['display'] for run in run_views(c,tables,c.execute(sa.select(runs).where(runs.c.id.in_(run_ids))).mappings())}
+            for code,step in last_steps.items():
+                state=step['status'];parent=checked[step['run_id']]
+                if state in {'pending','running'}:
+                    state=('waiting' if state=='pending' else 'running') if parent['state']=='running' else parent['state']
+                raw=(step['payload'] or {}).get('record') or step['payload'] or {}
+                if state=='skipped' and raw.get('stop_reason')!='entry_not_found':state='needs_attention'
+                attempts[code]={'state':state,'task_id':step['task_id'],'run_id':step['run_id'],
+                    'at':step['started_at'] or step['run_started_at'],'message':raw.get('message') or raw.get('reason') or parent['note']}
+            assets,refs=tables['file_assets'],tables['media_references']
+            missing={identifier:count for identifier,count in c.execute(sa.select(refs.c.batch_id,sa.func.count()).outerjoin(assets,assets.c.id==refs.c.file_asset_id).where(
+                refs.c.batch_id.in_(pointers),refs.c.file_asset_id.is_not(None),sa.or_(assets.c.id.is_(None),assets.c.availability!='present')).group_by(refs.c.batch_id))}
+        else:missing={}
         return {'product': dict(product), 'history': history, 'current_ids': pointers, 'no_entry_modules':no_entry,'listing': dict(listing or {}),
+            'module_attempts':attempts,'missing_media':missing,
             'detail_summary':summary,'source_context':context,'product_info':info,'info_captured_at':info.get('captured_at'), 'info_batch_id':sku['id'] if sku else None}
     if view=='sources':
         product=c.execute(sa.select(p).where(p.c.platform_product_id==o['product_id'],p.c.platform=='taobao')).mappings().first()

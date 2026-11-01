@@ -135,9 +135,13 @@ class BatchScopeDisplayTests(unittest.TestCase):
             self.assertTrue(statements[0].lstrip().upper().startswith('SELECT'))
             saved=connection.execute(sa.select(table.c.status,table.c.coverage_status).where(table.c.id==20)).one()
             self.assertEqual(tuple(saved),('complete','unknown'))
-        for path in ['/collections/products/123?module=history','/collections/products/123',
+        for path in ['/collections/products/123?module=history',
                      '/collections/products/123?module=parameters','/collections/batches/20']:
             response=f.client.get(path)
             self.assertEqual(response.status_code,200,path)
             self.assertIn('2项参数',response.get_data(as_text=True),path)
             self.assertNotIn('未确认覆盖范围',response.get_data(as_text=True),path)
+        overview=f.client.get('/collections/products/123?module=overview')
+        self.assertEqual(overview.status_code,200)
+        self.assertIn('已保存 2 项参数',overview.get_data(as_text=True))
+        self.assertNotIn('未确认覆盖范围',overview.get_data(as_text=True))

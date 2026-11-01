@@ -5,29 +5,14 @@
 {% from "collection_parts.html" import labels, batch_status, scope, media_grid, record_table with context %}
 {% block title %}{{ product.display_title or product.platform_product_id }}{% endblock %}{% block breadcrumb %}<a href="{{ url_for('pages.collection_details') }}">商品库</a> / 商品详情{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% endblock %}
-{% block extra_scripts %}<script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% if module=='overview' %}<script src="{{ url_for('static',filename='collection_overview.js') }}" defer></script>{% endif %}{% endblock %}
 {% block content %}
 <p class="back-link"><a class="button action-button action-neutral" href="{{ back_url }}">← 返回上一列表</a></p>
 {% include 'product_header.html' %}
 {% if module=='basic' %}
 {% include 'product_basic.html' %}
-<details class="ui-report-fold pd-module-details"><summary>各模块资料与最近尝试<small>有效资料与最近尝试分别保留</small></summary><div class="ui-report-fold-body">
-<div class="section-heading"><h2>资料概况</h2><p>有效资料与最后一次尝试分别展示。</p></div>
-<div class="cards">
-{% for code,label in labels.items() if code not in ['basic','basic_info','history','list','sources'] %}
-{% set latest=display_history|selectattr('module','equalto',code)|first %}
-{% set valid=module_summaries[code].valid %}
-<article class="card" data-collection-module="{{ code }}" data-latest-batch="{{ latest.id if latest else 0 }}"><h2>{{ label }}</h2>
-{% if valid %}<p>有效资料：{{ valid.captured_at|full_local_time }}<br>{{ scope(valid) }}</p>
-{% elif latest %}<p>暂无有效资料；已保留最近采集尝试。</p>{% else %}<p>尚未采集</p>{% endif %}
-{% if latest %}<p>{{ '本次记录' if context_run else '最后一次尝试' }}：{{ latest.captured_at|full_local_time }}<br>{{ scope(latest) }}</p>{% endif %}
-<div class="module-actions">
-{% if valid %}<a class="button action-button action-primary module-result" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=valid.id,observation=request.args.get('observation','0'),return_to=back_url) }}">{{ '查看采集结果' if valid.status.startswith('no_') else '查看资料' }} →</a>
-{% else %}{{ control_button('采集 SKU' if code=='skus' else '采集基本信息' if code=='basic_info' else '采集数据', {"type": "button", "class": "button action-button action-primary module-collect", "data-module": code}) }}
-{% if latest %}<a class="button action-button action-history" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=latest.id,observation=request.args.get('observation','0'),return_to=back_url) }}">查看上次采集尝试</a>{% endif %}
-{% endif %}</div><p class="module-job-status" role="status" aria-live="polite"></p></article>
-{% endfor %}</div>
-</div></details>
+{% elif module=='overview' %}
+{% include 'collection_overview.html' %}
 {% elif module=='reviews' %}
 {% include 'product_reviews.html' %}
 {% elif module=='questions' %}

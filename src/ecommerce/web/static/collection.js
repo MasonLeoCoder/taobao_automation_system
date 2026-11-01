@@ -213,6 +213,7 @@
       submit.textContent = submitting ? '正在提交…' : executingJob() ? '加入采集队列' : queuePaused ? '保存采集申请' : '开始采集';
     }
     document.querySelectorAll('.module-collect').forEach(button => button.disabled = submitting || !stateKnown);
+    document.querySelectorAll('[data-overview-collect]').forEach(button => button.disabled = submitting || !stateKnown || button.dataset.busy==='true' || button.dataset.submitting==='true');
     document.querySelectorAll('.collect-remaining').forEach(button => {
       const id = button.dataset.product || product;
       const currentPlan = id === product ? plan : catalogPlans.get(id);
@@ -472,9 +473,14 @@
       const pending = [...tracked.values()].filter(job => !job.done && !active.jobs.some(other => other.id === job.id));
       for (const job of pending) tracked.set(job.id,await api(endpoint(job)));
       if (product) {
-        const recent = await api(`/api/collections/products/${product}/jobs`);
+        const recent = await api(`/api/collections/products/${product}/jobs${document.querySelector('[data-collection-overview]') ? '?overview=1' : ''}`);
         plan = recent.plan || plan;
         renderProductRun(recent.run_status);
+        if (recent.overview) {
+          const root=document.querySelector('[data-collection-overview]');
+          if (root) root.overviewSnapshot=recent.overview;
+          document.dispatchEvent(new CustomEvent('collection-overview-updated',{detail:recent.overview}));
+        }
         recent.jobs.forEach(job => tracked.set(job.id,job));
       }
       for (const job of tracked.values()) {
@@ -496,6 +502,7 @@
     } catch (error) {
       if (requestedHistoryVersion !== historyVersion) { refreshAgain = true; return; }
       stateKnown = false;
+      document.dispatchEvent(new CustomEvent('collection-overview-error'));
       const submit = document.getElementById('collection-submit');
       if (submit) submit.disabled = true;
       document.querySelectorAll('[data-start-job]').forEach(button => button.disabled = true);
@@ -546,17 +553,30 @@
     }
   }
 
-  document.querySelectorAll('.module-collect').forEach(button => button.addEventListener('click',async () => {
+  document.querySelectorAll('.module-collect,[data-overview-collect]').forEach(button => button.addEventListener('click',async () => {
     const id = button.dataset.product || product;
     button.disabled = true;
-    const status = (button.closest('[data-collection-module]') || button.closest('.card'))?.querySelector('.module-job-status');
+    const overview=button.hasAttribute('data-overview-collect');
+    if (overview) button.dataset.submitting='true';
+    const status = (button.closest('[data-overview-row]') || button.closest('[data-collection-module]') || button.closest('.card'))?.querySelector('.module-job-status');
+    if (overview && status) status.textContent='正在提交本模块采集申请…';
     try {
       const job = await api(`/api/collections/products/${id}/jobs`,{module:button.dataset.module});
       tracked.set(job.id,job); render();
+      if (overview) {
+        button.dataset.busy='true';
+        if (status) status.textContent='申请已保存，正在读取任务进度。';
+        await refresh();
+      }
     } catch (error) {
       if (status) status.textContent = error.message;
       else { bar.hidden = false; bar.textContent = error.message; }
       button.disabled = false;
+    } finally {
+      if (overview) {
+        delete button.dataset.submitting;
+        document.dispatchEvent(new CustomEvent('collection-overview-request-end'));
+      }
     }
   }));
   document.querySelectorAll('.collect-remaining').forEach(button => button.addEventListener('click',async () => {

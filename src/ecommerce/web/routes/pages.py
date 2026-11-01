@@ -267,19 +267,26 @@ def collection_keyword_products():
 @pages.get('/collections/products/<product_id>')
 def collection_product(product_id):
     """展示商品分区和历史；参数：平台商品编号及模块；返回：详情页面。"""
-    data=browse_query('product',product_id=product_id,observation_id=integer_arg('observation'))
     module=request.args.get('module','basic')
-    allowed={'basic','history','sources','basic_info','main_images','video','skus','parameters','detail_images','review_summary','reviews','questions'}
+    from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+    try:
+        data=browse_query('product',product_id=product_id,observation_id=None if module=='overview' else integer_arg('observation'),with_overview=module=='overview')
+    except MySQLStorageError:
+        if module!='overview':raise
+        settings=current_app.config['SETTINGS']
+        return render_template('collection_overview_error.html',active='collections',shop_name=settings.shop_name,product_id=product_id),503
+    allowed={'overview','basic','history','sources','basic_info','main_images','video','skus','parameters','detail_images','review_summary','reviews','questions'}
     if module not in allowed:
         abort(400,description='商品模块无效')
     selected=None
     batch_id=integer_arg('batch')
+    if module=='overview' and batch_id:abort(400,description='采集概况不按历史批次筛选，请进入资料模块查看批次')
     if batch_id:
         selected=next((row for row in data['history'] if row['id']==batch_id and row['product_id']==data['product']['id']),None)
         if selected is None:
             abort(404,description='该批次不属于此商品')
         module=selected['module']
-    elif module not in {'basic','history'}:
+    elif module not in {'overview','basic','history'}:
         context_run=(data['source_context'] or {}).get('context_run',{}).get('id')
         candidates=[row for row in data['history'] if row['module']==module and (
             row['run_id']==context_run if context_run else row['id'] in data['current_ids'])]
@@ -330,11 +337,22 @@ def collection_product(product_id):
     settings=current_app.config['SETTINGS']
     from ecommerce.modules.collection.web_collection import remaining_plan
     from ecommerce.modules.collection.product_view import module_summaries
+    overview_model=None;overview_filter=request.args.get('overview_filter','all')
+    if module=='overview':
+        if overview_filter not in {'all','remaining','issues'}:abort(400,description='概况筛选无效')
+        from ecommerce.modules.collection.collection_overview import build
+        from ecommerce.modules.collection.web_collection import recent
+        from ecommerce.web.collection_overview import present
+        states=[];runtime_error=settings.task_backend!='mysql'
+        if not runtime_error:
+            try:states=recent(settings,product_id)
+            except MySQLStorageError:runtime_error=True
+        overview_model=present(build(data,states,runtime_error=runtime_error),product_id)
     return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
-        module_summaries=module_summaries(data,display_history,context_run),**data)
+        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,**data)
 
 
 @pages.get('/collections/searches/<task_id>')

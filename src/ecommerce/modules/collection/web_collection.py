@@ -30,9 +30,9 @@ def plan(settings,product_id):
     return remaining_plan(validate(settings,product_id))
 
 
-def product_status(settings,product_id):
+def product_status(settings,product_id,*,with_overview=False,states=None):
     """一次只读返回补采计划和核对后的最近运行；参数：配置、商品；返回：进度摘要。"""
-    data=validate(settings,product_id)
+    data=validate(settings,product_id,with_overview=with_overview)
     summary=data.get('detail_summary') or {};run=summary.get('latest_run') or {}
     view=run.get('display')
     status=None
@@ -40,10 +40,14 @@ def product_status(settings,product_id):
         from ecommerce.infrastructure.storage.collection_queries import public
         status=public({**view,'label':summary['last_attempt_label'],'task_id':run.get('task_id'),
                        'started_at':run.get('started_at'),'finished_at':view.get('finished_at')})
-    return {'plan':remaining_plan(data),'run_status':status}
+    result={'plan':remaining_plan(data),'run_status':status}
+    if with_overview:
+        from ecommerce.modules.collection.collection_overview import build
+        result['overview']=build(data,states or [])
+    return result
 
 
-def validate(settings, product_id, module=None):
+def validate(settings, product_id, module=None,*,with_overview=False):
     """校验当前商品和模块；参数：配置、平台商品编号、模块；返回：商品资料。"""
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
         raise ValueError('网页采集需要同时启用 MySQL 任务和采集存储')
@@ -51,7 +55,7 @@ def validate(settings, product_id, module=None):
         raise ValueError('商品编号无效')
     if module is not None and (not isinstance(module,str) or module not in MODULES):
         raise ValueError('不支持的单模块采集')
-    return query(settings,'browse_product',product_id=product_id)
+    return query(settings,'browse_product',product_id=product_id,**({'with_overview':True} if with_overview else {}))
 
 
 def normalize_request(body):
