@@ -16,6 +16,7 @@ def present(model,product_id):
         row['source_url']=url_for('pages.collection_product',product_id=product_id,batch=row['source_batch'],return_to=back) if row['source_batch'] else None
         row['source_logs']=url_for('pages.logs',task_id=row['source_task'],return_to=back) if row['source_task'] else None
         row['attempt_logs']=url_for('pages.logs',task_id=row['attempt_task'],return_to=back) if row['attempt_task'] and row['attempt_task']!=row['source_task'] else None
+        row['attempt_task_url']=url_for('pages.task_detail',task_id=row['attempt_task'],return_to=back) if row['attempt_logs'] and not row['busy'] else None
         row['configure_url']=url_for('pages.module',key='collection',input=product_id,mode='detail',modules=row['module'])
         row['active_url']=(url_for('pages.task_detail',task_id=row['attempt_task']) if row['attempt_task'] else
                            url_for('pages.module',key='collection',input=product_id,mode='detail',modules=row['module'],jobs_status='waiting')) if row['busy'] else None

@@ -3,6 +3,7 @@
   const modal=document.querySelector('[data-module-update-modal]'),client=document.getElementById('collection-client');
   if(!modal || !client)return;
   const buttons=[...document.querySelectorAll('[data-module-update-open]')],notices=document.querySelector('[data-module-update-notices]');
+  const overview=Boolean(document.querySelector('[data-collection-overview]'));
   const one=key=>modal.querySelector(`[data-update-${key}]`),confirm=one('confirm'),error=one('error'),range=document.getElementById('module-update-range');
   let models=client.moduleUpdates || null,known=Boolean(models),selected=null,sending=false,progress=false,uncertain=false;
   const text=batch=>batch ? `批次 ${batch.id} · ${batch.time_text || '时间未记录'}` : '暂无有效资料';
@@ -18,11 +19,13 @@
     }
     notices.replaceChildren();
     for(const code of new Set(buttons.map(b=>b.dataset.moduleUpdateOpen))){
+      // 概况五列已有资料、尝试和操作，不把详情提示追加成第六个网格项目。
+      if(overview)continue;
       const model=models?.[code],outcome=model?.outcome,loaded=buttons.find(b=>b.dataset.moduleUpdateOpen===code)?.dataset.loadedId;
       if(!known || !outcome || !model.active && outcome.complete && Number(outcome.batch?.id)===Number(loaded))continue;
-      const card=document.createElement('section');card.className='ui-report-notice mu-notice';
-      const title=document.createElement('strong');title.textContent=`${model.label}：${outcome.label}`;card.append(title);
-      const p=document.createElement('p');p.className='ui-form-note';p.textContent=outcome.message || '新结果需手动查看，当前资料保持原批次。';card.append(p);
+      const card=document.createElement('section');card.className=(outcome.complete || model.active ? 'ui-report-focus' : 'ui-report-notice')+' mu-notice';
+      const title=document.createElement('strong');title.textContent=`${model.label}：${outcome.complete && !model.active ? '有新批次可查看' : outcome.label}`;card.append(title);
+      const p=document.createElement('p');p.className='ui-form-note';p.textContent=outcome.message || (outcome.complete ? '新结果已保存，点击查看后切换批次。' : model.active ? '采集进度自动刷新，当前资料保持原批次。' : '请核对本次结果和日志，当前资料保持原批次。');card.append(p);
       const actions=document.createElement('div');actions.className='module-actions';
       if(outcome.batch?.url)link(actions,outcome.batch.url,outcome.complete ? '查看新资料' : '查看本次结果');
       if(outcome.task_url)link(actions,outcome.task_url,'更新任务');

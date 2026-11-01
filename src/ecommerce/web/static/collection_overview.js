@@ -37,6 +37,7 @@
       set('attempt-time',item.attempt_at ? item.attempt_time : '');set('message',item.message);
       set('default',item.busy ? '进行中范围以当前任务为准' : item.default_range);
       link('source',item.source_url);link('source-logs',item.source_logs);link('attempt-logs',item.attempt_logs);
+      link('attempt-task',item.attempt_task_url);
       link('active',item.active_url,item.active_label);
 
     }
