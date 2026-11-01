@@ -112,7 +112,7 @@ class QuestionCardTests(unittest.TestCase):
         f=self.fixture;current=f.store.tables['product_current_sections']
         with f.engine.begin() as c:c.execute(current.delete().where(current.c.module=='questions'))
         body=self.client.get('/collections/products/123?module=questions').get_data(as_text=True)
-        self.assertIn('>采集问大家</button>',body);self.assertNotIn('class="qa-card"',body)
+        self.assertIn('>更新问大家</button>',body);self.assertNotIn('class="qa-card"',body)
         body=self.client.get('/collections/products/123?batch=30').get_data(as_text=True)
         self.assertIn('完整回答224',body)
         self.assertEqual(self.client.get('/collections/products/123?batch=22').status_code,404)

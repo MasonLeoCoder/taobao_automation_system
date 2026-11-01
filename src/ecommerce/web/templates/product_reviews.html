@@ -7,7 +7,7 @@
 </form>
 {% endmacro %}
 {% macro module_actions(part,code,name,show_status=true) %}
-<div class="module-actions">{{ control_button((('重新采集' if part.selected else '采集') ~ (name)), {"type": "button", "class": "button action-button action-primary module-collect", "data-module": code}) }}
+<div class="module-actions">{{ update_button(code,part.selected) }}
 {% if part.selected and part.selected.task_id %}<a class="button action-button action-history" data-job-logs href="{{ url_for('pages.logs',task_id=part.selected.task_id,return_to=current_location()) }}">查看任务日志</a>{% endif %}</div>{% if show_status %}<p class="module-job-status" role="status" aria-live="polite"></p>{% endif %}
 {% endmacro %}
 {% set overview=reviews_view.overview %}{% set comments=reviews_view.comments %}

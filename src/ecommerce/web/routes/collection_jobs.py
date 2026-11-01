@@ -162,18 +162,47 @@ def recent(product_id):
     settings=current_app.config['SETTINGS']
     states=service.recent(settings,product_id)
     with_sku_update=request.args.get('sku_update')=='1'
-    if with_sku_update:
+    with_module_updates=request.args.get('module_updates')=='1'
+    if with_sku_update or with_module_updates:
         known={job['id'] for job in states}
         states+= [job for job in service.active(settings) if job['product_id']==product_id and job['id'] not in known]
     extra=service.product_status(settings,product_id,with_overview=request.args.get('overview')=='1',states=states,
-        **({'with_sku_update':True} if with_sku_update else {}))
+        **({'with_sku_update':True} if with_sku_update else {}),
+        **({'with_module_updates':True} if with_module_updates else {}))
     if 'overview' in extra:
         from ecommerce.web.collection_overview import present as overview_present
         extra['overview']=overview_present(extra['overview'],product_id)
     if 'sku_update' in extra:
         from ecommerce.web.sku_update import present as sku_present
         extra['sku_update']=sku_present(extra['sku_update'],product_id)
+    if 'module_updates' in extra:
+        from ecommerce.web.module_update import present as update_present
+        extra['module_updates']={key:update_present(value,product_id,key) for key,value in extra['module_updates'].items()}
     return jsonify(jobs=[present(state) for state in states],**extra)
+
+
+@collection_jobs.get('/api/collections/products/<product_id>/module-update/<module>')
+def check_update_submission(product_id,module):
+    """提交超时后只读核查原编号；参数：商品、模块和提交编号；返回：原申请或空。"""
+    from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore, identifier
+    from ecommerce.infrastructure.tasks.ownership import execution_key
+    settings=current_app.config['SETTINGS']
+    service.validate(settings,product_id,module)
+    key=identifier(request.args.get('submission_id',''))
+    row=CollectionJobStore(settings).submitted(execution_key(settings.for_platform('taobao')),key)
+    if row and (row['product_id']!=product_id or row['module']!=module):
+        raise ValueError('提交编号与当前商品模块不匹配')
+    return jsonify(job=present(service.public_status(settings,row)) if row else None)
+
+
+@collection_jobs.post('/api/collections/products/<product_id>/module-update/<module>')
+def update_module(product_id,module):
+    """唯一模块确认更新；参数：模块和确认范围；返回：新申请或原在途申请。"""
+    body=request.get_json()
+    if not isinstance(body,dict) or set(body)-{'confirm','unlimited'} or body.get('confirm') is not True:
+        raise ValueError('请明确确认更新范围')
+    return jsonify(present(service.start_module_update(current_app.config['SETTINGS'],product_id,module,
+        unlimited=body.get('unlimited',False),submission_key=request.headers.get('X-Submission-Id')))),202
 
 
 @collection_jobs.post('/api/collections/products/<product_id>/sku-update')

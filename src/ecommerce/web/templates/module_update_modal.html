@@ -1,0 +1,15 @@
+<div class="mu-notices" data-module-update-notices aria-live="polite"></div>
+<dialog class="ui-modal mu-modal" data-module-update-modal aria-labelledby="module-update-title">
+  <div class="ui-modal-header"><div><p class="ui-report-eyebrow">商品资料更新</p><h2 id="module-update-title">确认更新</h2></div>{{ control_button('×',{'type':'button','data-update-close':true,'class':'ui-modal-close','aria-label':'关闭更新窗口'},'secondary') }}</div>
+  <div class="ui-modal-content mu-content">
+    <p class="ui-report-product">商品 {{ product.platform_product_id }}</p>
+    <dl class="mu-source"><div><dt>当前查看</dt><dd data-update-loaded></dd></div><div><dt>最近有效资料</dt><dd data-update-latest></dd></div></dl>
+    <div data-update-confirm-body><p class="ui-form-note" data-update-description></p>
+      <div data-update-range hidden><label for="module-update-range">本次采集数量</label>{% call select_control({'id':'module-update-range'}) %}<option value="limited">按默认上限</option><option value="all">不限数量</option>{% endcall %}<p class="ui-form-note">实际仍受平台可见内容及采集情况限制；不会启动AI分析。</p></div>
+      <p class="ui-form-note">结果另存新批次，完整及部分完成的历史资料保留；当前资料需手动切换。</p>
+    </div>
+    <div data-update-progress hidden><span class="ui-report-state is-active" data-update-state></span><p class="ui-form-note" data-update-message></p><p class="ui-form-note" data-update-actual-scope></p><div class="module-actions"><a class="ui-button ui-secondary" data-update-result hidden>查看新资料</a><a class="button action-button action-history" data-update-task hidden>查看更新任务</a><a class="ui-button ui-secondary" data-update-queue hidden>查看采集队列</a></div></div>
+    <p class="ui-collection-reason" data-update-error role="alert"></p>
+  </div>
+  <div class="ui-confirm-footer"><div class="module-actions">{{ control_button('取消',{'type':'button','data-update-close':true},'secondary') }}{{ control_button('确认更新',{'type':'button','data-update-confirm':true,'disabled':true}) }}</div></div>
+</dialog>

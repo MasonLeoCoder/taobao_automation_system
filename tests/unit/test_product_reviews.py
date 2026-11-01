@@ -99,7 +99,7 @@ class ProductReviewTests(unittest.TestCase):
         with self.fixture.engine.begin() as c:
             c.execute(current.delete().where(current.c.module=='reviews'))
         body=self.client.get('/collections/products/123?module=reviews').get_data(as_text=True)
-        self.assertIn('99.6%',body);self.assertIn('尚无有效评价明细',body);self.assertIn('>采集明细</button>',body)
+        self.assertIn('99.6%',body);self.assertIn('尚无有效评价明细',body);self.assertIn('>更新评价明细</button>',body)
         self.fixture.batch(32,'reviews',product_id=1,status='no_reviews',coverage_status='confirmed_empty')
         self.fixture.put('product_current_sections',product_id=1,section='reviews',module='reviews',batch_id=32)
         body=self.client.get('/collections/products/123?module=reviews').get_data(as_text=True)

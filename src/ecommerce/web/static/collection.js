@@ -17,6 +17,7 @@
   let busy = false;
   let submitting = false;
   let stateKnown = false;
+  let pendingUpdateCheck=null;
   let lastConfirmed = null;
   let queuePaused = false;
   const historyStatuses = ['all','waiting','running','attention','stopped','completed','failed'];
@@ -39,11 +40,13 @@
   async function api(url, body) {
     const submission = body === undefined ? null : `${url}:${JSON.stringify(body)}`;
     if (submission && !pendingSubmissions.has(submission)) pendingSubmissions.set(submission,crypto.randomUUID().replaceAll('-',''));
-    const response = await fetch(url, body === undefined ? {cache:'no-store'} : {
-      method:'POST',headers:{'Content-Type':'application/json','X-Collection-Token':client.dataset.token,'X-Submission-Id':pendingSubmissions.get(submission)},body:JSON.stringify(body)
+    const signal=url.includes('/module-update/') ? AbortSignal.timeout(15000) : undefined;
+    const response = await fetch(url, body === undefined ? {cache:'no-store',signal} : {
+      method:'POST',signal,headers:{'Content-Type':'application/json','X-Collection-Token':client.dataset.token,'X-Submission-Id':pendingSubmissions.get(submission)},body:JSON.stringify(body)
     });
     const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(value.error || (response.status === 403 ? '操作令牌已失效，请刷新页面' : `请求失败（${response.status}），请稍后重试`));
+    if(response.ok && url.includes('/module-update/') && (body === undefined ? !Object.hasOwn(value,'job') : !value.id))throw new Error('响应未完整返回，正在核对原申请');
+    if (!response.ok) { const error=new Error(value.error || (response.status === 403 ? '操作令牌已失效，请刷新页面' : `请求失败（${response.status}），请稍后重试`));error.status=response.status;throw error; }
     if (submission) pendingSubmissions.delete(submission);
     return value;
   }
@@ -86,6 +89,7 @@
     if (job.product_id !== product) return;
     const card = document.querySelector(`[data-collection-module="${job.module}"]`);
     if (!card) return;
+    if(card.querySelector('[data-module-update-open]')) return;
     // 旧网页任务不能覆盖页面已展示的较新归类结果。
     if (job.done && job.batch_id && Number(card.dataset.latestBatch) > Number(job.batch_id)) return;
     const status = card.querySelector('.module-job-status');
@@ -485,6 +489,7 @@
     busy = true;
     const requestedHistoryVersion = historyVersion;
     try {
+      if(pendingUpdateCheck) await checkModuleSubmission(pendingUpdateCheck);
       const active = await api('/api/collection-jobs/active');
       active.jobs.forEach(job => tracked.set(job.id,job));
       if (workspace) {
@@ -497,7 +502,9 @@
       const pending = [...tracked.values()].filter(job => !job.done && !active.jobs.some(other => other.id === job.id));
       for (const job of pending) tracked.set(job.id,await api(endpoint(job)));
       if (product) {
-        const recent = await api(`/api/collections/products/${product}/jobs${document.querySelector('[data-sku-update]') ? '?sku_update=1' : document.querySelector('[data-collection-overview]') ? '?overview=1' : ''}`);
+        const recent = await api(`/api/collections/products/${product}/jobs?module_updates=1${document.querySelector('[data-collection-overview]') ? '&overview=1' : ''}`);
+        client.moduleUpdates=recent.module_updates;
+        document.dispatchEvent(new CustomEvent('collection-module-updated',{detail:recent.module_updates}));
         plan = recent.plan || plan;
         renderProductRun(recent.run_status);
         if (recent.overview) {
@@ -533,6 +540,7 @@
       stateKnown = false;
       document.dispatchEvent(new CustomEvent('collection-overview-error'));
       document.dispatchEvent(new CustomEvent('collection-sku-update-error'));
+      document.dispatchEvent(new CustomEvent('collection-module-update-error'));
       const submit = document.getElementById('collection-submit');
       if (submit) submit.disabled = true;
       document.querySelectorAll('[data-start-job]').forEach(button => button.disabled = true);
@@ -583,7 +591,35 @@
     }
   }
 
-  document.addEventListener('collection-sku-update-request',async event=>{
+  async function checkModuleSubmission(check){
+    const value=await api(`/api/collections/products/${product}/module-update/${check.module}?submission_id=${check.key}`);
+    if(value.job)tracked.set(value.job.id,value.job);
+    document.dispatchEvent(new CustomEvent('collection-module-update-checked',{detail:value}));
+    pendingUpdateCheck=null;return value.job;
+  }
+  document.addEventListener('collection-module-update-request',async event=>{
+    const {resolve,reject,module,unlimited}=event.detail;
+    if(!product || !stateKnown || submitting || pendingUpdateCheck){reject(new Error('任务状态尚未确认，请稍后再试。'));return;}
+    submitting=true;
+    const url=`/api/collections/products/${product}/module-update/${module}`,body={confirm:true,unlimited};
+    const signature=`${url}:${JSON.stringify(body)}`;
+    try{
+      const job=await api(url,body);tracked.set(job.id,job);resolve(job);
+    }catch(error){
+      if(error.status && error.status<500){pendingSubmissions.delete(signature);reject(error);}
+      else{
+        pendingUpdateCheck={module,key:pendingSubmissions.get(signature)};
+        try{
+          const job=await checkModuleSubmission(pendingUpdateCheck);
+          if(job){pendingSubmissions.delete(signature);resolve(job);}
+          else reject(new Error('尚未查到原申请。可再次确认，将沿用原提交编号核对，不会自动重发。'));
+        }catch(checkError){const failure=new Error('提交结果尚未确认，正在只读核对原申请；暂不重复提交。');failure.uncertain=true;reject(failure);}
+      }
+    }
+    finally{submitting=false;await refresh();}
+  });
+
+  document.addEventListener('collection-sku-update-request' ,async event=>{
     const {resolve,reject}=event.detail;
     if(!product || !stateKnown || submitting){reject(new Error('任务状态尚未确认，请稍后再试。'));return;}
     submitting=true;render();

@@ -112,12 +112,13 @@ class CollectionJobStore:
         mysql_settings_from_payload(row['config']['mysql'])
         j = self.tables['collection_jobs']
         identifier(row['id'])
-        if reuse_pending_module is not None and (reuse_pending_module!='skus' or row.get('module')!='skus' or row.get('modules')!=['skus']):
-            raise ValueError('SKU更新复用仅允许单SKU模块申请')
+        from ecommerce.shared.collection_contract import MODULES
+        if reuse_pending_module is not None and (reuse_pending_module not in MODULES or row.get('module')!=reuse_pending_module or row.get('modules')!=[reuse_pending_module]):
+            raise ValueError('更新复用仅允许白名单内唯一模块')
         if submission_key is not None:
             identifier(submission_key)
         spec = {key:row.get(key) for key in ('product_id','module','mode','modules','options','resume_task_id','resume_revision','cleanup_tasks')}
-        digest = fingerprint(spec)
+        digest = fingerprint({**spec,'update_request':row['id']} if reuse_pending_module else spec)
         with self.connection(True) as c:
             queue = self.resource(c, row['execution_key'])
             if submission_key:

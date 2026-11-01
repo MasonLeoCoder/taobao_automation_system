@@ -1,0 +1,8 @@
+{% from 'form_controls.html' import control_button with context %}
+{% macro update_button(code,loaded) %}
+{% set names={'basic_info':'基本信息','video':'视频','main_images':'主图','skus':'SKU信息','parameters':'商品参数','detail_images':'详情图片','review_summary':'评价概览','reviews':'评价明细','questions':'问大家'} %}
+<span class="mu-control" data-module-update-control="{{ code }}">
+{{ control_button('更新'~names[code],{'type':'button','data-module-update-open':code,'data-loaded-id':loaded.id if loaded else 0,'data-loaded-time':loaded.captured_at|full_local_time if loaded else '','disabled':true}) }}
+<span class="ui-form-note mu-history" data-update-history hidden></span>
+</span>
+{% endmacro %}

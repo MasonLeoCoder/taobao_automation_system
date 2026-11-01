@@ -38,10 +38,7 @@
       set('default',item.busy ? '进行中范围以当前任务为准' : item.default_range);
       link('source',item.source_url);link('source-logs',item.source_logs);link('attempt-logs',item.attempt_logs);
       link('active',item.active_url,item.active_label);
-      const collect=row.querySelector('[data-overview-collect]');
-      collect.hidden=item.busy;collect.dataset.busy=String(item.busy);
-      collect.textContent=item.collect_label;collect.disabled=!verified || item.busy || collect.dataset.submitting==='true';
-      if (verified && collect.dataset.submitting!=='true') set('action-feedback','');
+
     }
     applyFilter();
   }

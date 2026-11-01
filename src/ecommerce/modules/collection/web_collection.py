@@ -30,7 +30,7 @@ def plan(settings,product_id):
     return remaining_plan(validate(settings,product_id))
 
 
-def product_status(settings,product_id,*,with_overview=False,states=None,with_sku_update=False):
+def product_status(settings,product_id,*,with_overview=False,states=None,with_sku_update=False,with_module_updates=False):
     """一次只读返回补采计划和核对后的最近运行；参数：配置、商品；返回：进度摘要。"""
     data=validate(settings,product_id,with_overview=with_overview)
     summary=data.get('detail_summary') or {};run=summary.get('latest_run') or {}
@@ -47,6 +47,9 @@ def product_status(settings,product_id,*,with_overview=False,states=None,with_sk
     if with_sku_update:
         from ecommerce.modules.collection.sku_update import build
         result['sku_update']=build(data,states or [])
+    if with_module_updates:
+        from ecommerce.modules.collection.module_update import build
+        result['module_updates']={module:build(data,states or [],module) for module in MODULES}
     return result
 
 
@@ -143,8 +146,17 @@ def start_remaining(settings,product_id,*,submission_key=None):
 
 def start_sku_update(settings,product_id,*,submission_key=None):
     """另开SKU采集并保留旧尝试；参数：配置、商品及提交键；返回：新申请或同商品在途申请。"""
-    validate(settings,product_id,'skus')
-    return _start(settings,product_id,'skus','single',submission_key=submission_key,reuse_pending_module='skus')
+    return start_module_update(settings,product_id,'skus',submission_key=submission_key)
+
+
+def start_module_update(settings,product_id,module,*,unlimited=False,submission_key=None):
+    """确认后另存单模块结果；参数：商品、白名单模块、范围及提交编号；返回：队列申请。"""
+    validate(settings,product_id,module)
+    if type(unlimited) is not bool or unlimited and module not in {'reviews','questions'}:
+        raise ValueError('不限数量只适用于评价明细或问大家')
+    options=normalize_request({'mode':'detail','input':product_id,'modules':[module],
+        'all_reviews':unlimited and module=='reviews','all_questions':unlimited and module=='questions'})
+    return _start(settings,product_id,module,'single',options,submission_key=submission_key,reuse_pending_module=module)
 
 
 def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cleanup_tasks=None,identifier=None,
@@ -437,6 +449,7 @@ def run_collection(settings, row):
                 resume_task_id=row.get('resume_task_id'),cleanup_tasks=row.get('cleanup_tasks'),
                 on_module_event=lambda module,stage:module_progress(settings,row,module,stage),**flags)
         flags={module:module==row['module'] for module in MODULES}
+        flags.update({key:True for key in ('all_reviews','all_questions') if row.get('options',{}).get(key) is True})
         row['progress']={'current_module':None,'started_modules':[],'results':[]}
         jobs.save(settings,row)
         return open_detail_input(browser_settings,row['product_id'],wait=False,
