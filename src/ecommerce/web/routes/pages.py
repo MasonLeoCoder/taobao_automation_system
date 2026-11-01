@@ -139,7 +139,7 @@ def log_time_filters():
         abort(400,description='时间筛选无效，请选择有效日期时间，并确保开始时间不晚于结束时间')
 
 
-def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False):
+def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False):
     """解析采集筛选并调用统一业务查询；参数：种类及可选内部批次；返回：结果。"""
     from ecommerce.modules.collection.queries import query
     settings=current_app.config['SETTINGS']
@@ -165,6 +165,9 @@ def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,wit
             else:
                 parameters.update(batch_id=batch_id,kind=request.args.get('kind') or None,
                     question_id=int(request.args['question_id']) if request.args.get('question_id') else None)
+        if basic_batch:
+            # 基本信息每批唯一一条，批次卡片不继承其他列表的排序、游标或明细种类。
+            parameters.update(kind='basic_info',after=0,limit=1,question_id=None,with_batch_note=True)
         return query(settings,kind,**parameters)
     except (ValueError,TypeError):
         abort(400,description='采集查询参数无效，数量为 1–200，编号和游标须为有效数字')
@@ -317,7 +320,7 @@ def collection_product(product_id):
         selected=None
     from ecommerce.infrastructure.storage.mysql import MySQLStorageError
     try:
-        detail=collection_query('records',selected['id'],numbered=True,with_question_counts=module=='questions') if selected else None
+        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info') if selected else None
     except MySQLStorageError:
         if module!='questions':raise
         detail=None
@@ -337,6 +340,10 @@ def collection_product(product_id):
     settings=current_app.config['SETTINGS']
     from ecommerce.modules.collection.web_collection import remaining_plan
     from ecommerce.modules.collection.product_view import module_summaries
+    basic_batch_view=None
+    if module=='basic_info':
+        from ecommerce.web.basic_batch_presentation import present
+        basic_batch_view=present(data,selected,detail)
     overview_model=None;overview_filter=request.args.get('overview_filter','all')
     if module=='overview':
         if overview_filter not in {'all','remaining','issues'}:abort(400,description='概况筛选无效')
@@ -352,7 +359,7 @@ def collection_product(product_id):
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
-        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,**data)
+        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,**data)
 
 
 @pages.get('/collections/searches/<task_id>')

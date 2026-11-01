@@ -315,6 +315,7 @@ body:has(.ui-modal[open]){overflow:hidden}
 /* 可复用采集管理组件；模块文件不定义按钮或状态颜色。 */
 .ui-collection-workspace{padding:24px;border:1px solid var(--control-border);border-radius:16px;background:var(--control-surface);box-shadow:0 6px 26px #163b2b04}
 .ui-collection-unit{font-size:12px;font-weight:400;letter-spacing:0;color:var(--control-label)}
+.ui-batch-context{display:inline-block;border-radius:6px;padding:2px 8px;background:var(--control-selected);color:var(--control-accent);font-size:11px;white-space:nowrap}.ui-batch-toolbar{border-top:1px solid var(--control-border);border-bottom:1px solid var(--control-border)}.ui-batch-record-title{font-size:20px;line-height:1.65;font-weight:600;color:var(--control-text);margin:0;overflow-wrap:anywhere}.ui-batch-source-text{white-space:pre-wrap;overflow-wrap:anywhere}
 .ui-collection-filter[aria-current=true]{background:var(--control-selected);border-color:var(--control-selected-border);color:var(--control-accent);font-weight:650}
 .ui-collection-table-heading{border-radius:9px;background:var(--control-surface-soft);color:var(--control-label);font-size:12px;font-weight:600}
 .ui-collection-row{border-bottom:1px solid var(--control-border);background:var(--control-surface)}.ui-collection-row:last-child{border-bottom:0}.ui-collection-row:hover{background:var(--control-surface-soft)}

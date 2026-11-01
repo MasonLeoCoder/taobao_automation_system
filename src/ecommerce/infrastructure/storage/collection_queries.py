@@ -160,8 +160,8 @@ def _question_answers(connection,tables,batch_id,questions):
         owners[answer['question_id']]['answers'].append(answer)
 
 
-def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False):
-    """查询单批次明细；参数：批次、种类、分页、可选问题及整批规格计数开关；返回：原范围和观察。"""
+def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False,with_batch_note=False):
+    """查询单批次明细；参数：批次、筛选/计数及可选基本信息说明开关；返回：原范围和观察。"""
     _page(after,limit)
     if type(batch_id) is not int or batch_id<=0 or (question_id is not None and (type(question_id) is not int or question_id<=0)):
         raise ValueError('批次及问题编号须为正整数')
@@ -251,8 +251,18 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 for item in rows:
                     item['file']=dict(connection.execute(sa.select(file_table).where(file_table.c.id==item['file_asset_id'])).mappings().one()) if item.get('file_asset_id') else None
         batch=dict(batch)
+        note=''
+        if with_batch_note:
+            if kind!='basic_info':raise ValueError('批次说明只适用于基本信息明细')
+            payload=batch.get('result_payload') or {}
+            record=(payload.get('record') or {}) if isinstance(payload,dict) else {}
+            if isinstance(record,dict):
+                error=record.get('error') or {}
+                candidates=[record.get('message'),error.get('message') if isinstance(error,dict) else error,record.get('reason')]
+                note=next((value.strip() for value in candidates if isinstance(value,str) and value.strip()),'')
         batch.pop('result_payload',None)
         return {'batch':public(batch),'kind':kind,'records':public(rows),'has_more':has_more,
+                **({'batch_note':note} if with_batch_note else {}),
                 'next_cursor':rows[-1]['id' if 'id' in table.c else 'batch_id'] if rows else after,
                 **({'sku_counts':sku_counts} if sku_counts is not None else {}),
                 **({'question_counts':question_counts} if question_counts is not None else {}),
