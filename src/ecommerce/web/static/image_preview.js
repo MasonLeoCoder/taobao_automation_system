@@ -9,6 +9,11 @@
   let state = null;
   let sequence = 0;
   let restoreFocus = true;
+  let gallery=[],galleryIndex=0;
+  const galleryControls=document.createElement('div');galleryControls.className='image-preview-gallery-controls';galleryControls.hidden=true;
+  const previous=document.createElement('button'),next=document.createElement('button'),zoom=document.createElement('button'),galleryCount=document.createElement('span');
+  for(const [button,label] of [[previous,'← 上一张'],[next,'下一张 →'],[zoom,'放大图片']]){button.type='button';button.className='image-preview-control';button.textContent=label;}
+  galleryControls.append(previous,galleryCount,next,zoom);viewer.insertBefore(galleryControls,document.getElementById('image-preview-hint'));
 
   function enhance(img) {
     if (viewer.contains(img) || img.dataset.imagePreviewReady) return;
@@ -52,6 +57,8 @@
     photo.hidden = true;
     photo.removeAttribute('src');
     original.removeAttribute('href');
+    gallery=[];galleryControls.hidden=true;viewer.classList.remove('is-zoomed');
+    document.getElementById('image-preview-title').textContent='图片预览';
     if (!state) return;
     const saved = state;
     state = null;
@@ -77,13 +84,22 @@
     const opener = img.closest('[data-image-preview-trigger]') || img;
     restoreFocus = true;
     lockPage(opener);
-    photo.hidden = true;
-    photo.alt = img.alt || '图片原图';
-    status.hidden = false;
-    status.textContent = '正在加载图片…';
-    original.href = url;
+    const group=img.closest('[data-image-gallery]');
+    gallery=group ? Array.from(group.querySelectorAll('[data-gallery-image]:not([hidden])')) : [];
+    galleryIndex=Math.max(0,gallery.indexOf(img));
     try { viewer.showModal(); }
     catch (_) { reset(); return; }
+    load(img);
+    closeButton.focus({preventScroll:true});
+  }
+
+  function load(img) {
+    const url=source(img);if(!url)return;
+    viewer.classList.remove('is-zoomed');zoom.textContent='放大图片';zoom.setAttribute('aria-pressed','false');
+    photo.hidden=true;photo.alt=img.alt || '图片原图';status.hidden=false;status.textContent='正在加载图片…';original.href=url;
+    galleryControls.hidden=!gallery.length;previous.disabled=galleryIndex===0;next.disabled=galleryIndex>=gallery.length-1;
+    galleryCount.textContent=`${galleryIndex+1} / ${gallery.length}`;
+    document.getElementById('image-preview-title').textContent=gallery.length ? img.alt || '图片预览' : '图片预览';
     const current = ++sequence;
     photo.onload = () => {
       if (!viewer.open || current !== sequence) return;
@@ -97,8 +113,12 @@
       status.textContent = '图片加载失败或本地文件不可用，请关闭后重新查看。';
     };
     photo.src = url;
-    closeButton.focus({preventScroll:true});
   }
+
+  function move(offset){const index=galleryIndex+offset;if(index<0 || index>=gallery.length)return;galleryIndex=index;load(gallery[index]);}
+  previous.addEventListener('click',()=>move(-1));next.addEventListener('click',()=>move(1));
+  zoom.addEventListener('click',()=>{const active=viewer.classList.toggle('is-zoomed');zoom.textContent=active ? '恢复适应' : '放大图片';zoom.setAttribute('aria-pressed',String(active));});
+  viewer.addEventListener('keydown',event=>{if(gallery.length && ['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();move(event.key==='ArrowLeft' ? -1 : 1);}});
 
   document.querySelectorAll('img').forEach(enhance);
   new MutationObserver(changes => changes.forEach(change => change.addedNodes.forEach(node => {

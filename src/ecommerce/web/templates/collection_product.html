@@ -4,8 +4,8 @@
 {% from "pagination.html" import pager with context %}
 {% from "collection_parts.html" import labels, batch_status, scope, media_grid, record_table with context %}
 {% block title %}{{ product.display_title or product.platform_product_id }}{% endblock %}{% block breadcrumb %}<a href="{{ url_for('pages.collection_details') }}">商品库</a> / 商品详情{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% endblock %}
-{% block extra_scripts %}<script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% if module=='overview' %}<script src="{{ url_for('static',filename='collection_overview.js') }}" defer></script>{% elif module in ['basic_info','video'] %}<script src="{{ url_for('static',filename='basic_batch.js') }}" defer></script>{% endif %}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% if module=='main_images' %}<link rel="stylesheet" href="{{ url_for('static',filename='image_tools.css') }}">{% endif %}{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% if module=='overview' %}<script src="{{ url_for('static',filename='collection_overview.js') }}" defer></script>{% elif module in ['basic_info','video','main_images'] %}<script src="{{ url_for('static',filename='basic_batch.js') }}" defer></script>{% endif %}{% if module=='main_images' %}<script src="{{ url_for('static',filename='image_tools.js') }}" defer></script>{% endif %}{% endblock %}
 {% block content %}
 <p class="back-link"><a class="button action-button action-neutral" href="{{ back_url }}">← 返回上一列表</a></p>
 {% include 'product_header.html' %}
@@ -15,6 +15,8 @@
 {% include 'product_basic_batch.html' %}
 {% elif module=='video' %}
 {% include 'product_video.html' %}
+{% elif module=='main_images' %}
+{% include 'product_main_images.html' %}
 {% elif module=='overview' %}
 {% include 'collection_overview.html' %}
 {% elif module=='reviews' %}

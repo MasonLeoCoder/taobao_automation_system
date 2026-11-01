@@ -33,6 +33,8 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(favorites)
     from ecommerce.web.routes.collection_jobs import collection_jobs
     app.register_blueprint(collection_jobs)
+    from ecommerce.web.routes.image_tools import image_tools
+    app.register_blueprint(image_tools)
     from ecommerce.web.navigation import current_location,safe_return
     app.add_template_global(current_location)
     app.add_template_global(safe_return)

@@ -160,8 +160,8 @@ def _question_answers(connection,tables,batch_id,questions):
         owners[answer['question_id']]['answers'].append(answer)
 
 
-def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False,with_batch_note=False,main_video_only=False):
-    """查询单批次明细；参数：批次、筛选/计数及可选批次说明和主视频开关；返回：原范围和观察。"""
+def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False,with_batch_note=False,main_video_only=False,main_image_only=False):
+    """查询单批次明细；参数：批次、筛选/计数、批次说明及主视频/主图开关；返回：原范围和观察。"""
     _page(after,limit)
     if type(batch_id) is not int or batch_id<=0 or (question_id is not None and (type(question_id) is not int or question_id<=0)):
         raise ValueError('批次及问题编号须为正整数')
@@ -205,6 +205,9 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
             if main_video_only:
                 if kind!='media' or batch['module']!='video':raise ValueError('主视频筛选只适用于视频批次')
                 statement=statement.where(table.c.role=='main_video')
+            if main_image_only:
+                if kind!='media' or batch['module']!='main_images':raise ValueError('主图筛选只适用于主图批次')
+                statement=statement.where(table.c.role=='main_image')
             if page is not None:
                 from ecommerce.infrastructure.storage.pagination import numbered_rows
                 from ecommerce.infrastructure.storage.sorting import sorted_statement
@@ -256,7 +259,7 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
         batch=dict(batch)
         note=''
         if with_batch_note:
-            if kind!='basic_info' and not (kind=='media' and batch['module']=='video'):raise ValueError('批次说明只适用于基本信息或视频明细')
+            if kind!='basic_info' and not (kind=='media' and batch['module'] in {'video','main_images'}):raise ValueError('批次说明只适用于基本信息、视频或主图明细')
             payload=batch.get('result_payload') or {}
             record=(payload.get('record') or {}) if isinstance(payload,dict) else {}
             if isinstance(record,dict):

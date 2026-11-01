@@ -1,6 +1,7 @@
 """全站图片本页预览：隔离服务与图片，禁止真实平台请求和采集动作。"""
 import hashlib
 import os
+import re
 import struct
 import unittest
 import zlib
@@ -123,11 +124,14 @@ class ImagePreviewBrowserTests(unittest.TestCase):
         expect(self.viewer).not_to_be_visible();expect(self.page.locator('#collection-attention')).to_be_visible()
         self.assertNotEqual(self.page.evaluate('getComputedStyle(document.body).position'),'fixed')
 
-    def test_product_title_still_navigates_instead_of_previewing(self):
-        """商品图与标题操作各自清晰，点击标题照常进入资料页。"""
+    def test_product_title_and_detail_entry_do_not_open_image_preview(self):
+        """商品标题不触发图片预览，当前商品库资料入口正常跳转。"""
         self.goto('/collections/details')
-        self.page.locator('.product-cell').first.locator('a').last.click()
-        self.assertIn('/collections/products/123',self.page.url)
+        # 商品库已改为标题文本及独立资料按钮，不能把仅剩的图片链接误当标题。
+        self.page.locator('.product-cell').first.locator('.catalog-title').click()
+        expect(self.viewer).not_to_be_visible()
+        self.page.locator('a[href^="/collections/products/123"]').first.click()
+        expect(self.page).to_have_url(re.compile('/collections/products/123'))
         expect(self.viewer).not_to_be_visible()
 
 

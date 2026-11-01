@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% from 'form_controls.html' import field,select_control,control_button with context %}
+{% block title %}图片格式转换{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('image_tools.index') }}">工具箱</a> / 图片格式转换{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='image_tools.css') }}">{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='image_tools.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div class="it-heading it-heading-row"><div><p class="ui-report-eyebrow">工具箱 · 图片工具</p><h1>图片格式转换</h1><p class="ui-report-meta">保留尺寸与比例，单张直接下载，多张打包下载。</p></div><a class="ui-button ui-secondary" href="{{ url_for('image_tools.index') }}">返回工具箱</a></div>
+<section class="ui-collection-workspace it-workspace" data-image-converter data-convert-url="{{ url_for('image_tools.convert') }}">
+  <div class="ui-upload-zone it-drop" data-image-drop><span class="ui-tool-icon" aria-hidden="true">＋</span><h2>拖入图片，开始转换</h2><p class="ui-form-note">支持静态 JPG、PNG、WebP · 最多20张 · 单张10 MB · 合计50 MB</p>{{ control_button('选择本地图片',{'type':'button','data-image-pick':true}) }}<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple data-image-files hidden><p class="ui-form-note">图片仅用于本次处理，不保存为商品资料。</p></div>
+  <div class="it-file-heading"><h2>待转换文件 <span class="ui-module-count" data-image-count>0 张</span></h2>{{ control_button('清空列表',{'type':'button','data-image-clear':true,'disabled':true},'secondary') }}</div>
+  <ul class="it-files" data-image-list aria-label="待转换图片"></ul><p class="ui-form-note" data-image-empty>还没有选择图片。</p>
+  <div class="it-settings ui-batch-toolbar"><div class="it-format">{% call field('输出格式') %}{% call select_control({'data-image-format':true,'data-searchable-select':true,'data-select-label':'输出格式'}) %}<option value="png">PNG</option><option value="jpg">JPG</option><option value="original">保持原格式</option>{% endcall %}{% endcall %}<p class="ui-form-note" data-image-format-note></p><p class="ui-form-note">记住上次选择 · 原件保持不变</p></div>{{ control_button('转换并下载',{'type':'button','data-image-convert':true,'disabled':true}) }}</div>
+  <p class="ui-tool-feedback" data-image-feedback role="status" aria-live="polite"></p>
+  <noscript><p class="ui-report-notice">请启用浏览器脚本后选择并转换图片。</p></noscript>
+</section>
+{% endblock %}
