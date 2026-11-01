@@ -160,12 +160,12 @@ def _question_answers(connection,tables,batch_id,questions):
         owners[answer['question_id']]['answers'].append(answer)
 
 
-def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False,with_batch_note=False,main_video_only=False,main_image_only=False):
+def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,include_quarantined=False,page=None,media_only=False,sort_by=None,order=None,with_context=False,with_sku_counts=False,with_question_counts=False,with_batch_note=False,main_video_only=False,main_image_only=False,with_sku_overview=False,stock_filter=None):
     """查询单批次明细；参数：批次、筛选/计数、批次说明及主视频/主图开关；返回：原范围和观察。"""
     _page(after,limit)
     if type(batch_id) is not int or batch_id<=0 or (question_id is not None and (type(question_id) is not int or question_id<=0)):
         raise ValueError('批次及问题编号须为正整数')
-    store=collection_store(settings);sku_counts=None;question_counts=None
+    store=collection_store(settings);sku_counts=None;question_counts=None;sku_overview=None
     b=store.tables['collection_batches']
     try:
         with store.engine.connect() as connection:
@@ -182,6 +182,13 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 raise ValueError('明细种类与批次模块不一致')
             if kind=='answers' and batch['module']!='questions':
                 raise ValueError('回答只属于问答批次')
+            if with_sku_overview or stock_filter is not None:
+                from ecommerce.shared.sku_stock import SKU_FILTERS
+                selected_filter='all' if stock_filter is None else stock_filter
+                if not with_sku_overview or kind!='skus' or not isinstance(selected_filter,str) or selected_filter not in SKU_FILTERS:
+                    raise ValueError('SKU状态筛选只适用于规格概览，状态须有效')
+                from ecommerce.infrastructure.storage import sku_page
+                sku_overview=sku_page.overview(connection,table,batch_id)
             if with_question_counts:
                 if kind!='questions':raise ValueError('问答统计只适用于问题明细')
                 answers=store.tables['answer_observations']
@@ -196,6 +203,8 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 sku_counts=[{'sku':name,'count':count} for name,count in counts.items()]
             cursor=table.c.id if 'id' in table.c else table.c.batch_id
             statement=sa.select(table).where(table.c.batch_id==batch_id,cursor>after).order_by(cursor).limit(limit+1)
+            if with_sku_overview:
+                statement=statement.where(sku_page.predicate(table,selected_filter))
             if question_id:
                 if kind!='answers':
                     raise ValueError('问题筛选仅用于回答')
@@ -218,6 +227,7 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                     columns['captured_at']=table.c.captured_at
                 if kind in {'items','skus'}:
                     columns['price']=table.c.price_value
+                    if with_sku_overview:columns['price'],price_currency=sku_page.price_expression(table)
                 elif kind in {'reviews','questions','answers'}:
                     columns['author']=table.c.author
                     if kind=='reviews':
@@ -226,6 +236,10 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 elif kind=='parameters':
                     columns['value']=table.c.value
                 ordered,spec=sorted_statement(statement.limit(None),columns,cursor,sort_by,order)
+                if with_sku_overview and spec['sort']=='price':
+                    price=columns['price'];descending=spec['order']=='desc'
+                    ordered=ordered.order_by(None).order_by(price.is_(None).asc(),price_currency.asc(),
+                        price.desc() if descending else price.asc(),cursor.desc() if descending else cursor.asc())
                 rows,page_info=numbered_rows(connection,ordered,page)
                 page_info['sort_spec']=spec
             else:
@@ -259,7 +273,7 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
         batch=dict(batch)
         note=''
         if with_batch_note:
-            if kind!='basic_info' and not (kind=='media' and batch['module'] in {'video','main_images'}):raise ValueError('批次说明只适用于基本信息、视频或主图明细')
+            if kind not in {'basic_info','skus'} and not (kind=='media' and batch['module'] in {'video','main_images'}):raise ValueError('批次说明只适用于基本信息、规格、视频或主图明细')
             payload=batch.get('result_payload') or {}
             record=(payload.get('record') or {}) if isinstance(payload,dict) else {}
             if isinstance(record,dict):
@@ -272,6 +286,7 @@ def records(settings,batch_id,*,kind=None,after=0,limit=100,question_id=None,inc
                 'next_cursor':rows[-1]['id' if 'id' in table.c else 'batch_id'] if rows else after,
                 **({'sku_counts':sku_counts} if sku_counts is not None else {}),
                 **({'question_counts':question_counts} if question_counts is not None else {}),
+                **({'sku_overview':public(sku_overview)} if sku_overview is not None else {}),
                 **(page_info if page is not None else {})}
     except sa.exc.SQLAlchemyError as error:
         raise MySQLStorageError(safe_error(error)) from None

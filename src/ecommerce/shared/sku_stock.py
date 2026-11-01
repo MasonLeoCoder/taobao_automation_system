@@ -1,6 +1,14 @@
 """规格禁用即缺货的业务口径；仅接受明确页面标记，不把点击失败当缺货。"""
 import re
 
+SKU_FILTERS = {'all':'全部','selectable':'可选','out_of_stock':'缺货／已禁用',
+               'unavailable_unconfirmed':'不可选原因未确认','unknown':'状态未确认'}
+
+
+def stock_group(value):
+    """将已有状态映射为显示分组；参数：原stock_status；返回：筛选键，不修改原状态。"""
+    return value if value in {'selectable','out_of_stock','unavailable_unconfirmed'} else 'unknown'
+
 
 def disabled_stock_evidence(evidence):
     """核对禁用依据；参数：页面标记数组；返回：缺货依据文本，无可靠标记时为空。"""

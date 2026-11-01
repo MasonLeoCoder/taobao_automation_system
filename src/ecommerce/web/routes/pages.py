@@ -139,7 +139,7 @@ def log_time_filters():
         abort(400,description='时间筛选无效，请选择有效日期时间，并确保开始时间不晚于结束时间')
 
 
-def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False,image_batch=False):
+def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False,image_batch=False,sku_batch=False):
     """解析采集筛选并调用统一业务查询；参数：种类及可选内部批次；返回：结果。"""
     from ecommerce.modules.collection.queries import query
     settings=current_app.config['SETTINGS']
@@ -172,6 +172,8 @@ def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,wit
             parameters.update(kind='media',question_id=None,main_video_only=True,with_batch_note=True,sort_by='position')
         if image_batch:
             parameters.update(kind='media',question_id=None,main_image_only=True,with_batch_note=True,sort_by='position')
+        if sku_batch:
+            parameters.update(kind='skus',question_id=None,with_sku_overview=True,stock_filter=request.args.get('stock','all'),with_batch_note=True)
         return query(settings,kind,**parameters)
     except (ValueError,TypeError):
         abort(400,description='采集查询参数无效，数量为 1–200，编号和游标须为有效数字')
@@ -324,7 +326,7 @@ def collection_product(product_id):
         selected=None
     from ecommerce.infrastructure.storage.mysql import MySQLStorageError
     try:
-        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video',image_batch=module=='main_images') if selected else None
+        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video',image_batch=module=='main_images',sku_batch=module=='skus') if selected else None
     except MySQLStorageError:
         if module!='questions':raise
         detail=None
@@ -356,6 +358,12 @@ def collection_product(product_id):
     if module=='main_images':
         from ecommerce.web.main_image_presentation import present
         image_view=present(data,selected,detail)
+    sku_view=None
+    if module=='skus':
+        from ecommerce.web.sku_presentation import present
+        from ecommerce.shared.sku_stock import SKU_FILTERS
+        if request.args.get('stock','all') not in SKU_FILTERS:abort(400,description='SKU状态筛选无效')
+        sku_view=present(data,selected,detail,request.args.get('stock','all'))
     overview_model=None;overview_filter=request.args.get('overview_filter','all')
     if module=='overview':
         if overview_filter not in {'all','remaining','issues'}:abort(400,description='概况筛选无效')
@@ -371,7 +379,7 @@ def collection_product(product_id):
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
-        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,video_view=video_view,image_view=image_view,**data)
+        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,video_view=video_view,image_view=image_view,sku_view=sku_view,**data)
 
 
 @pages.get('/collections/searches/<task_id>')

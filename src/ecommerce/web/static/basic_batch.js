@@ -1,8 +1,8 @@
 /* 仅提示待查看的批次，明确点击查看后才加载；无采集或分析请求。 */
 (() => {
-  const form=document.querySelector('[data-bb-form],[data-video-batch-form],[data-image-batch-form]');
+  const form=document.querySelector('[data-bb-form],[data-video-batch-form],[data-image-batch-form],[data-sku-batch-form]');
   if (!form) return;
-  const select=form.elements.batch,loaded=select.value,pending=form.querySelector('[data-bb-pending],[data-video-pending],[data-image-pending]');
+  const select=form.elements.batch,loaded=select.value,pending=form.querySelector('[data-bb-pending],[data-video-pending],[data-image-pending],[data-sku-pending]');
   const button=form.querySelector('button[type=submit]'),initialDisabled=button.disabled;
   const update=()=>{
     pending.hidden=select.value===loaded;
