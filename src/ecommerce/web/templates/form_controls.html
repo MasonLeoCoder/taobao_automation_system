@@ -31,6 +31,10 @@
 <button{{ attributes(attrs,'ui-button ui-' ~ variant) }}>{{ text }}</button>
 {%- endmacro %}
 
+{% macro back_to_top() -%}
+<button{{ attributes({'type':'button','id':'back-to-top','hidden':true,'aria-label':'回到顶部','title':'回到顶部'},'ui-button ui-secondary ui-back-to-top') }}><span aria-hidden="true">↑</span><span class="ui-back-to-top-label">回顶部</span></button>
+{%- endmacro %}
+
 {% macro action_link(text,href,variant='secondary') -%}
 <a href="{{ href }}" class="ui-button ui-{{ variant }}">{{ text }}</a>
 {%- endmacro %}

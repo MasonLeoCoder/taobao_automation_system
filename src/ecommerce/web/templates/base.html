@@ -1,4 +1,5 @@
 <!doctype html>
+{% from 'form_controls.html' import back_to_top with context %}
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -33,6 +34,7 @@
   {% block content %}{% endblock %}
   <footer>数据来自本地运行记录 · 时间按 Asia/Shanghai 展示</footer>
 </main>
+{{ back_to_top() }}
 <section id="collection-task-bar" class="collection-task-bar" hidden aria-live="polite"></section>
 <dialog id="collection-attention" class="collection-dialog" aria-labelledby="collection-attention-title">
   <h2 id="collection-attention-title">采集需要人工处理</h2>
@@ -60,5 +62,6 @@
 <script src="{{ url_for('static',filename='searchable_select.js') }}" defer></script>
 <script src="{{ url_for('static',filename='help_tooltip.js') }}" defer></script>
 <script src="{{ url_for('static',filename='collection.js') }}" defer></script>
+<script src="{{ url_for('static',filename='back_to_top.js') }}" defer></script>
 {% block extra_scripts %}{% endblock %}
 </body></html>

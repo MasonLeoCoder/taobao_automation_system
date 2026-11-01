@@ -1,4 +1,6 @@
 /* 全站表单设计变量与公共控件。统一修改入口；页面样式仅保留排列、宽度与换行。 */
+.ui-button.ui-back-to-top{position:fixed;right:24px;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:49;min-height:44px;gap:6px;box-shadow:0 3px 14px #163b2b14}.ui-back-to-top[hidden]{display:none}
+@media(max-width:700px){.ui-button.ui-back-to-top{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));min-width:44px;padding:8px 12px}.ui-back-to-top-label{display:none}}
 :root {
   --control-font: "Segoe UI", "Microsoft YaHei", sans-serif;
   --control-font-size: 13px;
