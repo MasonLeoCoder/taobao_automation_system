@@ -6,7 +6,6 @@ from werkzeug.exceptions import HTTPException
 
 from ecommerce.infrastructure.images.models import ImageConversionError, OUTPUT_FORMATS
 from ecommerce.modules.image_tools.service import convert_uploads
-from ecommerce.modules.image_tools.main_images import export_main_images
 
 image_tools = Blueprint('image_tools', __name__)
 
@@ -89,7 +88,19 @@ def convert():
 @image_tools.post('/api/tools/images/products/<product_id>/batches/<int:batch_id>/download')
 def main_images(product_id, batch_id):
     """仅导出固定商品批次的主图；参数：格式和可选媒体编号；返回：图片或ZIP。"""
+    return download_batch(product_id,batch_id,'main_images')
+
+
+@image_tools.post('/api/tools/images/products/<product_id>/detail-batches/<int:batch_id>/download')
+def detail_images(product_id,batch_id):
+    """导出固定详情图批次；参数：商品、批次、格式；返回：单张或整批附件。"""
+    return download_batch(product_id,batch_id,'detail_images')
+
+
+def download_batch(product_id,batch_id,module):
+    """共用输入验证和导出；参数：商品、批次及固定模块；返回：下载。"""
     import re
+    from ecommerce.modules.image_tools.collected_images import export_images
     if current_app.config['SETTINGS'].collection_backend != 'mysql':
         abort(409, description='采集数据库尚未启用')
     body = request.get_json()
@@ -100,4 +111,4 @@ def main_images(product_id, batch_id):
     media_id = body.get('media_id')
     if 'media_id' in body and (type(media_id) is not int or media_id < 1):
         abort(400, description='图片编号无效')
-    return download(export_main_images(current_app.config['SETTINGS'], product_id, batch_id, body['format'], media_id=media_id))
+    return download(export_images(current_app.config['SETTINGS'], product_id, batch_id, body['format'], media_id=media_id,module=module))

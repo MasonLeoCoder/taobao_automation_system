@@ -5,8 +5,8 @@
 {% from "collection_parts.html" import labels, batch_status, scope, media_grid, record_table with context %}
 {% from 'module_update_controls.html' import update_button with context %}
 {% block title %}{{ product.display_title or product.platform_product_id }}{% endblock %}{% block breadcrumb %}<a href="{{ url_for('pages.collection_details') }}">商品库</a> / 商品详情{% endblock %}
-{% block extra_head %}{% if module=='parameters' %}<link rel="stylesheet" href="{{ url_for('static',filename='parameter_page.css') }}">{% endif %}<link rel="stylesheet" href="{{ url_for('static',filename='module_update.css') }}"><link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% if module=='main_images' %}<link rel="stylesheet" href="{{ url_for('static',filename='image_tools.css') }}">{% elif module=='skus' %}<link rel="stylesheet" href="{{ url_for('static',filename='sku_page.css') }}">{% endif %}{% endblock %}
-{% block extra_scripts %}<script src="{{ url_for('static',filename='module_update.js') }}" defer></script><script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% if module=='overview' %}<script src="{{ url_for('static',filename='collection_overview.js') }}" defer></script>{% elif module in ['basic_info','video','main_images','skus','parameters'] %}<script src="{{ url_for('static',filename='basic_batch.js') }}" defer></script>{% endif %}{% if module=='main_images' %}<script src="{{ url_for('static',filename='image_tools.js') }}" defer></script>{% elif module=='skus' %}<script src="{{ url_for('static',filename='sku_page.js') }}" defer></script>{% endif %}{% endblock %}
+{% block extra_head %}{% if module=='parameters' %}<link rel="stylesheet" href="{{ url_for('static',filename='parameter_page.css') }}">{% endif %}<link rel="stylesheet" href="{{ url_for('static',filename='module_update.css') }}"><link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% if module in ['main_images','detail_images'] %}<link rel="stylesheet" href="{{ url_for('static',filename='image_tools.css') }}">{% elif module=='skus' %}<link rel="stylesheet" href="{{ url_for('static',filename='sku_page.css') }}">{% endif %}{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='module_update.js') }}" defer></script><script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% if module=='overview' %}<script src="{{ url_for('static',filename='collection_overview.js') }}" defer></script>{% elif module in ['basic_info','video','main_images','skus','parameters','detail_images'] %}<script src="{{ url_for('static',filename='basic_batch.js') }}" defer></script>{% endif %}{% if module in ['main_images','detail_images'] %}<script src="{{ url_for('static',filename='image_tools.js') }}" defer></script>{% elif module=='skus' %}<script src="{{ url_for('static',filename='sku_page.js') }}" defer></script>{% endif %}{% endblock %}
 {% block content %}
 <p class="back-link"><a class="button action-button action-neutral" href="{{ back_url }}">← 返回上一列表</a></p>
 {% include 'product_header.html' %}
@@ -22,6 +22,8 @@
 {% include 'product_main_images.html' %}
 {% elif module=='parameters' %}
 {% include 'product_parameters.html' %}
+{% elif module=='detail_images' %}
+{% include 'product_detail_images.html' %}
 {% elif module=='overview' %}
 {% include 'collection_overview.html' %}
 {% elif module=='reviews' %}

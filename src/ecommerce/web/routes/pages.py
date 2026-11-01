@@ -139,7 +139,7 @@ def log_time_filters():
         abort(400,description='时间筛选无效，请选择有效日期时间，并确保开始时间不晚于结束时间')
 
 
-def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False,image_batch=False,sku_batch=False,parameter_batch=False):
+def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False,image_batch=False,sku_batch=False,parameter_batch=False,detail_image_batch=False):
     """解析采集筛选并调用统一业务查询；参数：种类及可选内部批次；返回：结果。"""
     from ecommerce.modules.collection.queries import query
     settings=current_app.config['SETTINGS']
@@ -172,6 +172,8 @@ def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,wit
             parameters.update(kind='basic_info',after=0,limit=1,question_id=None,with_batch_note=True)
         if video_batch:
             parameters.update(kind='media',question_id=None,main_video_only=True,with_batch_note=True,sort_by='position')
+        if detail_image_batch:
+            parameters.update(kind='media',question_id=None,detail_image_only=True,with_batch_note=True,sort_by='position')
         if image_batch:
             parameters.update(kind='media',question_id=None,main_image_only=True,with_batch_note=True,sort_by='position')
         if sku_batch:
@@ -328,9 +330,9 @@ def collection_product(product_id):
         selected=None
     from ecommerce.infrastructure.storage.mysql import MySQLStorageError
     try:
-        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video',image_batch=module=='main_images',sku_batch=module=='skus',parameter_batch=module=='parameters') if selected else None
+        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video',image_batch=module=='main_images',sku_batch=module=='skus',parameter_batch=module=='parameters',detail_image_batch=module=='detail_images') if selected else None
     except MySQLStorageError:
-        if module not in {'questions','parameters'}:raise
+        if module not in {'questions','parameters','detail_images'}:raise
         detail=None
     media=detail if selected and module in {'video','main_images','detail_images'} else None
     from ecommerce.modules.collection.queries import history_page
@@ -357,9 +359,10 @@ def collection_product(product_id):
         from ecommerce.web.video_presentation import present
         video_view=present(data,selected,detail)
     image_view=None
-    if module=='main_images':
+    if module in {'main_images','detail_images'}:
+        if request.args.get('image_view','grid') not in {'grid','reading'}:abort(400,description='图片浏览方式无效')
         from ecommerce.web.main_image_presentation import present
-        image_view=present(data,selected,detail)
+        image_view=present(data,selected,detail,module=module)
     sku_view=None
     if module=='skus':
         from ecommerce.web.sku_presentation import present

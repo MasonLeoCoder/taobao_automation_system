@@ -80,9 +80,21 @@
       catch(error){say(error.message,true);}finally{busy=false;render();}
     });render();tool.dataset.imageReady='true';
   }
-  const page=document.querySelector('[data-main-image-page]'),modal=document.querySelector('[data-image-download-modal]');
+  const page=document.querySelector('[data-main-image-page],[data-detail-image-page]'),modal=document.querySelector('[data-image-download-modal]');
   if(page && modal) {
-    const format=formatControl(modal,'toolbox.main-images.format.v1'),confirm=modal.querySelector('[data-image-download-confirm]');
+    const gallery=page.querySelector('[data-image-gallery]');
+    const syncModes=()=>page.querySelectorAll('[data-detail-layout]').forEach(node=>{
+      const active=gallery?.dataset.layout===node.dataset.detailLayout;
+      node.setAttribute('aria-pressed',String(active));node.classList.toggle('ui-primary',active);node.classList.toggle('ui-secondary',!active);
+    });
+    syncModes();
+    page.querySelectorAll('[data-detail-layout]').forEach(button=>button.addEventListener('click',()=>{
+      const mode=button.dataset.detailLayout;gallery.dataset.layout=mode;
+      syncModes();
+      const url=new URL(location.href);url.searchParams.set('image_view',mode);history.replaceState(null,'',url);
+      page.querySelectorAll('.media-sort a,.numbered-pagination a').forEach(link=>{const target=new URL(link.href);target.searchParams.set('image_view',mode);link.href=target.href;});
+    }));
+    const format=formatControl(modal,page.matches('[data-detail-image-page]') ? 'toolbox.detail-images.format.v1' : 'toolbox.main-images.format.v1'),confirm=modal.querySelector('[data-image-download-confirm]');
     const scope=modal.querySelector('[data-image-download-scope]'),feedback=modal.querySelector('[data-image-download-feedback]');
     const pageFeedback=page.querySelector('[data-image-page-feedback]'),closers=modal.querySelectorAll('[data-image-download-close]');
     let active=null,busy=false,opener=null;
@@ -90,7 +102,7 @@
     closers.forEach(button=>button.addEventListener('click',close));modal.addEventListener('cancel',event=>{event.preventDefault();close();});
     page.querySelectorAll('[data-image-download]').forEach(button=>button.addEventListener('click',()=>{
       if(busy || document.querySelector('dialog[open]'))return;opener=button;active=button.dataset.imageDownload;
-      scope.textContent=active==='all' ? button.textContent+' · 包含本批所有分页' : `下载 ${button.closest('[data-main-image]').querySelector('h3').textContent}`;
+      scope.textContent=active==='all' ? button.textContent+' · 包含本批所有分页' : `下载 ${button.closest('[data-main-image],[data-detail-image]').querySelector('h3').textContent}`;
       feedback.textContent='';feedback.classList.remove('is-error');modal.showModal();confirm.focus();
     }));
     confirm.addEventListener('click',async()=>{
@@ -101,7 +113,7 @@
       try {const count=await requestDownload(page.dataset.imageDownloadUrl,body,true,text=>say(text));pageFeedback.textContent=`已准备 ${count} 张图片并发起下载，采集原件保持不变。`;busy=false;close();}
       catch(error){say(error.message,true);}finally{busy=false;confirm.disabled=false;format.disabled=false;closers.forEach(button=>button.disabled=false);confirm.textContent='确认下载';format.dispatchEvent(new Event('change',{bubbles:true}));}
     });
-    page.querySelectorAll('[data-gallery-preview]').forEach(button=>button.addEventListener('click',()=>button.closest('[data-main-image]').querySelector('img')?.click()));
+    page.querySelectorAll('[data-gallery-preview]').forEach(button=>button.addEventListener('click',()=>button.closest('[data-main-image],[data-detail-image]').querySelector('img')?.click()));
     page.querySelectorAll('[data-gallery-image]').forEach(img=>{
       const failed=()=>{img.hidden=true;img.closest('.pi-picture').querySelector('[data-image-load-error]').hidden=false;};
       img.addEventListener('error',failed);if(img.complete && !img.naturalWidth)failed();
