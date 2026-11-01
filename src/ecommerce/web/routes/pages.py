@@ -139,7 +139,7 @@ def log_time_filters():
         abort(400,description='时间筛选无效，请选择有效日期时间，并确保开始时间不晚于结束时间')
 
 
-def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False):
+def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False):
     """解析采集筛选并调用统一业务查询；参数：种类及可选内部批次；返回：结果。"""
     from ecommerce.modules.collection.queries import query
     settings=current_app.config['SETTINGS']
@@ -168,6 +168,8 @@ def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,wit
         if basic_batch:
             # 基本信息每批唯一一条，批次卡片不继承其他列表的排序、游标或明细种类。
             parameters.update(kind='basic_info',after=0,limit=1,question_id=None,with_batch_note=True)
+        if video_batch:
+            parameters.update(kind='media',question_id=None,main_video_only=True,with_batch_note=True,sort_by='position')
         return query(settings,kind,**parameters)
     except (ValueError,TypeError):
         abort(400,description='采集查询参数无效，数量为 1–200，编号和游标须为有效数字')
@@ -320,7 +322,7 @@ def collection_product(product_id):
         selected=None
     from ecommerce.infrastructure.storage.mysql import MySQLStorageError
     try:
-        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info') if selected else None
+        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video') if selected else None
     except MySQLStorageError:
         if module!='questions':raise
         detail=None
@@ -344,6 +346,10 @@ def collection_product(product_id):
     if module=='basic_info':
         from ecommerce.web.basic_batch_presentation import present
         basic_batch_view=present(data,selected,detail)
+    video_view=None
+    if module=='video':
+        from ecommerce.web.video_presentation import present
+        video_view=present(data,selected,detail)
     overview_model=None;overview_filter=request.args.get('overview_filter','all')
     if module=='overview':
         if overview_filter not in {'all','remaining','issues'}:abort(400,description='概况筛选无效')
@@ -359,7 +365,7 @@ def collection_product(product_id):
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
-        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,**data)
+        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,video_view=video_view,**data)
 
 
 @pages.get('/collections/searches/<task_id>')
@@ -385,7 +391,10 @@ def task_detail(task_id):
 def collection_file(file_id):
     """提供已发布素材预览；参数：文件索引编号；返回：受限图片或视频。"""
     from pathlib import Path
-    asset=browse_query('file',file_id=file_id)
+    flag=request.args.get('download','0')
+    if flag not in {'0','1'}:abort(400,description='下载选项无效')
+    download=flag=='1'
+    asset=browse_query('file',file_id=file_id,**({'main_video_only':True} if download else {}))
     root=current_app.config['SETTINGS'].workspace.resolve()
     relative=Path(asset['relative_path'])
     target=(root/relative).resolve()
@@ -393,13 +402,14 @@ def collection_file(file_id):
         '.gif':'image/gif','.avif':'image/avif','.bmp':'image/bmp','.mp4':'video/mp4','.webm':'video/webm'}
     if asset['root_key']!='workspace' or relative.is_absolute() or not target.is_relative_to(root) or target.suffix.lower() not in allowed:
         abort(404)
+    if download and target.suffix.lower() not in {'.mp4','.webm'}:abort(404)
     # 登录资料、日志等目录即使被错误索引也不对外提供。
     if not target.is_relative_to((root/'output').resolve()) or not target.is_file():
         abort(404,description='本地素材不存在')
     from ecommerce.infrastructure.storage.collection_snapshot import digest_file
     if target.stat().st_size!=asset['size_bytes'] or digest_file(target)!=asset['sha256']:
         abort(409,description='本地素材已改变，需重新核对')
-    return send_file(target,mimetype=allowed[target.suffix.lower()],conditional=True)
+    return send_file(target,mimetype=allowed[target.suffix.lower()],conditional=True,as_attachment=download,download_name=target.name)
 
 
 @pages.get('/collections/batches/<int:batch_id>')

@@ -55,10 +55,12 @@ def _browse(c, tables, view, **o):
         from ecommerce.infrastructure.storage.keyword_products import keyword_products
         return keyword_products(c,tables,o,date_bounds)
     if view == 'file':
+        video_only=o.get('main_video_only',False)
         asset = c.execute(sa.select(f).where(f.c.id == o['file_id'], f.c.availability == 'present',
             sa.exists(sa.select(m.c.id).join(b, b.c.id == m.c.batch_id).where(
                 m.c.file_asset_id == f.c.id, visible,
-                m.c.role.in_(['main_image','detail_image','main_video','sku_image','list_image',
+                b.c.module=='video' if video_only else sa.true(),
+                m.c.role.in_(['main_video'] if video_only else ['main_image','detail_image','main_video','sku_image','list_image',
                     'review_image','review_video','review_poster','append_image','append_video','append_poster',
                     'answer_image','answer_video','answer_poster']))))).mappings().first()
         if not asset:
