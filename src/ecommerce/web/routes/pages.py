@@ -139,7 +139,7 @@ def log_time_filters():
         abort(400,description='时间筛选无效，请选择有效日期时间，并确保开始时间不晚于结束时间')
 
 
-def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False,image_batch=False,sku_batch=False):
+def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,with_question_counts=False,basic_batch=False,video_batch=False,image_batch=False,sku_batch=False,parameter_batch=False):
     """解析采集筛选并调用统一业务查询；参数：种类及可选内部批次；返回：结果。"""
     from ecommerce.modules.collection.queries import query
     settings=current_app.config['SETTINGS']
@@ -165,6 +165,8 @@ def collection_query(kind,batch_id=None,*,after_override=None,numbered=False,wit
             else:
                 parameters.update(batch_id=batch_id,kind=request.args.get('kind') or None,
                     question_id=int(request.args['question_id']) if request.args.get('question_id') else None)
+        if parameter_batch:
+            parameters.update(kind='parameters',question_id=None)
         if basic_batch:
             # 基本信息每批唯一一条，批次卡片不继承其他列表的排序、游标或明细种类。
             parameters.update(kind='basic_info',after=0,limit=1,question_id=None,with_batch_note=True)
@@ -326,9 +328,9 @@ def collection_product(product_id):
         selected=None
     from ecommerce.infrastructure.storage.mysql import MySQLStorageError
     try:
-        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video',image_batch=module=='main_images',sku_batch=module=='skus') if selected else None
+        detail=collection_query('records',selected['id'],numbered=module!='basic_info',with_question_counts=module=='questions',basic_batch=module=='basic_info',video_batch=module=='video',image_batch=module=='main_images',sku_batch=module=='skus',parameter_batch=module=='parameters') if selected else None
     except MySQLStorageError:
-        if module!='questions':raise
+        if module not in {'questions','parameters'}:raise
         detail=None
     media=detail if selected and module in {'video','main_images','detail_images'} else None
     from ecommerce.modules.collection.queries import history_page
@@ -364,6 +366,10 @@ def collection_product(product_id):
         from ecommerce.shared.sku_stock import SKU_FILTERS
         if request.args.get('stock','all') not in SKU_FILTERS:abort(400,description='SKU状态筛选无效')
         sku_view=present(data,selected,detail,request.args.get('stock','all'))
+    parameter_view=None
+    if module=='parameters':
+        from ecommerce.web.parameter_presentation import present
+        parameter_view=present(data,selected,detail)
     overview_model=None;overview_filter=request.args.get('overview_filter','all')
     if module=='overview':
         if overview_filter not in {'all','remaining','issues'}:abort(400,description='概况筛选无效')
@@ -379,7 +385,7 @@ def collection_product(product_id):
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
-        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,video_view=video_view,image_view=image_view,sku_view=sku_view,**data)
+        module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,video_view=video_view,image_view=image_view,sku_view=sku_view,parameter_view=parameter_view,**data)
 
 
 @pages.get('/collections/searches/<task_id>')
