@@ -291,7 +291,7 @@ class CollectionBrowserTests(unittest.TestCase):
         self.assertIn('资料已保存',page.text)
         self.assertIn('优惠前 ¥3.35 起',page.text)
         self.assertIn('data-fixed-source',page.text)
-        self.assertIn('data-source-logs href="/logs?task_id='+self.task,page.text)
+        self.assertRegex(page.text,r'data-source-logs[^>]*href="/logs\?task_id='+self.task)
         self.assertIn('批次 70',page.text)
         self.assertNotIn('已全部采集',page.text)
         self.assertNotIn('<h1><script>',page.text)
@@ -350,8 +350,11 @@ class CollectionBrowserTests(unittest.TestCase):
         self.assertIsNone(scoped['parameters']['count'])
         self.assertEqual(scoped['parameters']['status'],'采集异常')
         page=self.client.get('/collections/products/123').text
-        self.assertIn('pd-module-alert',page)
-        self.assertIn('此前有效资料仍保留',page)
+        self.assertNotIn('pd-module-alert',page)
+        self.assertNotIn('商品参数最近尝试',page)
+        overview=self.client.get('/collections/products/123?module=overview').text
+        self.assertIn('data-overview-row="parameters"',overview)
+        self.assertIn('采集失败',overview)
         self.assertIn('无内容',page)
 
     def test_explicit_source_and_same_task_never_fill_current_gaps_with_old_data(self):

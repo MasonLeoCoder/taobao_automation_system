@@ -112,6 +112,30 @@
         runtimeLogs.hidden = !job.logs_url || Boolean(sourceTask && sourceTask === runtimeTask);
         if (job.logs_url) runtimeLogs.href = job.logs_url;
       }
+      const runtime = card.querySelector('[data-basic-runtime]');
+      const sameSaved = Number(card.dataset.appliedBatch) > 0 && Number(card.dataset.appliedBatch) === Number(job.batch_id);
+      const confirmed = job.done && job.valid && job.state === 'succeeded' && stateLabel(job) === '采集完成';
+      if (runtime) runtime.hidden = confirmed && sameSaved;
+      const result = card.querySelector('[data-runtime-result]');
+      if (result) {
+        result.hidden = !job.result_url || sameSaved;
+        if (job.result_url) result.href = job.result_url;
+        result.textContent = confirmed ? '查看新资料' : '查看本次尝试';
+      }
+      const update = card.querySelector('[data-basic-update]');
+      if (update) {
+        update.dataset.configureHref ||= update.href;
+        update.dataset.configureLabel ||= update.textContent;
+        if (job.done) {
+          update.href = update.dataset.configureHref;update.textContent = update.dataset.configureLabel;
+        } else {
+          const taskId = /^[a-f0-9]{32}$/.test(job.task_id || '') ? job.task_id : null;
+          const target = new URL(taskId ? `/tasks/${taskId}` : update.dataset.configureHref,location.href);
+          if (taskId) target.searchParams.set('return_to',location.pathname+location.search);
+          else target.searchParams.set('jobs_status','waiting');
+          update.href = target.href;update.textContent = taskId ? '查看当前任务' : '查看申请进度';
+        }
+      }
       return;
     }
     const actions = card.querySelector('[data-collection-actions]') || card.querySelector('.module-actions');

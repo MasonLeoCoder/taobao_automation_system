@@ -1,29 +1,25 @@
 {% set basic_latest=module_summaries.basic_info.latest %}
 {% set basic_valid=history|selectattr('id','equalto',info_batch_id)|first %}
 <section class="panel pd-basic" data-collection-module="basic_info" data-latest-batch="{{ basic_latest.id if basic_latest else 0 }}" data-applied-batch="{{ info_batch_id or 0 }}" data-fixed-source>
-  <div class="pd-section-heading"><div><h2>{{ '本次详情基本信息' if context_run else '基本信息' }}</h2><p class="ui-form-note">{{ '已保存批次 ' ~ info_batch_id if info_batch_id else '当前范围尚无有效基本信息' }}</p></div><span class="ui-report-state {{ 'is-ready' if info_captured_at else 'is-muted' }}">{{ '资料已保存' if info_captured_at else '待采集' }}</span></div>
+  <div class="pd-section-heading pd-basic-heading"><div class="pd-basic-identity"><div class="pd-basic-title"><h2>{{ '本次详情基本信息' if context_run else '基本信息' }}</h2><span class="ui-report-state {{ 'is-ready' if info_captured_at else 'is-muted' }}">{{ '资料已保存' if info_captured_at else '待采集' }}</span></div><p class="ui-form-note pd-basic-meta">{% if info_captured_at %}<span>批次 {{ info_batch_id }}</span><span>采集于 <time>{{ info_captured_at|full_local_time }}</time></span>{% else %}当前范围尚无有效基本信息{% endif %}</p></div>
+  <div class="module-actions pd-basic-actions" data-collection-actions>
+    {% if info_captured_at %}<a class="button action-button action-neutral" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=info_batch_id,observation=request.args.get('observation','0'),return_to=back_url) }}">查看本批资料</a>{% endif %}
+    <a class="button action-button action-primary" data-basic-update href="{{ url_for('pages.module',key='collection',input=product.platform_product_id,mode='detail',modules='basic_info') }}">{{ '更新基本信息' if info_captured_at else '选择基本信息采集范围' }}</a>
+    {% if basic_valid and basic_valid.task_id %}<a class="button action-button action-neutral" data-source-logs title="查看本批基本信息采集日志" href="{{ url_for('pages.logs',task_id=basic_valid.task_id,return_to=current_location()) }}">本批日志</a>{% endif %}
+  </div></div>
   <dl class="pd-metrics">
     <div class="ui-summary-metric"><dt>页面展示价格</dt><dd class="ui-product-value">{{ product_info.price_text or '未展示或未确认' }}</dd><dd class="ui-summary-metric-note">采集时页面原文，非实时成交价</dd></div>
     <div class="ui-summary-metric"><dt>详情销量原文</dt><dd class="ui-product-value">{{ product_info.sales_text or '未采到详情销量' }}</dd><dd class="ui-summary-metric-note">保留平台原有销量口径</dd></div>
-    <div class="ui-summary-metric"><dt>本信息采集时间</dt><dd class="ui-product-value ui-product-time">{{ info_captured_at|full_local_time }}</dd><dd class="ui-summary-metric-note">各模块采集时间可能不同</dd></div>
   </dl>
-  {% if basic_latest and basic_latest.status not in ['complete','downloaded'] %}<div class="ui-report-notice"><strong>最近基本信息尝试：</strong>{{ scope(basic_latest) }}；已有资料保留，可查看最近采集尝试及其日志。</div>{% endif %}
-  <div class="module-actions pd-basic-actions" data-collection-actions>
-    {% if info_captured_at %}<a class="button action-button action-neutral" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=info_batch_id,observation=request.args.get('observation','0'),return_to=back_url) }}">查看本批资料</a>{% endif %}
-    <a class="button action-button {{ 'action-neutral' if info_captured_at else 'action-primary' }}" href="{{ url_for('pages.module',key='collection',input=product.platform_product_id,mode='detail',modules='basic_info') }}">{{ '更新基本信息' if info_captured_at else '选择基本信息采集范围' }}</a>
-    {% if basic_valid and basic_valid.task_id %}<a class="button action-button action-history" data-source-logs href="{{ url_for('pages.logs',task_id=basic_valid.task_id,return_to=current_location()) }}">查看本批采集日志</a>{% endif %}
-    {% if basic_latest and basic_latest.id!=info_batch_id %}<a class="button action-button action-history" href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=basic_latest.id,observation=request.args.get('observation','0'),return_to=back_url) }}">查看最近采集尝试</a>{% endif %}
-  </div>
-  <div class="pd-runtime"><span class="ui-form-note">最近基本信息任务</span><p class="module-job-status ui-report-state" data-compact-success role="status" aria-live="polite"></p><a class="button action-button action-history" data-runtime-logs hidden>查看最近任务日志</a><details class="ui-report-fold ui-compact-fold" data-success-note hidden><summary>查看采集详情</summary><div class="ui-report-fold-body"><p data-success-message></p></div></details></div>
-  <details class="ui-report-fold ui-compact-fold"><summary>标题与资料来源<small>完整详情标题、店铺与批次</small></summary><div class="ui-report-fold-body">
+  {% set basic_changed=basic_latest and (basic_latest.id!=info_batch_id or basic_latest.status not in ['complete','downloaded']) %}
+  <div class="pd-runtime ui-report-notice" data-basic-runtime {% if not basic_changed %}hidden{% endif %}><div class="pd-runtime-summary"><span class="ui-form-note">最近基本信息尝试</span><p class="module-job-status ui-report-state" data-compact-success role="status" aria-live="polite">{% if basic_changed %}{{ scope(basic_latest) }}{% endif %}</p></div><div class="module-actions"><a class="button action-button action-neutral" data-runtime-result {% if basic_changed %}href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=basic_latest.id,observation=request.args.get('observation','0'),return_to=current_location()) }}"{% else %}hidden{% endif %}>查看本次尝试</a><a class="button action-button action-history" data-runtime-logs hidden>查看最近任务日志</a></div><p class="ui-form-note">当前展示资料保持原批次；新的采集结果需手动查看。</p></div>
+  <details class="ui-report-fold ui-compact-fold" data-basic-details><summary>采集记录与资料来源<small>标题、店铺与采集说明</small></summary><div class="ui-report-fold-body">
     <p>详情标题：<span id="product-detail-title">{{ product_info.title or '未采到详情标题' }}</span></p>
     {% if product_info.title %}{{ control_button('复制详情标题', {'type':'button','class':'button action-button action-neutral','data-copy-target':'product-detail-title','hidden':true}) }}{% endif %}
     <p>详情店铺：{{ product_info.shop_name or '未记录' }} · 批次 {{ info_batch_id or '未记录' }} · {{ info_captured_at|full_local_time }}</p>
     <p>基本信息独立采集和保存，与 SKU 结果分别判断。页头名称是商品索引标题，不替代此处本次详情标题。</p>
     {% if basic_valid and basic_valid.derivation_kind=='sku_basic_info_split' %}<p>本信息从原 SKU 批次 {{ basic_valid.derived_from_batch_id }} 提取，保留原观察时间；未重新访问商品。</p>{% endif %}
+    <div data-success-note hidden><strong>最近基本信息任务说明</strong><p data-success-message></p></div>
   </div></details>
   {% if listing %}<details class="ui-report-fold ui-compact-fold"><summary>最近列表参考<small>独立列表观察</small></summary><div class="ui-report-fold-body"><p>{{ listing.captured_at|full_local_time }} · {{ listing.title }} · 列表价格 {{ listing.price_text or '未确认' }} · {{ listing.sales_text or '销量未记录' }}</p><p>这是当时的列表观察，不替代详情价格和本次采集结果。</p></div></details>{% endif %}
 </section>
-{% for code,entry in module_summaries.items() if code!='basic_info' and entry.latest and entry.latest.status in ['failed','failed_skipped','partial','not_run_skipped','discarded'] %}
-<div class="ui-report-notice pd-module-alert" role="status"><strong>{{ labels.get(code,code) }}最近尝试：</strong>{{ scope(entry.latest) }}；{{ '此前有效资料仍保留。' if entry.valid else '尚无有效资料。' }} <a href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,batch=entry.latest.id,observation=request.args.get('observation','0'),return_to=back_url) }}">查看本次尝试</a></div>
-{% endfor %}

@@ -10,7 +10,7 @@ from tests.unit.test_collection_browser import CollectionBrowserTests
 
 def check():
     """核对来源守卫、复制、异常、范围参考及手机布局；参数：无；返回：断言。"""
-    output=Path('workspace/output/reports/product_overview/isolated')
+    output=Path('workspace/output/reports/basic_layout/isolated')
     output.mkdir(parents=True,exist_ok=True)
     with sync_playwright() as playwright:
         browser=playwright.chromium.launch(headless=True)
@@ -81,14 +81,36 @@ def check():
                     page.locator('[data-title-toggle]').click()
                     logs=page.locator('[data-source-logs]').get_attribute('href')
                     source=page.get_by_role('link',name='查看本批资料',exact=True).get_attribute('href')
-                    expect(page.locator('[data-success-note]')).to_be_visible()
-                    assert not page.locator('[data-success-note]').evaluate('(element)=>element.open')
+                    expect(page.locator('[data-basic-runtime]')).to_be_visible()
+                    expect(page.locator('[data-runtime-result]')).to_have_text('查看新资料')
+                    assert not page.locator('[data-basic-details]').evaluate('(element)=>element.open')
                     expect(page.locator('[data-success-message]')).not_to_be_visible()
+                    page.locator('[data-basic-details]>summary').click()
+                    expect(page.locator('[data-success-note]')).to_be_visible()
+                    expect(page.locator('[data-success-message]')).to_contain_text('成功长说明')
+                    page.locator('[data-basic-details]>summary').click()
                     expect(page.locator('[data-runtime-logs]')).to_be_visible()
-                    job['logs_url']='/logs?task_id='+case.task
-                    page.reload();expect(page.locator('[data-runtime-logs]')).to_be_hidden()
-                    job.update(state='failed',valid=False,message='模拟失败，旧来源不变',logs_url='/logs?task_id='+('b'*32))
+                    job.update(logs_url='/logs?task_id='+case.task,batch_id=70)
+                    page.reload();expect(page.locator('[data-basic-runtime]')).to_be_hidden()
+                    expect(page.locator('[data-runtime-logs]')).to_be_hidden()
+                    expect(page.locator('.pd-basic .pd-metrics>div')).to_have_count(2)
+                    expect(page.locator('.pd-basic-meta')).to_contain_text('2026-10-25 12:00:00')
+                    expect(page.locator('.pd-basic-actions [data-basic-update]')).to_have_css('color','rgb(255, 255, 255)')
+                    assert page.locator('.pd-basic-actions').bounding_box()['y']<page.locator('.pd-metrics').bounding_box()['y']
+                    if width==1440:
+                        assert page.locator('.pd-basic-actions').bounding_box()['x']>page.locator('.pd-basic-identity').bounding_box()['x']
+                    assert page.locator('.pd-module-alert').count()==0
+                    page.locator('.pd-basic').screenshot(path=str(output/f'basic-{width}.png'))
+                    job.update(state='running',done=False,valid=False,task_id='b'*32,message='模拟基本信息更新中',batch_id=None)
+                    page.reload();expect(page.locator('[data-basic-update]')).to_have_text('查看当前任务')
+                    assert '/tasks/'+('b'*32) in page.locator('[data-basic-update]').get_attribute('href')
+                    job.update(state='queued',task_id=None,message='模拟排队')
+                    page.reload();expect(page.locator('[data-basic-update]')).to_have_text('查看申请进度')
+                    assert 'jobs_status=waiting' in page.locator('[data-basic-update]').get_attribute('href')
+                    job.update(state='failed',done=True,valid=False,task_id='b'*32,message='模拟失败，旧来源不变',logs_url='/logs?task_id='+('b'*32),batch_id=9999)
                     page.reload();expect(page.locator('.pd-basic .module-job-status')).to_contain_text('模拟失败')
+                    expect(page.locator('[data-basic-update]')).to_have_text('更新基本信息')
+                    expect(page.locator('[data-basic-runtime]')).to_be_visible()
                     expect(page.locator('[data-success-note]')).to_be_hidden()
                     expect(page.locator('[data-runtime-logs]')).to_be_visible()
                     assert page.locator('[data-source-logs]').get_attribute('href')==logs
