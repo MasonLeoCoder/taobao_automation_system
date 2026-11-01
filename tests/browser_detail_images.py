@@ -12,6 +12,7 @@ from tests.unit.test_detail_image_page import DetailImageTests
 from tests.unit.test_image_tools import picture
 
 OUTPUT=Path('workspace/output/reports/detail_images')
+if '--seamless' in sys.argv:OUTPUT=Path('workspace/output/reports/seamless_detail_reading')
 
 
 def isolated(page,context,width):
@@ -39,8 +40,13 @@ def isolated(page,context,width):
         root.get_by_role('button',name='连续阅读',exact=True).click();expect(gallery).to_have_attribute('data-layout','reading')
         img=gallery.locator('img').first;img.scroll_into_view_if_needed();expect(img).to_be_visible()
         assert img.evaluate('e=>Math.abs(e.getBoundingClientRect().height/e.getBoundingClientRect().width-e.naturalHeight/e.naturalWidth)<0.1')
+        expect(root.locator('.pi-card-meta').first).to_be_hidden();expect(root.locator('.pi-card-actions').first).to_be_hidden()
+        assert gallery.locator('.ui-image-card,.ui-image-stage').count()==0
+        assert gallery.locator('.pi-card').evaluate_all('(cards)=>Math.abs(cards[1].getBoundingClientRect().top-cards[0].getBoundingClientRect().bottom)<1')
         assert 'image_view=reading' in root.locator('.numbered-pagination a[rel=next]').get_attribute('href')
         root.get_by_role('button',name='网格浏览',exact=True).click()
+        expect(root.locator('.pi-card-meta').first).to_be_visible();expect(root.locator('.pi-card-actions').first).to_be_visible()
+        assert gallery.locator('.ui-image-card').count()==20
         root.locator('[data-gallery-preview]').first.click();viewer=page.locator('#image-preview');expect(viewer).to_be_visible()
         expect(viewer.locator('#image-preview-title')).to_have_text('详情图片 1');viewer.get_by_role('button',name='下一张 →').click()
         expect(viewer.locator('#image-preview-title')).to_have_text('详情图片 2');viewer.get_by_role('button',name='放大图片',exact=True).click()
@@ -86,7 +92,11 @@ def check():
                     expect(root).to_contain_text('共 6 张');expect(root.locator('[data-detail-image]')).to_have_count(6)
                     root.screenshot(path=str(OUTPUT/f'real-grid-{width}.png'))
                     root.get_by_role('button',name='连续阅读',exact=True).click();expect(root.locator('[data-image-gallery]')).to_have_attribute('data-layout','reading')
+                    expect(root.locator('.pi-card-meta').first).to_be_hidden();expect(root.locator('.pi-card-actions').first).to_be_hidden()
+                    assert root.locator('.pi-card').evaluate_all('(cards)=>cards.slice(1).every((c,i)=>Math.abs(c.getBoundingClientRect().top-cards[i].getBoundingClientRect().bottom)<1)')
+                    assert root.locator('[data-image-gallery] .ui-image-card,[data-image-gallery] .ui-image-stage').count()==0
                     root.locator('[data-detail-image]').first.screenshot(path=str(OUTPUT/f'real-reading-{width}.png'))
+                    if '--seamless' in sys.argv:root.locator('[data-image-gallery]').screenshot(path=str(OUTPUT/f'real-seamless-{width}.png'))
                     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1');assert not errors,errors;assert not writes
                     print(width,'actual six detail images grid/reading read-only passed; POST 0')
                 finally:context.close()

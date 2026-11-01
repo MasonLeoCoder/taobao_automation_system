@@ -87,10 +87,17 @@
       const active=gallery?.dataset.layout===node.dataset.detailLayout;
       node.setAttribute('aria-pressed',String(active));node.classList.toggle('ui-primary',active);node.classList.toggle('ui-secondary',!active);
     });
-    syncModes();
+    const syncReading=()=>{
+      syncModes();
+      if(!page.matches('[data-detail-image-page]'))return;
+      const reading=gallery?.dataset.layout==='reading';
+      gallery?.querySelectorAll('.pi-card').forEach(card=>card.classList.toggle('ui-image-card',!reading));
+      gallery?.querySelectorAll('.pi-picture').forEach(stage=>stage.classList.toggle('ui-image-stage',!reading));
+    };
+    syncReading();
     page.querySelectorAll('[data-detail-layout]').forEach(button=>button.addEventListener('click',()=>{
       const mode=button.dataset.detailLayout;gallery.dataset.layout=mode;
-      syncModes();
+      syncReading();
       const url=new URL(location.href);url.searchParams.set('image_view',mode);history.replaceState(null,'',url);
       page.querySelectorAll('.media-sort a,.numbered-pagination a').forEach(link=>{const target=new URL(link.href);target.searchParams.set('image_view',mode);link.href=target.href;});
     }));
