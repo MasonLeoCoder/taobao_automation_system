@@ -39,6 +39,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     from ecommerce.web.routes.video_tools import video_tools
     app.extensions['video_tools'] = VideoTools(settings)
     app.register_blueprint(video_tools)
+    from ecommerce.modules.video_tools.bilibili import BilibiliTools
+    from ecommerce.web.routes.bilibili_tools import bilibili_tools
+    app.extensions['bilibili_tools'] = BilibiliTools(settings)
+    app.register_blueprint(bilibili_tools)
     from ecommerce.web.navigation import current_location,safe_return
     app.add_template_global(current_location)
     app.add_template_global(safe_return)

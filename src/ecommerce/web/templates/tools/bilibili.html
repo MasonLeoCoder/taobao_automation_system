@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% import 'form_controls.html' as ui %}
+{% block title %}B站视频下载{% endblock %}
+{% block breadcrumb %}工具箱 / B站视频下载{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='bilibili_tools.css') }}">{% endblock %}
+{% block content %}
+<section class="bv-page" data-bilibili>
+  <div class="bv-heading"><div><p class="ui-report-eyebrow">工具箱 · 视频素材</p><h1>B站视频下载</h1><p class="ui-form-note">粘贴链接，确认下载单集还是全部，预览后选择位置保存。</p></div>{{ ui.action_link('返回工具箱',url_for('image_tools.index')) }}</div>
+  <div class="ui-tool-card bv-input">
+    {% call ui.field('B站视频链接、BV/av号或完整分享文案') %}{{ ui.textarea_control({'id':'bv-input','rows':2,'maxlength':8192,'placeholder':'支持普通视频、带p页号的分P链接、合集内的视频和b23.tv短链接'}) }}{% endcall %}
+    <div class="module-actions">{{ ui.control_button('解析素材',{'id':'bv-start','type':'button'}) }}{{ ui.control_button('登录模式解析',{'id':'bv-login','type':'button'},'secondary') }}</div>
+    <p class="ui-form-note">只解析资料与可用规格，不自动下载全部。需要登录时，在独立B站窗口中由你完成。</p>
+  </div>
+  <p id="bv-status" class="ui-tool-feedback" role="status" aria-live="polite">请输入链接开始。</p>
+  <article id="bv-result" class="ui-tool-card bv-result" hidden>
+    <div class="bv-cover"><img id="bv-cover" class="ui-tool-thumbnail" alt="当前投稿封面" hidden><span id="bv-cover-empty" class="ui-form-note">封面暂不可用</span></div>
+    <div class="bv-info">
+      <h2 id="bv-title"></h2><div class="bv-author"><img id="bv-avatar" class="ui-tool-avatar" alt="UP主头像" hidden><span id="bv-author"></span></div>
+      <p id="bv-stats" class="ui-form-note"></p><p id="bv-times" class="ui-form-note"></p>
+      {% call ui.field('当前分集') %}{% call ui.select_control({'id':'bv-episode'}) %}{% endcall %}{% endcall %}
+      <p id="bv-episode-note" class="ui-form-note"></p>
+      {% call ui.field('下载范围（由你确认后开始）') %}{% call ui.select_control({'id':'bv-scope'}) %}<option value="single">只下载当前一集</option>{% endcall %}{% endcall %}
+      <p id="bv-range-note" class="ui-form-note"></p>
+      {% call ui.field('视频版本') %}{% call ui.select_control({'id':'bv-format'}) %}{% endcall %}{% endcall %}
+      <details><summary>更多规格与音频选择</summary>{% call ui.field('音频版本') %}{% call ui.select_control({'id':'bv-audio-format'}) %}{% endcall %}{% endcall %}<p id="bv-spec" class="ui-form-note"></p></details>
+      <p id="bv-permission" class="ui-form-note"></p>
+      <div class="module-actions">{{ ui.control_button('确认范围并准备视频',{'id':'bv-prepare','type':'button'}) }}{{ ui.control_button('准备当前集完整声音',{'id':'bv-audio','type':'button'},'secondary') }}</div>
+      <div class="module-actions bv-cover-actions">{% call ui.select_control({'id':'bv-cover-format','aria-label':'封面格式'}) %}<option value="original">封面原格式</option><option value="png">封面 PNG</option><option value="jpg">封面 JPG</option>{% endcall %}{{ ui.control_button('准备当前投稿封面',{'id':'bv-cover-prepare','type':'button'},'secondary') }}{{ ui.control_button('复制当前集链接',{'id':'bv-copy','type':'button'},'secondary') }}</div>
+      <p class="ui-form-note">同一投稿的分P共用投稿封面。全部下载沿用所选清晰度与编码；某集无该规格会提示你单独选择。</p>
+    </div>
+  </article>
+  <section id="bv-work" class="ui-tool-card" hidden><h2>下载与处理进度</h2><p id="bv-progress-note" class="ui-form-note"></p><progress id="bv-progress" max="100" aria-label="当前轨道下载或合并进度"></progress><div class="module-actions">{{ ui.control_button('暂停',{'id':'bv-pause','type':'button'},'secondary') }}{{ ui.control_button('继续 / 重试未完成项',{'id':'bv-resume','type':'button'},'secondary') }}{{ ui.control_button('取消并删除未完成分段',{'id':'bv-cancel','type':'button'},'secondary') }}</div><div id="bv-plan" class="bv-list"></div></section>
+  <section id="bv-output" class="ui-tool-card" hidden>
+    <h2>预览并保存</h2>
+    {% call ui.field('已准备的素材') %}{% call ui.select_control({'id':'bv-asset'}) %}{% endcall %}{% endcall %}
+    <video id="bv-video" controls playsinline preload="metadata" hidden aria-label="所选视频预览"></video><audio id="bv-audio-player" controls preload="metadata" hidden></audio><img id="bv-image" class="ui-tool-thumbnail" alt="封面预览" hidden>
+    <p id="bv-preview-note" class="ui-form-note"></p>
+    <label class="ui-field bv-review">{{ ui.input_control({'type':'checkbox','id':'bv-reviewed'}) }}<span>已核对所选视频的内容与规格</span></label>
+    <div class="module-actions">{{ ui.control_button('选择位置并保存当前素材',{'id':'bv-save','type':'button','disabled':true}) }}{{ ui.control_button('选择文件夹保存本次全部视频',{'id':'bv-save-all','type':'button','disabled':true},'secondary') }}{{ ui.control_button('停止保存',{'id':'bv-stop-save','type':'button','hidden':true},'secondary') }}</div>
+    <p class="ui-form-note">批量保存按当前准备范围逐集写入。已存在同名文件会使用新名称，保存成功以文件实际写完为准。</p><p id="bv-saved" class="ui-form-note" role="status"></p>
+  </section>
+  <details class="ui-tool-card"><summary>磁盘与高级设置</summary><p id="bv-disk" class="ui-form-note"></p><p class="ui-form-note">单个视频不限大小。缓存容量仅提醒；下载与合并需要额外临时空间。暂停和失败待恢复的文件不自动清理。</p>
+    <div class="bv-settings">{% call ui.field('临时目录（留空使用项目默认目录）') %}{{ ui.input_control({'id':'bv-temp-dir','type':'text','maxlength':1024,'placeholder':'例如 D:/VideoTemp'}) }}{% endcall %}{% call ui.field('缓存提醒容量（GiB，0关闭提醒）') %}{{ ui.input_control({'id':'bv-cache-warn','type':'number','min':0,'step':1,'value':20}) }}{% endcall %}{% call ui.field('终态缓存闲置期限（小时）') %}{{ ui.input_control({'id':'bv-idle','type':'number','min':1,'max':8760,'step':1,'value':24}) }}{% endcall %}</div>
+    <div class="module-actions">{{ ui.control_button('应用设置',{'id':'bv-settings','type':'button'},'secondary') }}{{ ui.control_button('清理过期缓存',{'id':'bv-cleanup','type':'button'},'secondary') }}</div><p class="ui-form-note">设置立即生效于新记录；旧记录仍使用原临时目录。暂停中的大文件会保留，请按需手动删除。</p>
+  </details>
+  <section class="ui-tool-card"><h2>最近解析记录</h2><p class="ui-form-note">记录保留所选集、规格、每次任务与保存摘要。删除缓存不会删除你已保存的文件。</p><div id="bv-history" class="bv-list"></div></section>
+</section>
+<script src="{{ url_for('static',filename='bilibili_tools.js') }}" defer></script>
+{% endblock %}

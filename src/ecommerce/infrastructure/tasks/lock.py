@@ -11,6 +11,7 @@ def all_browser_resources(settings):
     """按固定顺序锁定浏览器资源；参数：原始配置；返回：升级期间排除浏览器任务的上下文。"""
     profiles = {settings.for_platform(name).profile_path.resolve() for name in ('qianniu', 'taobao')}
     profiles.add((settings.workspace/'storage/browser_profiles/douyin').resolve())
+    profiles.add((settings.workspace/'storage/browser_profiles/bilibili').resolve())
     with ExitStack() as stack:
         for profile in sorted(profiles, key=lambda path: str(path).casefold()):
             stack.enter_context(shop_lock(profile))

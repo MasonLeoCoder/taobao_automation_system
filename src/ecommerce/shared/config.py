@@ -132,6 +132,7 @@ class Settings:
     active_platform: str = 'qianniu'
     qianniu_session_path: Path | None = None
     qianniu_profile_path: Path | None = None
+    bilibili: dict = field(default_factory=lambda: {'temp_dir': None, 'cache_warn_gib': 20, 'idle_hours': 24})
 
     @property
     def task_database(self):
@@ -251,8 +252,28 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
             or any(type(v) is not int or v<1000 for v in module_timeouts.values())):
         raise ValueError('taobao.module_timeouts 仅支持九个模块，无进展超时须为至少1000的整数毫秒')
     settings=replace(settings,collection_module_timeouts={**settings.collection_module_timeouts,**module_timeouts})
+    settings=replace(settings,bilibili=bilibili_options(values.get('bilibili',{}),root))
     settings.for_platform("taobao")  # 配置冲突在启动前报错，避免混用会话。
     return settings
+
+
+def bilibili_options(values, root):
+    """核对B站缓存设置；参数：配置与相对路径根目录；返回：有效选项。"""
+    if not isinstance(values,dict) or set(values)-{'temp_dir','cache_warn_gib','idle_hours'}:
+        raise ValueError('bilibili仅支持temp_dir、cache_warn_gib、idle_hours')
+    result={'temp_dir':None,'cache_warn_gib':20,'idle_hours':24,**values}
+    if type(result['cache_warn_gib']) not in (int,float) or not math.isfinite(result['cache_warn_gib']) or result['cache_warn_gib']<0:
+        raise ValueError('缓存提醒容量须为不小于0的GiB数，0表示关闭提醒')
+    if type(result['idle_hours']) is not int or not 1<=result['idle_hours']<=8760:
+        raise ValueError('缓存闲置期限须为1至8760的整数小时')
+    if result['temp_dir'] not in (None,''):
+        if not isinstance(result['temp_dir'],str) or len(result['temp_dir'])>1024:
+            raise ValueError('临时目录须为本机路径')
+        path=Path(result['temp_dir']).expanduser()
+        result['temp_dir']=str((root/path).resolve() if not path.is_absolute() else path.resolve())
+    else:
+        result['temp_dir']=None
+    return result
 
 
 def prepare_workspace(settings: Settings) -> None:
