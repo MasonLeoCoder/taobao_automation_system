@@ -1,0 +1,8 @@
+/* 页面只维护布局，控件外观复用公共组件。 */
+.dv-page{display:grid;gap:16px;max-width:1000px;margin:auto;min-width:0}
+.dv-input{display:grid;gap:12px}.dv-input textarea{width:100%;resize:vertical;box-sizing:border-box}
+.dv-page video{display:block;width:100%;max-height:65vh;object-fit:contain;margin:12px auto}
+.dv-page .dv-review{display:flex;flex-direction:row;align-items:center;gap:10px;margin:16px 0}
+.dv-page progress{width:100%}.dv-page #dv-history{display:grid;gap:10px}
+.dv-page #dv-history button{max-width:100%;white-space:normal;text-align:left;overflow-wrap:anywhere}
+.dv-page h2{overflow-wrap:anywhere}.dv-page .module-actions{display:flex;gap:10px;flex-wrap:wrap}

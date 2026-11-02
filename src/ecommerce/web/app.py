@@ -35,6 +35,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(collection_jobs)
     from ecommerce.web.routes.image_tools import image_tools
     app.register_blueprint(image_tools)
+    from ecommerce.modules.video_tools.service import VideoTools
+    from ecommerce.web.routes.video_tools import video_tools
+    app.extensions['video_tools'] = VideoTools(settings)
+    app.register_blueprint(video_tools)
     from ecommerce.web.navigation import current_location,safe_return
     app.add_template_global(current_location)
     app.add_template_global(safe_return)

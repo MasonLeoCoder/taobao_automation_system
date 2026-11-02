@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% import 'form_controls.html' as ui %}
+{% block title %}抖音视频下载{% endblock %}
+{% block breadcrumb %}工具箱 / 抖音视频下载{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='video_tools.css') }}">{% endblock %}
+{% block content %}
+<section class="dv-page" data-douyin>
+  <div><p class="ui-report-eyebrow">工具箱 · 视频工具</p><h1>抖音视频下载</h1><p class="ui-form-note">一次一个视频。先预览核对水印，再选择位置保存。</p>{{ ui.action_link('返回工具箱',url_for('image_tools.index')) }}</div>
+  <div class="ui-tool-card dv-input">
+    {% call ui.field('抖音链接或完整分享文案') %}{{ ui.textarea_control({'id':'dv-input','rows':3,'maxlength':8192,'placeholder':'粘贴视频链接、分享文案或带 modal_id 的链接'}) }}{% endcall %}
+    <div class="module-actions">{{ ui.control_button('解析并准备视频',{'id':'dv-start','type':'button'}) }}{{ ui.control_button('打开抖音登录后重试',{'id':'dv-login','type':'button'},'secondary') }}{{ ui.control_button('取消准备',{'id':'dv-cancel','type':'button','hidden':true},'secondary') }}</div>
+    <p class="ui-form-note">需要登录或验证时，选择登录模式，在弹出的抖音窗口中完成。第一版最大支持1 GiB。</p>
+  </div>
+  <p id="dv-status" class="ui-form-note" role="status" aria-live="polite">请输入链接开始。</p>
+  <progress id="dv-progress" max="100" hidden aria-label="视频下载进度"></progress>
+  <article id="dv-preview" class="ui-tool-card" hidden>
+    <h2 id="dv-title"></h2><p id="dv-meta" class="ui-form-note"></p>
+    <video id="dv-video" controls playsinline preload="metadata" aria-label="待核对视频预览"></video>
+    <p class="ui-form-note">播放来源不会证明原画面无水印。请检查视频中的抖音标志和抖音号；发现水印时请取消保存。</p>
+    <label class="ui-field dv-review">{{ ui.input_control({'type':'checkbox','id':'dv-reviewed'}) }}<span>我已预览，确认画面无抖音水印</span></label>
+    <div class="module-actions">{{ ui.control_button('选择位置并保存',{'id':'dv-save','type':'button','disabled':true}) }}{{ ui.control_button('停止保存',{'id':'dv-stop-save','type':'button','hidden':true},'secondary') }}</div>
+    <p class="ui-form-note">保存失败可重新选择位置，复用已准备的视频。临时视频闲置1小时后过期。</p>
+  </article>
+  <section class="ui-tool-card"><h2>最近准备记录</h2><p class="ui-form-note">刷新后可以找回记录。准备完成表示可以预览；实际保存结果由当前浏览器显示。</p><div id="dv-history"></div></section>
+</section>
+<script src="{{ url_for('static',filename='video_tools.js') }}" defer></script>
+{% endblock %}

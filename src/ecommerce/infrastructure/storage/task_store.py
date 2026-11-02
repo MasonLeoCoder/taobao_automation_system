@@ -59,6 +59,16 @@ class MySQLTaskStore:
         except sa.exc.SQLAlchemyError as error:
             raise MySQLStorageError(safe_error(error)) from None
 
+    def get_task(self, identifier):
+        """精确读取任务；参数：任务编号；返回：任务字典或空值。"""
+        table = self.tables['tasks']
+        try:
+            with self.engine.connect() as connection:
+                row = connection.execute(sa.select(table).where(table.c.id == identifier)).mappings().one_or_none()
+                return dict(row) if row else None
+        except sa.exc.SQLAlchemyError as error:
+            raise MySQLStorageError(safe_error(error)) from None
+
     def task_counts(self):
         """统计正式可见任务；参数：无；返回：状态与数量。"""
         table=self.tables['tasks']

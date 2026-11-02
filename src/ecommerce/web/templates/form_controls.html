@@ -17,6 +17,10 @@
 <select{{ attributes(attrs,'ui-control ui-select') }}>{{ caller() }}</select>
 {%- endmacro %}
 
+{% macro textarea_control(attrs={}) -%}
+<textarea{{ attributes(attrs,'ui-control') }}></textarea>
+{%- endmacro %}
+
 {% macro field(label,attrs={}) -%}
 {%- set previous_label=field_state.label -%}{%- set field_state.label=label -%}
 <label{{ attributes(attrs,'ui-field') }}><span class="ui-label">{{ label }}</span>{{ caller() }}</label>
