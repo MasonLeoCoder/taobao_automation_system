@@ -1,7 +1,7 @@
 """抖音单条输入边界；全部样例均不访问网络。"""
 import unittest
 from ecommerce.platforms.douyin.links import parse_input, video_filename
-from ecommerce.platforms.douyin.video import playback_sources, safe_playback_url
+from ecommerce.platforms.douyin.video import playback_sources, safe_playback_url, video_catalog, asset_url
 
 
 class DouyinLinksTests(unittest.TestCase):
@@ -79,6 +79,25 @@ class DouyinLinksTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             playback_sources({'aweme_id': '7437582846610509092', 'video': {
                 'play_addr': source, 'download_addr': source}}, '7437582846610509092')
+
+    def test_catalog_groups_cdn_copies_and_preserves_missing_counts(self):
+        detail={'aweme_id':'7557891045083909439','video':{'duration':15000},'statistics':{'digg_count':0}}
+        sources=[{'url':'https://v11.douyinvod.com/video/x','width':720,'height':1280,'codec':'H.264','bitrate':800000,'bytes':100},
+                 {'url':'https://v26.douyinvod.com/video/x','width':720,'height':1280,'codec':'H.264','bitrate':800000,'bytes':100},
+                 {'url':'https://v26.douyinvod.com/video/y','width':720,'height':1280,'codec':'H.265','bitrate':400000,'bytes':50}]
+        meta,formats,private=video_catalog(detail,sources)
+        self.assertEqual(len(formats),2);self.assertEqual(formats[0]['codec'],'H.264')
+        self.assertEqual(meta['stats']['likes'],0);self.assertIsNone(meta['stats']['comments'])
+        self.assertEqual(len(private['formats'][formats[0]['id']]['sources']),2)
+        self.assertNotIn('douyinvod.com',str(formats));self.assertFalse(meta['music']['available'])
+
+    def test_asset_domains_and_unknown_source_dimensions(self):
+        for url in ['https://evil.example/file','http://127.0.0.1/audio','https://x.douyinpic.com.evil.example/image']:
+            self.assertFalse(asset_url(url,'image'));self.assertFalse(asset_url(url,'music'))
+        self.assertTrue(asset_url('https://p3.douyinpic.com/image','image'))
+        detail={'aweme_id':'7557891045083909439','video':{'width':1080,'height':1920,'play_addr':{'url_list':['https://v11.douyinvod.com/video/x']}}}
+        sources=playback_sources(detail,'7557891045083909439')
+        self.assertEqual((sources[0]['width'],sources[0]['height']),(0,0))
 
 
 if __name__ == '__main__':

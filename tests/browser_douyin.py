@@ -21,9 +21,14 @@ def check(identifier):
             page=context.new_page();errors=[]
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto('http://127.0.0.1:8000/tools/douyin')
-            expect(page.locator('#dv-preview')).to_be_visible(timeout=20000)
+            expect(page.locator('#dv-result')).to_be_visible(timeout=20000)
+            row=context.request.get('http://127.0.0.1:8000/api/tools/douyin/'+identifier).json()
+            key='video_'+page.locator('#dv-format').input_value()
+            assert row.get('ready') if row.get('legacy') else row.get('resources',{}).get(key,{}).get('ready'), '请先在页面准备默认视频版本'
+            media_url='http://127.0.0.1:8000/api/tools/douyin/'+identifier+('/media' if row.get('legacy') else '/assets/'+key)
+            page.locator('#dv-prepare-video').click()
             page.wait_for_function('()=>document.querySelector("#dv-video").readyState>=2')
-            expected=context.request.get('http://127.0.0.1:8000/api/tools/douyin/'+identifier+'/media')
+            expected=context.request.get(media_url)
             assert expected.ok
             media=expected.body();digest=hashlib.sha256(media).hexdigest()
             expect(page.locator('#dv-save')).to_be_disabled()
@@ -46,8 +51,8 @@ def check(identifier):
             expect(page.locator('#dv-status')).to_contain_text('已保存：模拟另存为.mp4',timeout=20000)
             result=page.evaluate('window.savedResult')
             assert result=={'size':len(media),'sha256':digest},result
-            page.reload();expect(page.locator('#dv-preview')).to_be_visible()
-            expect(page.locator('#dv-status')).to_contain_text('此前已在本浏览器完成保存')
+            page.reload();expect(page.locator('#dv-result')).to_be_visible()
+            expect(page.locator('#dv-saved')).to_contain_text('本浏览器曾完成保存')
             expect(page.locator('#dv-save')).to_be_disabled()
             assert not errors,errors
             return {'result':result,'widths':[1440,390,320],'errors':errors,'native_picker':'模拟文件句柄；原生另存为待人工体验'}

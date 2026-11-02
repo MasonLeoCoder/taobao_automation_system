@@ -55,7 +55,8 @@ def page():
 def jobs():
     """查询历史或派发任务；参数：输入及登录开关；返回：状态JSON。"""
     if request.method=='GET':
-        return jsonify(items=service().recent())
+        items=service().recent()
+        return jsonify(items=items,cache_bytes=service().usage())
     body=request.get_json()
     if not isinstance(body,dict) or set(body)-{'input','interactive'} or not isinstance(body.get('input'),str) or type(body.get('interactive',False)) is not bool:
         abort(400,description='请输入一个抖音链接')
@@ -66,9 +67,18 @@ def jobs():
 def job(identifier):
     """查询或取消任务；参数：缓存编号；返回：状态JSON。"""
     if request.method=='POST':
-        if request.get_json()!={'action':'cancel'}:
-            abort(400,description='取消操作无效')
-        service().cancel(identifier)
+        body=request.get_json()
+        if not isinstance(body,dict):
+            abort(400,description='素材操作无效')
+        if body=={'action':'cancel'}:
+            service().cancel(identifier)
+        elif body=={'action':'delete_cache'}:
+            service().delete_cache(identifier)
+        elif body.get('action')=='prepare' and set(body)<={'action','kind','format_id','output_format'}:
+            key=service().prepare(identifier,body.get('kind'),body.get('format_id'),body.get('output_format','original'))
+            return jsonify(id=identifier,asset_id=key),202
+        else:
+            abort(400,description='素材操作无效')
     return jsonify(service().snapshot(identifier))
 
 
@@ -78,5 +88,32 @@ def media(identifier):
     saving=request.method=='POST'
     if saving and request.get_json()!={'reviewed':True}:
         abort(400,description='请先预览并确认画面无抖音水印')
-    path,name=service().file(identifier)
-    return send_file(path,mimetype='video/mp4',conditional=not saving,as_attachment=saving,download_name=name)
+    path,name,mime=service().file(identifier)
+    return send_file(path,mimetype=mime,conditional=not saving,as_attachment=saving,download_name=name)
+
+
+@video_tools.route('/api/tools/douyin/<identifier>/assets/<key>',methods=['GET','POST'])
+def asset(identifier,key):
+    """预览或导出固定素材；参数：记录、资源编号和视频核对结果；返回：校验后文件流。"""
+    saving=request.method=='POST'
+    row=service().snapshot(identifier)
+    resource=row.get('resources',{}).get(key)
+    if not resource:
+        abort(404,description='该素材尚未准备')
+    if saving:
+        body=request.get_json()
+        if resource['kind']=='video' and body!={'reviewed':True}:
+            abort(400,description='请先预览所选版本并确认无抖音水印')
+        if resource['kind']!='video' and body!={'save':True}:
+            abort(400,description='保存操作无效')
+    path,name,mime=service().file(identifier,key)
+    return send_file(path,mimetype=mime,conditional=not saving,as_attachment=saving,download_name=name)
+
+
+@video_tools.post('/api/tools/douyin/cleanup')
+def cleanup():
+    """清理过期缓存；参数：固定动作；返回：占用字节。"""
+    if request.get_json()!={'action':'cleanup'}:
+        abort(400,description='清理操作无效')
+    service().cleanup()
+    return jsonify(cache_bytes=service().usage())

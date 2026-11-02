@@ -1,27 +1,44 @@
 {% extends 'base.html' %}
 {% import 'form_controls.html' as ui %}
-{% block title %}抖音视频下载{% endblock %}
-{% block breadcrumb %}工具箱 / 抖音视频下载{% endblock %}
+{% block title %}抖音视频素材下载{% endblock %}
+{% block breadcrumb %}工具箱 / 抖音视频素材下载{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='video_tools.css') }}">{% endblock %}
 {% block content %}
 <section class="dv-page" data-douyin>
-  <div><p class="ui-report-eyebrow">工具箱 · 视频工具</p><h1>抖音视频下载</h1><p class="ui-form-note">一次一个视频。先预览核对水印，再选择位置保存。</p>{{ ui.action_link('返回工具箱',url_for('image_tools.index')) }}</div>
+  <div class="dv-heading"><div><p class="ui-report-eyebrow">工具箱 · 视频素材</p><h1>抖音视频素材下载</h1><p class="ui-form-note">解析一个链接，选择视频版本、背景音乐或封面，自选位置保存。</p></div>{{ ui.action_link('返回工具箱',url_for('image_tools.index')) }}</div>
   <div class="ui-tool-card dv-input">
-    {% call ui.field('抖音链接或完整分享文案') %}{{ ui.textarea_control({'id':'dv-input','rows':3,'maxlength':8192,'placeholder':'粘贴视频链接、分享文案或带 modal_id 的链接'}) }}{% endcall %}
-    <div class="module-actions">{{ ui.control_button('解析并准备视频',{'id':'dv-start','type':'button'}) }}{{ ui.control_button('打开抖音登录后重试',{'id':'dv-login','type':'button'},'secondary') }}{{ ui.control_button('取消准备',{'id':'dv-cancel','type':'button','hidden':true},'secondary') }}</div>
-    <p class="ui-form-note">需要登录或验证时，选择登录模式，在弹出的抖音窗口中完成。第一版最大支持1 GiB。</p>
+    {% call ui.field('抖音链接或完整分享文案') %}{{ ui.textarea_control({'id':'dv-input','rows':2,'maxlength':8192,'placeholder':'粘贴视频、精选、搜索或个人页链接，也支持完整分享文案'}) }}{% endcall %}
+    <div class="module-actions">{{ ui.control_button('解析素材',{'id':'dv-start','type':'button'}) }}{{ ui.control_button('登录模式解析',{'id':'dv-login','type':'button'},'secondary') }}{{ ui.control_button('取消任务',{'id':'dv-cancel','type':'button','hidden':true},'secondary') }}</div>
+    <p class="ui-form-note">先解析信息，选好版本后才下载视频。登录模式会打开抖音窗口，由你完成登录或验证。</p>
   </div>
-  <p id="dv-status" class="ui-form-note" role="status" aria-live="polite">请输入链接开始。</p>
-  <progress id="dv-progress" max="100" hidden aria-label="视频下载进度"></progress>
-  <article id="dv-preview" class="ui-tool-card" hidden>
-    <h2 id="dv-title"></h2><p id="dv-meta" class="ui-form-note"></p>
-    <video id="dv-video" controls playsinline preload="metadata" aria-label="待核对视频预览"></video>
-    <p class="ui-form-note">播放来源不会证明原画面无水印。请检查视频中的抖音标志和抖音号；发现水印时请取消保存。</p>
-    <label class="ui-field dv-review">{{ ui.input_control({'type':'checkbox','id':'dv-reviewed'}) }}<span>我已预览，确认画面无抖音水印</span></label>
-    <div class="module-actions">{{ ui.control_button('选择位置并保存',{'id':'dv-save','type':'button','disabled':true}) }}{{ ui.control_button('停止保存',{'id':'dv-stop-save','type':'button','hidden':true},'secondary') }}</div>
-    <p class="ui-form-note">保存失败可重新选择位置，复用已准备的视频。临时视频闲置1小时后过期。</p>
+  <p id="dv-status" class="ui-tool-feedback" role="status" aria-live="polite">请输入链接开始。</p><progress id="dv-progress" max="100" hidden aria-label="素材处理进度"></progress>
+  <article id="dv-result" class="ui-tool-card dv-result" hidden>
+    <button id="dv-thumbnail" class="dv-thumbnail ui-tool-thumbnail" type="button" aria-label="展开视频预览"><img id="dv-cover" alt="视频封面" hidden><span id="dv-cover-empty" class="ui-form-note">封面暂不可用</span><span class="ui-report-state is-ready">视频预览</span></button>
+    <div class="dv-info">
+      <h2 id="dv-title"></h2>{{ ui.control_button('展开标题',{'id':'dv-title-toggle','type':'button','hidden':true,'aria-expanded':'false'},'secondary') }}
+      <div class="dv-author"><img id="dv-avatar" class="ui-tool-avatar" alt="作者头像" hidden><span id="dv-author"></span><span class="ui-form-note">· 抖音</span></div>
+      <p id="dv-stats" class="ui-form-note"></p><p id="dv-meta" class="ui-form-note"></p>
+      <div class="dv-selection">{% call ui.field('视频版本') %}{% call ui.select_control({'id':'dv-format','aria-label':'选择视频版本'}) %}{% endcall %}{% endcall %}</div>
+      <div class="module-actions">{{ ui.control_button('下载视频',{'id':'dv-prepare-video','type':'button'}) }}{{ ui.control_button('背景音乐',{'id':'dv-music','type':'button'},'secondary') }}{{ ui.control_button('封面',{'id':'dv-cover-open','type':'button'},'secondary') }}{{ ui.control_button('提取完整声音',{'id':'dv-audio','type':'button','title':'先准备所选视频，再提取包含讲话和配乐的完整声音'},'secondary') }}</div>
+      <div class="module-actions dv-source-actions">{{ ui.control_button('复制原链接',{'id':'dv-copy-url','type':'button'},'secondary') }}{{ ui.control_button('复制视频编号',{'id':'dv-copy-id','type':'button'},'secondary') }}</div>
+      <details class="dv-more"><summary>发布时间与解析信息</summary><p id="dv-times" class="ui-form-note"></p><p id="dv-id" class="ui-form-note"></p><p id="dv-notes" class="ui-form-note"></p></details>
+      <p class="ui-form-note">完整声音需先准备所选视频。视频保存前仍需预览并确认画面无抖音水印。</p>
+    </div>
   </article>
-  <section class="ui-tool-card"><h2>最近准备记录</h2><p class="ui-form-note">刷新后可以找回记录。准备完成表示可以预览；实际保存结果由当前浏览器显示。</p><div id="dv-history"></div></section>
+  <details id="dv-preview" class="ui-tool-card" hidden>
+    <summary>预览所选版本并核对水印</summary><p id="dv-preview-format" class="ui-form-note"></p><video id="dv-video" controls playsinline preload="metadata" aria-label="所选版本的视频预览" hidden></video>
+    <p class="ui-form-note">请核对所选版本的整段画面。播放来源可能保留已有的抖音标志或抖音号，发现水印时请取消保存。切换版本后需要重新确认。</p>
+    <label class="ui-field dv-review">{{ ui.input_control({'type':'checkbox','id':'dv-reviewed'}) }}<span>我已预览所选版本，确认画面无抖音水印</span></label>
+    <div class="module-actions">{{ ui.control_button('选择位置并保存视频',{'id':'dv-save','type':'button','disabled':true}) }}</div>
+  </details>
+  <section id="dv-extras" class="ui-tool-card" hidden>
+    <h2>音乐与封面</h2>
+    <div id="dv-music-panel" class="dv-extra" hidden><h3>背景音乐</h3><p id="dv-music-title" class="ui-form-note"></p><audio id="dv-music-player" controls preload="none" hidden></audio>{{ ui.control_button('保存背景音乐',{'id':'dv-save-music','type':'button','disabled':true}) }}<p class="ui-form-note">保存平台提供的音乐文件，时长可能与视频不同。</p></div>
+    <div id="dv-cover-panel" class="dv-extra" hidden><h3>视频封面</h3><img id="dv-cover-large" class="ui-tool-thumbnail" alt="封面预览" hidden><div class="module-actions">{% call ui.select_control({'id':'dv-cover-format','aria-label':'封面保存格式'}) %}<option value="original">保持原格式</option><option value="png">PNG</option><option value="jpg">JPG</option>{% endcall %}{{ ui.control_button('保存封面',{'id':'dv-save-cover','type':'button'}) }}</div></div>
+    <div id="dv-audio-panel" class="dv-extra" hidden><h3>视频完整声音</h3><audio id="dv-audio-player" controls preload="none" hidden></audio>{{ ui.control_button('保存完整声音',{'id':'dv-save-audio','type':'button','disabled':true}) }}<p class="ui-form-note">从所选视频提取完整音轨，包含讲话和配乐，保存为M4A。</p></div>
+  </section>
+  <div class="module-actions">{{ ui.control_button('停止保存',{'id':'dv-stop-save','type':'button','hidden':true},'secondary') }}</div><p id="dv-saved" class="ui-form-note" role="status"></p>
+  <section class="ui-tool-card"><div class="dv-history-heading"><h2>最近解析记录</h2><div class="module-actions"><span id="dv-cache" class="ui-form-note"></span>{{ ui.control_button('清理过期缓存',{'id':'dv-cleanup','type':'button'},'secondary') }}</div></div><p class="ui-form-note">解析资料和各类素材分别记录。已准备的文件可再次保存；闲置1小时过期。删除缓存保留历史摘要。</p><div id="dv-history"></div></section>
 </section>
 <script src="{{ url_for('static',filename='video_tools.js') }}" defer></script>
 {% endblock %}
