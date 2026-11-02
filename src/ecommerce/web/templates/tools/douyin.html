@@ -13,23 +13,24 @@
   </div>
   <p id="dv-status" class="ui-tool-feedback" role="status" aria-live="polite">请输入链接开始。</p><progress id="dv-progress" max="100" hidden aria-label="素材处理进度"></progress>
   <article id="dv-result" class="ui-tool-card dv-result" hidden>
-    <button id="dv-thumbnail" class="dv-thumbnail ui-tool-thumbnail" type="button" aria-label="展开视频预览"><img id="dv-cover" alt="视频封面" hidden><span id="dv-cover-empty" class="ui-form-note">封面暂不可用</span><span class="ui-report-state is-ready">视频预览</span></button>
+    <button id="dv-thumbnail" class="dv-thumbnail ui-tool-thumbnail" type="button" aria-label="展开视频预览" data-image-preview-skip><img id="dv-cover" alt="视频封面" hidden><span id="dv-cover-empty" class="ui-form-note">封面暂不可用</span><span class="ui-report-state is-ready">视频预览</span></button>
     <div class="dv-info">
       <h2 id="dv-title"></h2>{{ ui.control_button('展开标题',{'id':'dv-title-toggle','type':'button','hidden':true,'aria-expanded':'false'},'secondary') }}
       <div class="dv-author"><img id="dv-avatar" class="ui-tool-avatar" alt="作者头像" hidden><span id="dv-author"></span><span class="ui-form-note">· 抖音</span></div>
       <p id="dv-stats" class="ui-form-note"></p><p id="dv-meta" class="ui-form-note"></p>
       <div class="dv-selection">{% call ui.field('视频版本') %}{% call ui.select_control({'id':'dv-format','aria-label':'选择视频版本'}) %}{% endcall %}{% endcall %}</div>
-      <div class="module-actions">{{ ui.control_button('下载视频',{'id':'dv-prepare-video','type':'button'}) }}{{ ui.control_button('背景音乐',{'id':'dv-music','type':'button'},'secondary') }}{{ ui.control_button('封面',{'id':'dv-cover-open','type':'button'},'secondary') }}{{ ui.control_button('提取完整声音',{'id':'dv-audio','type':'button','title':'先准备所选视频，再提取包含讲话和配乐的完整声音'},'secondary') }}</div>
+      <div class="module-actions">{{ ui.control_button('准备并预览',{'id':'dv-prepare-video','type':'button'}) }}{{ ui.control_button('背景音乐',{'id':'dv-music','type':'button'},'secondary') }}{{ ui.control_button('封面',{'id':'dv-cover-open','type':'button'},'secondary') }}{{ ui.control_button('提取完整声音',{'id':'dv-audio','type':'button','title':'先准备所选视频，再提取包含讲话和配乐的完整声音'},'secondary') }}</div>
+      <div id="dv-video-preparation" hidden><p class="ui-tool-feedback" role="status">正在准备视频，完成后会展开预览。</p><progress id="dv-video-progress" max="100" aria-label="所选视频准备进度"></progress></div>
       <div class="module-actions dv-source-actions">{{ ui.control_button('复制原链接',{'id':'dv-copy-url','type':'button'},'secondary') }}{{ ui.control_button('复制视频编号',{'id':'dv-copy-id','type':'button'},'secondary') }}</div>
       <details class="dv-more"><summary>发布时间与解析信息</summary><p id="dv-times" class="ui-form-note"></p><p id="dv-id" class="ui-form-note"></p><p id="dv-notes" class="ui-form-note"></p></details>
       <p class="ui-form-note">完整声音需先准备所选视频。视频保存前仍需预览并确认画面无抖音水印。</p>
     </div>
   </article>
   <details id="dv-preview" class="ui-tool-card" hidden>
-    <summary>预览所选版本并核对水印</summary><p id="dv-preview-format" class="ui-form-note"></p><video id="dv-video" controls playsinline preload="metadata" aria-label="所选版本的视频预览" hidden></video>
-    <p class="ui-form-note">请核对所选版本的整段画面。播放来源可能保留已有的抖音标志或抖音号，发现水印时请取消保存。切换版本后需要重新确认。</p>
-    <label class="ui-field dv-review">{{ ui.input_control({'type':'checkbox','id':'dv-reviewed'}) }}<span>我已预览所选版本，确认画面无抖音水印</span></label>
-    <div class="module-actions">{{ ui.control_button('选择位置并保存视频',{'id':'dv-save','type':'button','disabled':true}) }}</div>
+    <summary>检查视频并保存</summary><p id="dv-preview-format" class="ui-form-note"></p><video id="dv-video" controls playsinline preload="metadata" aria-label="所选版本的视频预览" hidden></video>
+    <p class="ui-form-note">请确认画面没有抖音标志或抖音号。</p>
+    <label class="ui-field dv-review">{{ ui.input_control({'type':'checkbox','id':'dv-reviewed'}) }}<span>已确认视频无抖音水印</span></label>
+    <div class="module-actions">{{ ui.control_button('保存到电脑',{'id':'dv-save','type':'button','disabled':true}) }}</div>
   </details>
   <section id="dv-extras" class="ui-tool-card" hidden>
     <h2>音乐与封面</h2>

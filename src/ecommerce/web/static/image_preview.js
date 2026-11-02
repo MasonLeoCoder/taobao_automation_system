@@ -1,4 +1,4 @@
-/* 全站图片在本页预览；保留原件入口、焦点和滚动位置。 */
+/* 全站图片在本页预览；保留原件入口、焦点和滚动位置。独立交互图片用data-image-preview-skip退出。 */
 (() => {
   const viewer = document.getElementById('image-preview');
   if (!viewer) return;
@@ -16,7 +16,7 @@
   galleryControls.append(previous,galleryCount,next,zoom);viewer.insertBefore(galleryControls,document.getElementById('image-preview-hint'));
 
   function enhance(img) {
-    if (viewer.contains(img) || img.dataset.imagePreviewReady) return;
+    if (viewer.contains(img) || img.dataset.imagePreviewReady || img.closest('[data-image-preview-skip]')) return;
     img.dataset.imagePreviewReady = 'true';
     const link = img.closest('a');
     if (link && !link.textContent.trim() && link.querySelectorAll('img').length === 1) {
@@ -130,7 +130,7 @@
   document.addEventListener('click', event => {
     if (!(event.target instanceof Element) || viewer.contains(event.target)) return;
     const img = event.target.closest('img') || event.target.closest('[data-image-preview-trigger]')?.querySelector('img');
-    if (!img) return;
+    if (!img || img.closest('[data-image-preview-skip]')) return;
     event.preventDefault();
     event.stopPropagation();
     open(img);
@@ -138,7 +138,7 @@
   document.addEventListener('keydown', event => {
     if (!['Enter', ' '].includes(event.key) || !(event.target instanceof Element) || viewer.contains(event.target)) return;
     const img = event.target.matches('img') ? event.target : event.target.closest('[data-image-preview-trigger]')?.querySelector('img');
-    if (!img) return;
+    if (!img || img.closest('[data-image-preview-skip]')) return;
     event.preventDefault();
     open(img);
   });

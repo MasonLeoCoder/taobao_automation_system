@@ -34,8 +34,13 @@ with sync_playwright() as p:
     original=page.locator('#dv-format').input_value()
     other=page.locator('#dv-format option').nth(1).get_attribute('value')
     page.locator('#dv-format').select_option(other)
+    if not report['result']['resources'].get('video_'+other,{}).get('ready'):
+        expect(page.locator('#dv-preview')).to_be_hidden()
+        expect(page.locator('#dv-prepare-video')).to_have_text('准备并预览')
     expect(page.locator('#dv-reviewed')).not_to_be_checked();expect(page.locator('#dv-save')).to_be_disabled()
     page.locator('#dv-format').select_option(original)
+    expect(page.locator('#dv-preview')).to_be_visible()
+    expect(page.locator('#dv-prepare-video')).to_have_text('预览并保存')
     page.wait_for_function('()=>document.querySelector("#dv-video").readyState>=2')
     page.locator('#dv-reviewed').check()
     page.evaluate('''() => {window.showSaveFilePicker=async(options)=>({name:options.suggestedName,createWritable:async()=>{const parts=[];return {write:async chunk=>parts.push(chunk),abort:async()=>{window.aborted=true},close:async()=>{const bytes=new Uint8Array(await new Blob(parts).arrayBuffer());window.savedResult={name:options.suggestedName,size:bytes.length,sha256:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(b=>b.toString(16).padStart(2,'0')).join('')};}};}});}''')

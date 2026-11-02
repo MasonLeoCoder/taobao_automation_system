@@ -4,8 +4,9 @@
   const el=id=>document.getElementById('dv-'+id);
   const token=document.querySelector('meta[name="workbench-token"]')?.content||'';
   const storage={get:key=>{try{return localStorage.getItem(key);}catch(_){return null;}},set:(key,value)=>{try{localStorage.setItem(key,value);}catch(_){}}};
-  let row=null,active=null,generation=0,requestBusy=false,saving=false,playable=false,controller=null;
+  let row=null,active=null,generation=0,requestBusy=false,saving=false,playable=false,controller=null,videoRequest=false;
   const busy=()=>row&&['queued','resolving','downloading','waiting'].includes(row.phase);
+  const preparingVideo=()=>videoRequest||!!(busy()&&row.operation?.action==='video'&&row.operation.format_id===selected());
   const selected=()=>el('format').value;
   const videoKey=()=> 'video_'+selected();
   const coverKey=()=>el('cover-format').value==='original'?'cover':'cover_'+el('cover-format').value;
@@ -36,7 +37,11 @@
     for(const id of ['start','login','input','format','cover-format','cleanup'])el(id).disabled=!!locked;
     el('cancel').hidden=!busy();el('cancel').disabled=saving;
     el('prepare-video').disabled=!!locked||(!canPrepare&&!ready(videoKey()));
-    el('prepare-video').textContent=ready(videoKey())?'预览视频':'下载视频';
+    el('prepare-video').textContent=preparingVideo()?'正在准备…':ready(videoKey())?'预览并保存':'准备并预览';
+    el('thumbnail').disabled=el('prepare-video').disabled;
+    el('thumbnail').setAttribute('aria-label',ready(videoKey())?'预览并保存视频':'准备并预览视频');
+    el('video-preparation').hidden=!preparingVideo();
+    if(busy()&&row?.total)el('video-progress').value=row.loaded/row.total*100;else el('video-progress').removeAttribute('value');
     el('music').disabled=!!locked||(!canPrepare&&!ready('music'))||(!row?.items[0]?.music?.available&&!ready('music'));
     el('cover-open').disabled=!!locked||(!canPrepare&&!ready('cover'))||(!row?.items[0]?.cover_available&&!ready('cover'));
     el('audio').disabled=!!locked||!ready(videoKey())||(!canPrepare&&!ready('audio_'+selected()));
@@ -57,11 +62,13 @@
   function titleControl(){el('title-toggle').hidden=!el('title').classList.contains('is-expanded')&&el('title').scrollHeight<=el('title').clientHeight+1;}
   function updateVideo(){
     const key=videoKey(),available=ready(key),source=available?url(key):null;
-    el('preview').hidden=!row?.metadata_ready;el('video').hidden=!available;
-    if(available&&el('video').getAttribute('src')!==source){resetPreview();el('video').src=source;}
+    el('preview').hidden=!available;el('video').hidden=!available;
+    if(!available)el('preview').open=false;
+    if(available&&el('video').getAttribute('src')!==source){resetPreview();el('video').src=source;el('preview').open=true;}
+    else if(available)playable=!el('video').error&&el('video').readyState>=2&&el('video').videoWidth>0;
     if(!available&&el('video').getAttribute('src')){resetPreview();el('video').removeAttribute('src');el('video').load();}
     const format=row?.formats.find(f=>f.id===selected());
-    el('preview-format').textContent=(format?label(format):'')+(available?' · 已准备，待预览确认':' · 尚未准备，请点击“下载视频”');
+    el('preview-format').textContent=available?(format?.width&&format?.height?format.width+'×'+format.height+' · ':'')+size(resource(key).bytes):'';
     for(const [id,asset] of [['music-player','music'],['audio-player','audio_'+selected()]]){
       el(id).hidden=!ready(asset);if(ready(asset)&&el(id).getAttribute('src')!==url(asset))el(id).src=url(asset);
       if(!ready(asset)){el(id).pause();el(id).removeAttribute('src');}
@@ -96,7 +103,7 @@
       el('music-title').textContent=(item.music?.title||'背景音乐')+' · '+duration(item.music?.duration);
       updateVideo();savedRecords();
     }else{el('preview').hidden=true;el('extras').hidden=true;}
-    if(!saving){say(row.message,row.phase==='failed');el('progress').hidden=!busy()||!row.loaded;if(row.total)el('progress').value=row.loaded/row.total*100;else el('progress').removeAttribute('value');}
+    if(!saving){say(row.message,row.phase==='failed');el('progress').hidden=preparingVideo()||!busy()||!row.loaded;if(row.total)el('progress').value=row.loaded/row.total*100;else el('progress').removeAttribute('value');}
     controls();return busy();
   }
   async function load(identifier){
@@ -131,11 +138,11 @@
     try{const result=await api('',{input:el('input').value,interactive});await load(result.id);history();}catch(error){say(error.message,true);}finally{requestBusy=false;controls();}
   }
   async function prepare(kind,output_format='original'){
-    if(!row||requestBusy||saving||busy())return;requestBusy=true;controls();
+    if(!row||requestBusy||saving||busy())return;requestBusy=true;videoRequest=kind==='video';controls();
     try{
       const body={action:'prepare',kind,output_format};if(['video','audio'].includes(kind))body.format_id=selected();
       await api('/'+active,body);const version=++generation;const waiting=display(await api('/'+active));if(waiting)setTimeout(()=>poll(active,version),700);else history();
-    }catch(error){say(error.message,true);}finally{requestBusy=false;controls();}
+    }catch(error){say(error.message,true);}finally{requestBusy=false;videoRequest=false;controls();}
   }
   function panel(kind){el('extras').hidden=false;el(kind+'-panel').hidden=false;}
   async function save(key){
@@ -162,8 +169,8 @@
   el('start').onclick=()=>start(false);el('login').onclick=()=>start(true);
   el('format').onchange=()=>{resetPreview();storage.set('douyin.format.'+row.id,selected());updateVideo();controls();};
   el('reviewed').onchange=controls;el('cover-format').onchange=controls;
-  el('prepare-video').onclick=()=>{el('preview').hidden=false;el('preview').open=true;if(!ready(videoKey()))prepare('video');};
-  el('thumbnail').onclick=()=>{el('preview').open=true;el('preview').scrollIntoView({behavior:'smooth',block:'start'});};
+  function preview(){if(saving||requestBusy||busy())return;if(ready(videoKey())){el('preview').hidden=false;el('preview').open=true;el('preview').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}else prepare('video');}
+  el('prepare-video').onclick=preview;el('thumbnail').onclick=preview;
   el('music').onclick=()=>{panel('music');if(!ready('music'))prepare('music');};
   el('cover-open').onclick=()=>{panel('cover');if(!ready('cover'))prepare('cover');};
   el('audio').onclick=()=>{panel('audio');if(!ready('audio_'+selected()))prepare('audio');};
