@@ -69,6 +69,39 @@ class DeepSeekClient:
         if len(json.dumps(payload,ensure_ascii=False).encode())>16*1024*1024:raise AIError('请求超过本机16MiB网络保护，未发送；这不是模型Token限制。')
         return self._send(payload,key,timeout_seconds,False)
 
+    def complete_images(self, messages, *, max_tokens, capability, timeout_seconds=180):
+        """发送显式视觉消息；原文本入口不变，禁远程URL、重试和重定向。"""
+        import base64
+        key = api_key(self.config)
+        if not key or not key.isascii() or any(c.isspace() for c in key): raise AIError('密钥未配置或格式无效。')
+        if self.model != 'deepseek-flash' or capability.get('model') != self.model or capability.get('provider') != 'deepseek' or capability.get('vision') is not True:
+            raise AIError('当前模型未获准执行图片分析。')
+        if type(max_tokens) is not int or not 1 <= max_tokens <= capability['max_output_tokens']: raise AIError('输出上限无效。')
+        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 600: raise AIError('等待上限无效。')
+        if not isinstance(messages, list) or not messages: raise AIError('图片消息无效。')
+        count = 0
+        for message in messages:
+            if not isinstance(message, dict) or set(message) != {'role','content'} or message['role'] not in ('system','user'): raise AIError('图片消息结构无效。')
+            content = message['content']
+            if isinstance(content,str): continue
+            if message['role'] != 'user' or not isinstance(content,list) or not content: raise AIError('图片只能放在用户消息中。')
+            for part in content:
+                if not isinstance(part,dict): raise AIError('图片内容无效。')
+                if set(part)=={'type','text'} and part['type']=='text' and isinstance(part['text'],str): continue
+                if set(part)!={'type','image_url'} or part['type']!='image_url' or not isinstance(part['image_url'],dict): raise AIError('图片内容结构无效。')
+                image = part['image_url']; uri=image.get('url')
+                if set(image)!={'url','detail'} or image['detail']!='original' or not isinstance(uri,str) or not uri.startswith('data:image/png;base64,'): raise AIError('仅允许已预检本地PNG内联图片。')
+                encoded=uri.split(',',1)[1]
+                if len(encoded)>4*((32*1024*1024+2)//3): raise AIError('单图超过32MiB。')
+                try: raw=base64.b64decode(encoded,validate=True)
+                except ValueError: raise AIError('图片编码无效。') from None
+                if not raw.startswith(b'\x89PNG\r\n\x1a\n') or len(raw)>32*1024*1024: raise AIError('图片格式或大小无效。')
+                count+=1
+        if count>600: raise AIError('单请求图片数超过600张。')
+        payload=dict(model=self.model,messages=messages,thinking={'type':'disabled'},stream=False,max_tokens=max_tokens)
+        if len(json.dumps(payload,ensure_ascii=False).encode())>48*1024*1024: raise AIError('图片请求超过48MiB，未发送。')
+        return self._send(payload,key,timeout_seconds,False)
+
     def _send(self,payload,key,timeout,require_complete):
         """统一单次HTTP发送，无重试；参数：请求体、认证、超时；返回：脱敏响应。"""
         body = json.dumps(payload,ensure_ascii=False).encode()

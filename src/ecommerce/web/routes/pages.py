@@ -385,14 +385,26 @@ def collection_product(product_id):
             try:states=recent(settings,product_id)
             except MySQLStorageError:runtime_error=True
         overview_model=present(build(data,states,runtime_error=runtime_error),product_id)
-    composite_view=None
+    image_source_origin=None
+    if module in ('main_images','detail_images') and request.args.get('return_to'):
+        from ecommerce.web import report_navigation
+        candidate=report_navigation.target(settings,product_id,request.args['return_to'])
+        if candidate[2] and candidate[1] in ('图片分析','图片报告'):
+            image_source_origin=report_navigation.origin(settings,product_id)
+    composite_view=None; image_analysis_view=None
+    analysis_kind=request.args.get('analysis','reviews')
     if module=='composite':
-        from ecommerce.modules.composite_analysis.service import dashboard
-        composite_view=dashboard(settings,product_id)
-    return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,
+        if analysis_kind not in ('reviews','images'):abort(400,description='综合分析类别无效')
+        if analysis_kind=='images':
+            from ecommerce.modules.image_analysis.service import dashboard
+            image_analysis_view=dashboard(settings,product_id)
+        else:
+            from ecommerce.modules.composite_analysis.service import dashboard
+            composite_view=dashboard(settings,product_id)
+    return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,image_analysis_view=image_analysis_view,analysis_kind=analysis_kind,image_source_origin=image_source_origin,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
-        back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
+        back_url=image_source_origin['return_to'] if image_source_origin else safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
         module_summaries=module_summaries(data,display_history,context_run),overview_model=overview_model,overview_filter=overview_filter,basic_batch_view=basic_batch_view,video_view=video_view,image_view=image_view,sku_view=sku_view,parameter_view=parameter_view,**data)
 
 

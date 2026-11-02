@@ -7,7 +7,7 @@ import json
 import sqlalchemy as sa
 
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError,create_mysql_engine,current_revision,connection_status,safe_error
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v20 import REVISION,build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v21 import REVISION,build_metadata
 from ecommerce.infrastructure.storage.time_values import BEIJING,database_time,database_now,iso_value
 
 

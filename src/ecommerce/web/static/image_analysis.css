@@ -1,0 +1,9 @@
+/* 图片分析仅布局，控件外观使用全站公共组件。 */
+.ia-workspace-tabs{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 24px}
+.ia-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:16px}
+.ia-frame-list{display:flex;flex-direction:column;gap:16px;margin-top:16px;max-width:100%}
+.ia-frame-list figure{margin:0;min-width:0}.ia-frame-list img{display:block;max-width:100%;max-height:480px;width:auto;height:auto;object-fit:contain}
+.ia-frame-list figcaption{overflow-wrap:anywhere;margin-top:8px}
+.ia-source-fold{scroll-margin-top:24px}.ia-source-fold .ia-frame-list{max-width:900px;margin-inline:auto}
+.ia-source-fold .ia-frame-list img{max-height:none;width:100%}
+@media(max-width:640px){.ia-preview-grid{grid-template-columns:1fr}.ia-workspace-tabs>*{flex:1;text-align:center}}

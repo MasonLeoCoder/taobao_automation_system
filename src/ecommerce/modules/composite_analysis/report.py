@@ -106,9 +106,9 @@ def render(value):
     return rendered
 
 
-def reading(value):
+def reading(value, renderer=render):
     """拆分顶层章节用于目录与重点卡；参数：报告；返回：只读阅读模型。"""
-    rendered = render(value); parser = Blocks(rendered); parser.feed(rendered); parser.close()
+    rendered = renderer(value); parser = Blocks(rendered); parser.feed(rendered); parser.close()
     starts = {b['start'] for b in parser.blocks if b['tag'] in ('h1', 'h2', 'h3')}
     matches = [m for m in re.finditer(r'<h([123])>(.*?)</h\1>', rendered, re.S) if m.start() in starts]
     sections = []

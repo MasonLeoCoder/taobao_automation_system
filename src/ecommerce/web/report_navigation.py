@@ -31,6 +31,9 @@ def target(settings, product, value):
         return query.get(key, [''])[0]
     if parsed.path == f'/collections/products/{product}' and get('module') == 'composite':
         values = {'product_id': product, 'module': 'composite'}
+        if get('analysis'):
+            if get('analysis') not in ('reviews','images'): return fallback, '综合分析', False
+            values['analysis'] = get('analysis')
         if get('observation'):
             if not re.fullmatch(r'[0-9]{1,19}', get('observation')): return fallback, '综合分析', False
             if int(get('observation')):
@@ -42,7 +45,18 @@ def target(settings, product, value):
             values['observation'] = get('observation')
         if get('return_to'):
             values['return_to'] = safe_return(get('return_to'), '/collections/details')
-        return url_for('pages.collection_product', **values), '综合分析', True
+        return url_for('pages.collection_product', **values), '图片分析' if get('analysis')=='images' else '综合分析', True
+    image_match = re.fullmatch(r'/analysis/images/tasks/([a-f0-9]{32})', parsed.path)
+    if image_match:
+        version=get('version')
+        if version and not re.fullmatch(r'[1-9][0-9]{0,8}',version): return fallback,'图片分析',False
+        with repository.connection(settings) as (conn,tables):
+            p,t,r=(tables[n] for n in ('products','analysis_tasks','analysis_reports'))
+            exists=conn.scalar(sa.select(t.c.id).join(p,t.c.product_id==p.c.id).where(t.c.id==image_match[1],
+                t.c.analysis_type=='images',p.c.platform=='taobao',p.c.platform_product_id==product))
+            if not exists or version and not conn.scalar(sa.select(r.c.id).where(r.c.analysis_id==image_match[1],r.c.version==int(version))):
+                return fallback,'图片分析',False
+        return url_for('image_analysis.result',task_id=image_match[1],version=version or None),'图片报告',True
     match = re.fullmatch(r'/analysis/composite/tasks/([a-f0-9]{32})', parsed.path)
     if match:
         version = get('version')
