@@ -43,7 +43,7 @@ class CheckedRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def download(sources, target, *, identity, allowed, checkpoint, progress, referer,
-             reserve=256 * 1024 ** 2, max_bytes=None, opener=None):
+             reserve=256 * 1024 ** 2, max_bytes=None, opener=None, request_headers=None, request_timeout=20):
     """校验后下载或续传；参数：候选源、固定身份和回调；返回：文件大小与摘要。"""
     opener = opener or urllib.request.build_opener(CheckedRedirect(allowed))
     state_path = target.with_suffix(target.suffix + '.json')
@@ -66,6 +66,8 @@ def download(sources, target, *, identity, allowed, checkpoint, progress, refere
         # 相同URL不能证明实体未变；没有HTTP实体校验值时重新下载，弱ETag不用于If-Range。
         resume = bool(offset and validator and state.get('identity') == identity)
         headers = {'User-Agent': 'Mozilla/5.0', 'Referer': referer, 'Accept-Encoding': 'identity'}
+        if request_headers:
+            headers.update({k: v for k, v in request_headers.items() if k.lower() in {'user-agent', 'referer', 'origin', 'accept-language'}})
         if resume:
             headers['Range'] = f'bytes={offset}-'
             if validator:
@@ -76,7 +78,7 @@ def download(sources, target, *, identity, allowed, checkpoint, progress, refere
             progress(0, 0, 0, '来源已刷新，不能确认旧分段属于相同文件，正在重新下载')
         try:
             request = urllib.request.Request(source, headers=headers)
-            with opener.open(request, timeout=20) as response:
+            with opener.open(request, timeout=request_timeout) as response:
                 if not allowed(response.url):
                     raise ValueError('最终资源地址未通过来源校验')
                 status = response.status

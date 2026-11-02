@@ -60,14 +60,17 @@ def inspect_media(path, checkpoint, *, duration, video=False, audio=False):
     return actual
 
 
-def merge(video, audio, target, checkpoint, duration, progress=None):
+def merge(video, audio, target, checkpoint, duration, progress=None, *, container='mp4'):
     """复制编码合并音画；参数：已完整轨道、输出和回调；返回：无。"""
     args = ['-i', str(video)]
     if audio:
         args += ['-i', str(audio), '-map', '0:v:0', '-map', '1:a:0']
     else:
         args += ['-map', '0:v:0', '-map', '0:a:0']
-    run_ffmpeg([*args, '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', str(target)], target.parent, checkpoint, progress=progress)
+    if container not in {'mp4', 'webm', 'matroska'}:
+        raise ValueError('媒体封装格式不支持')
+    extra = ['-movflags', '+faststart'] if container == 'mp4' else []
+    run_ffmpeg([*args, '-c', 'copy', *extra, '-f', container, str(target)], target.parent, checkpoint, progress=progress)
     inspect_media(target, checkpoint, duration=duration, video=True, audio=True)
 
 

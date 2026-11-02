@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% import 'form_controls.html' as ui %}
+{% block title %}YouTube 视频下载{% endblock %}
+{% block breadcrumb %}工具箱 / YouTube 视频下载{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='youtube_tools.css') }}">{% endblock %}
+{% block content %}
+<section class="yt-page" data-youtube>
+  <div class="yt-heading"><div><p class="ui-report-eyebrow">工具箱 · 视频素材</p><h1>YouTube 视频下载</h1><p class="ui-form-note">只下载当前视频。选择画质和音轨，预览后自选位置保存。</p></div>{{ ui.action_link('返回工具箱',url_for('image_tools.index')) }}</div>
+  <div class="ui-tool-card yt-input">
+    {% call ui.field('YouTube视频链接或分享文案') %}{{ ui.textarea_control({'id':'yt-input','rows':2,'maxlength':8192,'placeholder':'支持watch、youtu.be、Shorts及可用的直播回放链接'}) }}{% endcall %}
+    <div class="module-actions">{{ ui.control_button('解析当前视频',{'id':'yt-start','type':'button'}) }}{{ ui.control_button('登录模式解析',{'id':'yt-login','type':'button'},'secondary') }}</div>
+    <p class="ui-form-note">先读取资料和实际画质，不预先下载视频。链接里的列表和起始时间会被忽略，始终处理当前完整视频。</p>
+  </div>
+  <p id="yt-status" class="ui-tool-feedback" role="status" aria-live="polite">请输入视频链接开始。</p>
+  <article id="yt-result" class="ui-tool-card yt-result" hidden>
+    <div class="yt-cover"><img id="yt-cover" class="ui-tool-thumbnail" alt="视频封面" hidden><span id="yt-cover-empty" class="ui-form-note">封面暂不可用</span></div>
+    <div class="yt-info"><h2 id="yt-title"></h2><p id="yt-author"></p><p id="yt-meta" class="ui-form-note"></p><p id="yt-times" class="ui-form-note"></p>
+      {% call ui.field('选择画质') %}{% call ui.select_control({'id':'yt-format'}) %}{% endcall %}{% endcall %}
+      <p id="yt-size" class="ui-form-note"></p>
+      <details><summary>音轨语言与音质</summary>
+        {% call ui.field('音轨语言') %}{% call ui.select_control({'id':'yt-language'}) %}{% endcall %}{% endcall %}
+        {% call ui.field('音频版本') %}{% call ui.select_control({'id':'yt-audio-format'}) %}{% endcall %}{% endcall %}
+        <p id="yt-spec" class="ui-form-note"></p>
+      </details>
+      <div class="module-actions">{{ ui.control_button('准备并预览所选画质',{'id':'yt-prepare','type':'button'}) }}{{ ui.control_button('准备完整声音',{'id':'yt-audio','type':'button'},'secondary') }}</div>
+      <div class="module-actions">{% call ui.select_control({'id':'yt-cover-format','aria-label':'封面格式'}) %}<option value="original">封面原格式</option><option value="png">封面 PNG</option><option value="jpg">封面 JPG</option>{% endcall %}{{ ui.control_button('准备封面',{'id':'yt-cover-prepare','type':'button'},'secondary') }}{{ ui.control_button('复制视频链接',{'id':'yt-copy','type':'button'},'secondary') }}</div>
+      <p class="ui-form-note">只显示当前可用规格；不自动降画质或更换语言。视频合并保留原编码，封装格式按所选组合确定。</p>
+    </div>
+  </article>
+  <section id="yt-work" class="ui-tool-card" hidden><h2>下载与处理进度</h2><p id="yt-progress-note" class="ui-form-note"></p><progress id="yt-progress" max="100" aria-label="当前资源处理进度"></progress><div class="module-actions">{{ ui.control_button('暂停',{'id':'yt-pause','type':'button'},'secondary') }}{{ ui.control_button('继续 / 重试',{'id':'yt-resume','type':'button'},'secondary') }}{{ ui.control_button('取消并清除未完成分段',{'id':'yt-cancel','type':'button'},'secondary') }}</div></section>
+  <section id="yt-output" class="ui-tool-card" hidden><h2>预览并保存</h2>
+    {% call ui.field('已准备的素材') %}{% call ui.select_control({'id':'yt-asset'}) %}{% endcall %}{% endcall %}
+    <video id="yt-video" controls playsinline preload="metadata" aria-label="所选版本视频预览" hidden></video><audio id="yt-audio-player" controls preload="metadata" hidden></audio><img id="yt-image" class="ui-tool-thumbnail" alt="封面预览" hidden>
+    <p id="yt-preview-note" class="ui-form-note"></p><label class="ui-field yt-review">{{ ui.input_control({'type':'checkbox','id':'yt-reviewed'}) }}<span>已核对所选视频的画面、声音与规格</span></label>
+    <div class="module-actions">{{ ui.control_button('选择位置并保存',{'id':'yt-save','type':'button','disabled':true}) }}{{ ui.control_button('停止保存',{'id':'yt-stop-save','type':'button','hidden':true},'secondary') }}</div><p id="yt-saved" class="ui-form-note" role="status"></p>
+  </section>
+  <details class="ui-tool-card"><summary>磁盘、网络与高级设置</summary><p id="yt-disk" class="ui-form-note"></p>
+    <p class="ui-form-note">视频不限大小，缓存容量只提醒。暂停和失败待恢复的文件不会自动清理，保存到电脑的文件不受缓存清理影响。</p>
+    <div class="yt-settings">
+      {% call ui.field('临时目录（留空使用项目默认目录）') %}{{ ui.input_control({'id':'yt-temp-dir','type':'text','maxlength':1024,'placeholder':'例如 D:/VideoTemp'}) }}{% endcall %}
+      {% call ui.field('缓存提醒容量（GiB，0关闭提醒）') %}{{ ui.input_control({'id':'yt-cache-warn','type':'number','min':0,'step':1,'value':20}) }}{% endcall %}
+      {% call ui.field('终态缓存闲置期限（小时）') %}{{ ui.input_control({'id':'yt-idle','type':'number','min':1,'max':8760,'value':24}) }}{% endcall %}
+      {% call ui.field('YouTube独立HTTP代理（留空沿用本机网络）') %}{{ ui.input_control({'id':'yt-proxy','type':'text','maxlength':1024,'placeholder':'例如 http://127.0.0.1:7890'}) }}{% endcall %}
+      {% call ui.field('解析运行环境路径（留空自动检测）') %}{{ ui.input_control({'id':'yt-runtime','type':'text','maxlength':1024,'placeholder':'Deno或Node的本机程序路径'}) }}{% endcall %}
+    </div>
+    <div class="module-actions">{{ ui.control_button('应用设置',{'id':'yt-settings','type':'button'},'secondary') }}{{ ui.control_button('清理过期缓存',{'id':'yt-cleanup','type':'button'},'secondary') }}</div><p class="ui-form-note">设置立即生效；已有记录的临时文件保持原位置。需要登录时，由你在独立窗口完成人工登录或验证。</p>
+  </details>
+  <section class="ui-tool-card"><h2>最近解析记录</h2><p class="ui-form-note">保留实际规格、任务日志和本浏览器保存摘要。删除缓存后可重新解析和准备。</p><div id="yt-history" class="yt-list"></div></section>
+</section><script src="{{ url_for('static',filename='youtube_tools.js') }}" defer></script>
+{% endblock %}

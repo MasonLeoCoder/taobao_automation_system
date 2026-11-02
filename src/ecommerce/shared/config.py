@@ -133,6 +133,7 @@ class Settings:
     qianniu_session_path: Path | None = None
     qianniu_profile_path: Path | None = None
     bilibili: dict = field(default_factory=lambda: {'temp_dir': None, 'cache_warn_gib': 20, 'idle_hours': 24})
+    youtube: dict = field(default_factory=lambda: {'temp_dir': None, 'cache_warn_gib': 20, 'idle_hours': 24, 'proxy': '', 'js_runtime': ''})
 
     @property
     def task_database(self):
@@ -253,6 +254,7 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
         raise ValueError('taobao.module_timeouts 仅支持九个模块，无进展超时须为至少1000的整数毫秒')
     settings=replace(settings,collection_module_timeouts={**settings.collection_module_timeouts,**module_timeouts})
     settings=replace(settings,bilibili=bilibili_options(values.get('bilibili',{}),root))
+    settings=replace(settings,youtube=youtube_options(values.get('youtube',{}),root))
     settings.for_platform("taobao")  # 配置冲突在启动前报错，避免混用会话。
     return settings
 
@@ -273,6 +275,25 @@ def bilibili_options(values, root):
         result['temp_dir']=str((root/path).resolve() if not path.is_absolute() else path.resolve())
     else:
         result['temp_dir']=None
+    return result
+
+
+def youtube_options(values, root):
+    """核对YouTube缓存与独立网络选项；参数：字典、项目根；返回：无凭据选项。"""
+    from urllib.parse import urlsplit
+    if not isinstance(values, dict) or set(values) - {'temp_dir', 'cache_warn_gib', 'idle_hours', 'proxy', 'js_runtime'}:
+        raise ValueError('youtube配置项无效')
+    cache = bilibili_options({k: v for k, v in values.items() if k in {'temp_dir', 'cache_warn_gib', 'idle_hours'}}, root)
+    result = {**cache, 'proxy': values.get('proxy', ''), 'js_runtime': values.get('js_runtime', '')}
+    if any(not isinstance(result[k], str) or len(result[k]) > 1024 for k in ('proxy', 'js_runtime')):
+        raise ValueError('YouTube代理与运行环境须为文本')
+    if result['proxy']:
+        try:
+            p = urlsplit(result['proxy'])
+            if p.scheme not in {'http', 'https'} or not p.hostname or not p.port or p.username or p.password or p.path not in ('', '/') or p.query or p.fragment:
+                raise ValueError()
+        except ValueError:
+            raise ValueError('代理请填写不含账号密码的HTTP/HTTPS地址及端口，例如http://127.0.0.1:7890') from None
     return result
 
 

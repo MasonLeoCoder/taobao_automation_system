@@ -20,5 +20,10 @@
     <h2>B站视频下载</h2><p class="ui-form-note">普通视频、分P与合集，选择单集或全部，预览后自选位置保存。</p>
     <div class="module-actions"><a class="ui-button ui-primary" href="{{ url_for('bilibili_tools.page') }}">打开工具 →</a></div>
   </article>
+  <article class="ui-tool-card">
+    <span class="ui-tool-icon" aria-hidden="true">▷</span><p class="ui-report-eyebrow">视频工具</p>
+    <h2>YouTube 视频下载</h2><p class="ui-form-note">当前视频、画质与音轨可选，支持预览、续传和自选位置保存。</p>
+    <div class="module-actions"><a class="ui-button ui-primary" href="{{ url_for('youtube_tools.page') }}">打开工具 →</a></div>
+  </article>
 </section>
 {% endblock %}

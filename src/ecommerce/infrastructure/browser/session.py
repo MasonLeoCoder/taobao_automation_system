@@ -119,11 +119,13 @@ def _file_error_code(error):
 
 
 @contextmanager
-def browser_session(settings: Settings, *, restore_state: bool = True, channel: str | None = None):
+def browser_session(settings: Settings, *, restore_state: bool = True, channel: str | None = None, proxy: dict | None = None):
     """为任务复用浏览器；restore_state 控制是否注入导出的状态文件。"""
     from playwright.sync_api import sync_playwright
     settings.profile_path.mkdir(parents=True, exist_ok=True)
     launch_options = {"channel": channel} if channel is not None else {}
+    if proxy is not None:
+        launch_options['proxy'] = proxy
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             str(settings.profile_path), headless=settings.headless,
