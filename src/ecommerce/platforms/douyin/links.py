@@ -36,12 +36,13 @@ def parse_input(value: str) -> VideoInput:
             raise ValueError('抖音分享短链接格式无效')
         return VideoInput('https://v.douyin.com/' + parts.path.strip('/') + '/', None)
     match = re.fullmatch(r'/(?:share/)?video/(\d{10,25})/?', parts.path)
-    modal = parse_qs(parts.query).get('modal_id', [])
+    modal = parse_qs(parts.query, keep_blank_values=True).get('modal_id', [])
     if modal and (len(modal) != 1 or not re.fullmatch(r'\d{10,25}', modal[0])):
         raise ValueError('视频编号格式无效')
     if match and modal and match[1] != modal[0]:
         raise ValueError('链接中的视频编号不一致，请重新复制')
-    identifier = match[1] if match else modal[0] if modal and parts.path.startswith('/user/') else None
+    # 精选、推荐、搜索和个人页都可能通过modal_id打开视频，主站路径不决定视频身份。
+    identifier = match[1] if match else modal[0] if modal and host in {'douyin.com', 'www.douyin.com'} else None
     if not identifier:
         raise ValueError('链接中没有具体视频，请打开视频后复制链接')
     return VideoInput('https://www.douyin.com/video/' + identifier, identifier)

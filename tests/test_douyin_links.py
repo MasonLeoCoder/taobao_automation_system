@@ -15,6 +15,14 @@ class DouyinLinksTests(unittest.TestCase):
         self.assertIsNone(result.video_id)
         self.assertEqual(result.url, 'https://v.douyin.com/AbCd123/')
 
+    def test_main_site_modal_is_independent_of_page_path(self):
+        for host in ('www.douyin.com', 'douyin.com'):
+            for path in ('/jingxuan', '/', '/search/武术', '/user/self'):
+                with self.subTest(host=host, path=path):
+                    result = parse_input(f'https://{host}{path}?modal_id=7689478797011550547')
+                    self.assertEqual(result.video_id, '7689478797011550547')
+                    self.assertEqual(result.url, 'https://www.douyin.com/video/7689478797011550547')
+
     def test_direct(self):
         self.assertEqual(parse_input('https://www.douyin.com/video/7437582846610509092?x=1').video_id, '7437582846610509092')
 
@@ -32,6 +40,8 @@ class DouyinLinksTests(unittest.TestCase):
                       'https://www.douyin.com:8443/video/7437582846610509092',
                       'https://www.douyin.com/user/self', 'https://v.douyin.com/a/b/',
                       'https://www.douyin.com/user/self?modal_id=abc',
+                      'https://www.douyin.com/jingxuan?modal_id=',
+                      'https://www.douyin.com/jingxuan?modal_id=&modal_id=7689478797011550547',
                       'https://www.douyin.com/user/self?modal_id=7437582846610509092&modal_id=7437582846610509092']:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 parse_input(value)
