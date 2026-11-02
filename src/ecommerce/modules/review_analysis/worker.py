@@ -20,7 +20,7 @@ def run(settings, task_id):
         if data['task']['status'] != 'queued':
             return 0
         kind=data['task']['analysis_type']
-        label='问答分析' if kind=='questions' else '评价分析'
+        label='综合选品分析' if kind=='composite' else '问答分析' if kind=='questions' else '评价分析'
         events = TaskEvents(settings, settings.task_database, 'analysis.'+kind)
         # 浏览器任务恢复不应接管独立AI进程。
         events.owner['execution_key'] = fingerprint({'analysis_id': task_id, 'root': str(settings.root), 'database': settings.mysql.database})

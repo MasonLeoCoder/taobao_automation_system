@@ -163,6 +163,7 @@ def read(settings, task_id):
     """读取结果并派生进程存活提示；参数：配置和编号；返回：完整持久数据，不调用AI。"""
     data = repository.read(settings, identifier(task_id))
     task = data['task']
+    if task['analysis_type']=='composite':raise LookupError('请从综合分析入口读取该记录。')
     owner = task.get('owner') or {}
     task['owner_alive'] = owner_alive(owner.get('pid'), owner.get('started_at')) if owner else False
     task['appears_interrupted'] = task['status'] in {'queued', 'running'} and task['owner_alive'] is False
@@ -446,6 +447,9 @@ def execute(settings, task_id, events):
     """执行一次恢复轮次；参数：任务和通用日志会话；返回：终态，不自动重试。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version']=='composite-v1':
+        from ecommerce.modules.composite_analysis.runtime import execute as execute_composite
+        return execute_composite(settings,task_id,events,create_client)
     if task['rule_version']=='questions-v1':
         from ecommerce.modules.question_analysis.runtime import execute as execute_questions
         return execute_questions(settings,task_id,events,create_client)

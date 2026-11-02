@@ -41,5 +41,6 @@
   <a class="{{ 'selected' if module==code or (module=='basic_info' and code=='basic') }}" {% if module==code or (module=='basic_info' and code=='basic') %}aria-current="page"{% endif %} href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module=code,observation=request.args.get('observation','0'),return_to=back_url) }}" {% if entry %}title="{{ entry.status }}{% if entry.valid %} · 批次 {{ entry.valid.id }} · {{ entry.valid.captured_at|full_local_time }}{% endif %}；数量为已保存记录，不代表平台全量或文件可用性"{% endif %}>
     {{ '商品评价' if code=='reviews' else label }}{% if entry %}<span class="ui-module-count">{{ '无内容' if entry.status=='已确认无内容' else entry.count if entry.count is not none else '异常' if entry.status=='采集异常' else '无入口' if entry.status=='已确认无入口' else '未采' if entry.status=='尚未采集' else '待补' }}</span>{% endif %}
   </a>
+{% if code=='questions' %}<a class="{{ 'selected' if module=='composite' }}" {% if module=='composite' %}aria-current="page"{% endif %} href="{{ url_for('pages.collection_product',product_id=product.platform_product_id,module='composite',return_to=back_url) }}">综合分析</a>{% endif %}
 {% endfor %}
 </nav>

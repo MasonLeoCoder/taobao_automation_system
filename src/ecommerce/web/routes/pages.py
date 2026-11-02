@@ -288,18 +288,19 @@ def collection_product(product_id):
         if module!='overview':raise
         settings=current_app.config['SETTINGS']
         return render_template('collection_overview_error.html',active='collections',shop_name=settings.shop_name,product_id=product_id),503
-    allowed={'overview','basic','history','sources','basic_info','main_images','video','skus','parameters','detail_images','review_summary','reviews','questions'}
+    allowed={'overview','basic','history','sources','basic_info','main_images','video','skus','parameters','detail_images','review_summary','reviews','questions','composite'}
     if module not in allowed:
         abort(400,description='商品模块无效')
     selected=None
     batch_id=integer_arg('batch')
+    if module=='composite' and batch_id:abort(400,description='综合分析使用固定报告版本，请在分析设置中选择来源报告')
     if module=='overview' and batch_id:abort(400,description='采集概况不按历史批次筛选，请进入资料模块查看批次')
     if batch_id:
         selected=next((row for row in data['history'] if row['id']==batch_id and row['product_id']==data['product']['id']),None)
         if selected is None:
             abort(404,description='该批次不属于此商品')
         module=selected['module']
-    elif module not in {'overview','basic','history'}:
+    elif module not in {'overview','basic','history','composite'}:
         context_run=(data['source_context'] or {}).get('context_run',{}).get('id')
         candidates=[row for row in data['history'] if row['module']==module and (
             row['run_id']==context_run if context_run else row['id'] in data['current_ids'])]
@@ -384,7 +385,11 @@ def collection_product(product_id):
             try:states=recent(settings,product_id)
             except MySQLStorageError:runtime_error=True
         overview_model=present(build(data,states,runtime_error=runtime_error),product_id)
-    return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,
+    composite_view=None
+    if module=='composite':
+        from ecommerce.modules.composite_analysis.service import dashboard
+        composite_view=dashboard(settings,product_id)
+    return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),

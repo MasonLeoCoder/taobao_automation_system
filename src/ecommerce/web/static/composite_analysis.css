@@ -1,0 +1,21 @@
+/* 综合分析只负责布局，控件与状态外观统一使用公共组件。 */
+.ca-panel,.ca-reading{display:grid;gap:24px;min-width:0}
+.ca-heading,.ca-latest{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.ca-heading h2,.ca-heading h3,.ca-heading p{margin-top:0}
+.ca-source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;min-width:0}
+.ca-source-grid>*{min-width:0;overflow-wrap:anywhere}
+.ca-history table{min-width:820px}
+.ca-history td{max-width:280px;overflow-wrap:anywhere}
+.ca-history td small{display:block}
+.ca-new{max-width:1100px;margin:auto}
+.ca-reading{max-width:1460px;margin:auto}
+.ca-reading-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px;align-items:start}
+.ca-directory{position:sticky;top:24px;max-height:85vh;overflow:auto}
+.ca-directory nav{display:grid;gap:12px}
+.ca-paper{min-width:0;overflow-wrap:anywhere}
+.ca-chapter{scroll-margin-top:24px;margin-bottom:36px}
+.ca-metrics{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+.ca-reading pre,.ca-panel pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.ca-reading details{scroll-margin-top:20px}
+@media(max-width:1000px){.ca-reading-layout{grid-template-columns:minmax(0,1fr)}.ca-directory{position:static;max-height:none}}
+@media(max-width:700px){.ca-source-grid{grid-template-columns:minmax(0,1fr)}.ca-panel,.ca-reading{gap:18px}.ca-heading,.ca-latest{align-items:flex-start;gap:12px}.ca-heading>.ui-button{width:100%}.ca-metrics{gap:12px}.ca-paper{padding:18px}}

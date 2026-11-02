@@ -8,6 +8,7 @@
 {% block extra_head %}{% if module=='parameters' %}<link rel="stylesheet" href="{{ url_for('static',filename='parameter_page.css') }}">{% endif %}<link rel="stylesheet" href="{{ url_for('static',filename='module_update.css') }}"><link rel="stylesheet" href="{{ url_for('static',filename='product_detail.css') }}">{% if module in ['main_images','detail_images'] %}<link rel="stylesheet" href="{{ url_for('static',filename='image_tools.css') }}">{% elif module=='skus' %}<link rel="stylesheet" href="{{ url_for('static',filename='sku_page.css') }}">{% endif %}{% endblock %}
 {% block extra_scripts %}<script src="{{ url_for('static',filename='module_update.js') }}" defer></script><script src="{{ url_for('static',filename='product_detail.js') }}" defer></script>{% if module=='overview' %}<script src="{{ url_for('static',filename='collection_overview.js') }}" defer></script>{% elif module in ['basic_info','video','main_images','skus','parameters','detail_images'] %}<script src="{{ url_for('static',filename='basic_batch.js') }}" defer></script>{% endif %}{% if module in ['main_images','detail_images'] %}<script src="{{ url_for('static',filename='image_tools.js') }}" defer></script>{% elif module=='skus' %}<script src="{{ url_for('static',filename='sku_page.js') }}" defer></script>{% endif %}{% endblock %}
 {% block content %}
+{% if module=='composite' %}<link rel="stylesheet" href="{{ url_for('static',filename='composite_analysis.css') }}"><script src="{{ url_for('static',filename='composite_analysis.js') }}" defer></script>{% endif %}
 <p class="back-link"><a class="button action-button action-neutral" href="{{ back_url }}">← 返回上一列表</a></p>
 {% include 'product_header.html' %}
 {% if module=='basic' %}
@@ -30,6 +31,8 @@
 {% include 'product_reviews.html' %}
 {% elif module=='questions' %}
 {% include 'product_questions.html' %}
+{% elif module=='composite' %}
+{% include 'composite_analysis_panel.html' %}
 {% elif module=='sources' %}
 <div class="section-heading"><h2>关联搜索列表</h2><p>仅表示同一商品出现过；具体采集入口以明确关联为准。</p></div>
 <div class="table-wrap"><table><thead><tr>{{ sort_header('captured_at','列表采集时间',sources.sort_spec) }}{{ sort_header('keyword','搜索词',sources.sort_spec) }}{{ sort_header('position','页码 / 位置',sources.sort_spec) }}<th>当时标题 / 价格</th><th>查看</th></tr></thead><tbody>{% for item in sources.sources %}<tr><td>{{ item.captured_at|full_local_time }}</td><td>{{ item.search_keyword or '未记录' }}</td><td>第 {{ item.page_number or '未知' }} 页 / 位置 {{ item.slot_index }}</td><td>{{ item.title }}<small>{{ item.price_text or '未确认价格' }}</small></td><td><a class="button action-button action-primary" href="{{ url_for('pages.collection_search',task_id=item.task_id,batch=item.batch_id,page=item.list_page,return_to=current_location(),_anchor='observation-'~item.id) if item.task_id else url_for('pages.collection_batch',batch_id=item.batch_id,page=item.list_page,return_to=current_location(),_anchor='observation-'~item.id) }}">查看当次列表 →</a></td></tr>{% else %}<tr><td colspan="5" class="empty-row">没有已保存的搜索列表观察。详情仍独立保留；未记录的来源不作推断。</td></tr>{% endfor %}</tbody></table></div>{{ pager(sources) }}
