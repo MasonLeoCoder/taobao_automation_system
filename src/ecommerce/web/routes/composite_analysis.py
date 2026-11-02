@@ -4,6 +4,7 @@ from flask import Blueprint, request, render_template, current_app, jsonify, Res
 from ecommerce.web.routes.review_analysis import protect, payload
 from ecommerce.modules.composite_analysis import service, report, runtime
 from ecommerce.shared.exceptions import TaskBusy
+from ecommerce.web import report_navigation
 
 composite_analysis = Blueprint('composite_analysis', __name__)
 composite_analysis.before_request(protect)
@@ -39,8 +40,35 @@ def new(product):
     raw = request.args.get('output_tokens')
     output = int(raw) if raw else None
     data = service.preview(settings(), product, request.args.get('review_report'), request.args.get('question_report'), request.args.get('model'), output)
+    default_return = url_for('.new', product=product, review_report=data['review_report'], question_report=data['question_report'],
+        model=data['model'], output_tokens=data['plan']['report_output_tokens'])
+    candidate = report_navigation.target(settings(), product, request.args['origin']) if request.args.get('origin') else None
+    source_return = candidate[0] if candidate and candidate[1] != '综合分析设置' else default_return
     return render_template('composite_analysis_form.html' if request.args.get('dialog') == '1' else 'composite_analysis_new.html',
-        data=data, product=product, active='collections', shop_name=settings().shop_name)
+        data=data, product=product, source_return=source_return, active='collections', shop_name=settings().shop_name)
+
+
+@composite_analysis.get('/analysis/composite/products/<product>/return')
+def source_return(product):
+    """点击返回时重新核验原页面，失效回综合页，仅读取、不恢复任务。"""
+    service.product_id(product)
+    destination, _, valid = report_navigation.target(settings(), product, request.args.get('target'))
+    if valid and '/new' in destination:
+        # 来源在离开期间可能被移除或模型设置失效，避免跳到无法渲染的设置页。
+        from urllib.parse import urlsplit, parse_qs
+        values = {k: v[0] for k, v in parse_qs(urlsplit(destination).query).items()}
+        try:
+            service.preview(settings(), product, values.get('review_report'), values.get('question_report'), values.get('model'),
+                int(values['output_tokens']) if values.get('output_tokens') else None)
+        except (ValueError, LookupError):
+            destination = url_for('pages.collection_product', product_id=product, module='composite'); valid = False
+    from urllib.parse import urlencode
+    import re
+    state = request.args.get('state', '')
+    values = {'_report_back': state} if valid and re.fullmatch(r'[a-f0-9]{32}', state) else {}
+    if not valid: values['_report_return_notice'] = '1'
+    if values: destination += ('&' if '?' in destination else '?')+urlencode(values)
+    return redirect(destination)
 
 
 @composite_analysis.post('/api/analysis/composite/products/<product>')

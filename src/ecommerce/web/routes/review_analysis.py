@@ -134,7 +134,9 @@ def result(task_id):
         if request.args.get('version'):
             try:data=v6_view.enrich(settings(),data,int(request.args['version']))
             except ValueError:raise ValueError('报告版本无效。') from None
-        return render_template('review_analysis_v6.html',active='collections',shop_name=settings().shop_name,data=data,task=data['task'])
+        from ecommerce.web.report_navigation import origin
+        return render_template('review_analysis_v6.html',active='collections',shop_name=settings().shop_name,data=data,task=data['task'],
+            source_navigation=origin(settings(),data['product']['platform_product_id']))
     if data['task']['rule_version'] in (v4.VERSION,v5.VERSION):
         raw=request.args.get('version')
         if raw:

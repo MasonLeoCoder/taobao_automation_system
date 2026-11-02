@@ -106,8 +106,10 @@ def result(task_id):
         else:raise ValueError('下载格式无效。')
         return Response(body,content_type=mime+'; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="questions-{task_id}.{download}"'})
     from ecommerce.modules.question_analysis.view import reading
+    from ecommerce.web.report_navigation import origin
     return render_template('question_analysis.html',reading=reading(content) if content else None,mode='result',data=data,content=content,rendered=render_report(content) if content else '',
-        product=data['product']['platform_product_id'],batch=data['sources'][0]['batch_id'],active='collections',shop_name=settings().shop_name)
+        product=data['product']['platform_product_id'],batch=data['sources'][0]['batch_id'],active='collections',shop_name=settings().shop_name,
+        source_navigation=origin(settings(),data['product']['platform_product_id']))
 
 
 @question_analysis.post('/api/analysis/questions/tasks/<task_id>/check')

@@ -62,5 +62,5 @@
     try {const url=new URL(link.href);url.searchParams.set('dialog','1');const response=await fetch(url);if(!response.ok)throw new Error('无法读取分析计划，请打开分析页面核对。');container.innerHTML=await response.text();configure(container);}
     catch(error){container.textContent=error.message;}
   }));
-  document.querySelectorAll('[data-qa-check]').forEach(button=>button.onclick=async()=>{button.disabled=true;const feedback=document.querySelector('[data-qa-check-feedback]');try{await post(button.dataset.qaCheck,{report_id:button.dataset.reportId});location.href=location.pathname;}catch(error){feedback.textContent=error.message;button.disabled=false;}});
+  document.querySelectorAll('[data-qa-check]').forEach(button=>button.onclick=async()=>{button.disabled=true;const feedback=document.querySelector('[data-qa-check-feedback]');try{const result=await post(button.dataset.qaCheck,{report_id:button.dataset.reportId});const next=new URL(location.href);if(result.version)next.searchParams.set('version',String(result.version));else next.searchParams.delete('version');next.hash='qa-checks';location.href=next.href;}catch(error){feedback.textContent=error.message;button.disabled=false;}});
 })();

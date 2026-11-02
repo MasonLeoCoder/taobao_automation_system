@@ -1,3 +1,4 @@
+{% from 'report_navigation.html' import origin_hint,back_link %}
 {% from 'form_controls.html' import field,input_control,control_button,text_preview,action_link,action_menu %}
 {% set report=data.v6_content %}
 <div class="ra-reading-page">
@@ -5,8 +6,8 @@
   <p class="ui-report-eyebrow">竞品研究 · 评价洞察</p>
   <h1>竞品与选品评价报告</h1>
   <p class="ui-report-meta">商品 {{ data.product.platform_product_id }} <span>·</span> {{ task.model }} <span>·</span> 来源批次 {{ data.sources[0].batch_id if data.sources else '未记录' }}{% if data.report %} <span>·</span> 版本 {{ data.report.version }}{% endif %}</p>
-  {% if not exporting %}<div class="ui-report-toolbar ra-report-toolbar">
-    <div class="ra-report-links">{{ action_link('← 返回评价明细',url_for('pages.collection_product',product_id=data.product.platform_product_id,module='reviews',reviews_batch=data.sources[0].batch_id)+'#review-comments') }}{{ action_link('查看分析记录',url_for('review_analysis.index',product=data.product.platform_product_id,batch=data.sources[0].batch_id)) }}</div>
+  {% if not exporting %}{{ origin_hint(source_navigation) }}<div class="ui-report-toolbar ra-report-toolbar">
+    <div class="ra-report-links">{{ back_link(source_navigation) }}{{ action_link('← 返回评价明细',url_for('pages.collection_product',product_id=data.product.platform_product_id,module='reviews',reviews_batch=data.sources[0].batch_id)+'#review-comments') }}{{ action_link('查看分析记录',url_for('review_analysis.index',product=data.product.platform_product_id,batch=data.sources[0].batch_id)) }}</div>
     {% call action_menu('下载报告') %}<a href="{{ url_for('review_analysis.export',task_id=task.id,format='html',version=data.report.version if data.report else none) }}">可阅读报告 · HTML</a><a href="{{ url_for('review_analysis.export',task_id=task.id,format='md',version=data.report.version if data.report else none) }}">可编辑文字 · Markdown</a><a href="{{ url_for('review_analysis.export',task_id=task.id,version=data.report.version if data.report else none) }}">完整数据与依据 · JSON</a>{% endcall %}
   </div>{% endif %}
 </section>
