@@ -1,4 +1,16 @@
 /* 全站表单设计变量与公共控件。统一修改入口；页面样式仅保留排列、宽度与换行。 */
+/* 测试环境提示：仅显式使用这些组件的页面生效，不覆盖正式环境外观。 */
+.ui-environment-card,.ui-environment-header{--environment-bg:#fff8ed;--environment-border:#f1d3a6;--environment-ink:#9a4a0a;--environment-muted:#a66b32;--environment-dot:#dc7819;color:var(--environment-ink)}
+.ui-environment-card{padding:12px 13px;border:1px solid var(--environment-border);border-radius:12px;background:linear-gradient(120deg,#fffaf2,var(--environment-bg));box-shadow:0 2px 7px #9a4a0a06}
+.ui-environment-badge{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.5px;white-space:nowrap}
+.ui-environment-dot{display:inline-block;width:6px;height:6px;flex-shrink:0;background:var(--environment-dot);border-radius:50%;box-shadow:0 0 0 3px #dc781915}
+.ui-environment-caption{font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--environment-muted)}
+.ui-environment-key{font-size:10px;color:var(--environment-muted);line-height:1.4}
+.ui-environment-value{font-family:Consolas,"SFMono-Regular",monospace;font-size:11px;line-height:1.5;color:var(--environment-ink);overflow-wrap:anywhere}
+.workspace-header .local.ui-environment-header{background:var(--environment-bg);border-color:var(--environment-border);color:var(--environment-ink);font-size:11px}
+.ui-environment-header strong{font-size:11px;font-weight:650}
+.ui-environment-separator{color:var(--environment-muted)}
+.ui-environment-header-database{font-size:10px;overflow-wrap:anywhere}
 .ui-button.ui-back-to-top{position:fixed;right:24px;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:49;min-height:44px;gap:6px;box-shadow:0 3px 14px #163b2b14}.ui-back-to-top[hidden]{display:none}
 @media(max-width:700px){.ui-button.ui-back-to-top{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));min-width:44px;padding:8px 12px}.ui-back-to-top-label{display:none}}
 :root {

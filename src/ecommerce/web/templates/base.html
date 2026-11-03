@@ -1,5 +1,6 @@
 <!doctype html>
 {% from 'form_controls.html' import back_to_top with context %}
+{% set is_test_environment = environment_database() == 'taobao_automation_test' %}
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -15,12 +16,21 @@
 <a class="skip" href="#main">跳到主要内容</a>
 <aside class="workspace-sidebar">
   <a class="brand" href="/">商<span>电商工作台<small>ECOMMERCE WORKSPACE</small></span></a>
+  {% if is_test_environment %}
+  <div class="workspace-environment-card ui-environment-card" role="note" aria-label="当前为测试环境">
+    <div class="workspace-environment-heading">
+      <span class="ui-environment-badge"><span class="ui-environment-dot" aria-hidden="true"></span>测试环境</span>
+      <span class="ui-environment-caption" aria-hidden="true">TEST</span>
+    </div>
+    <div class="workspace-environment-database"><span class="ui-environment-key">数据库</span><code class="ui-environment-value">{{ environment_database() }}</code></div>
+  </div>
+  {% endif %}
   <div class="shop"><span class="dot"></span>{{ shop_name }}<small>单店铺 · 本地工作空间</small></div>
   {% include 'workspace_sidebar.html' %}
   <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。</div>
 </aside>
 <main id="main">
-  <header class="workspace-header"><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span><span class="local"><span class="dot"></span>{{ environment_label() }} · {{ environment_database() }}</span></header>
+  <header class="workspace-header{% if is_test_environment %} workspace-header-test{% endif %}"><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span>{% if is_test_environment %}<span class="local ui-environment-header"><span class="ui-environment-dot" aria-hidden="true"></span><strong>测试环境</strong><span class="ui-environment-separator" aria-hidden="true">·</span><span class="ui-environment-header-database">{{ environment_database() }}</span></span>{% else %}<span class="local"><span class="dot"></span>{{ environment_label() }} · {{ environment_database() }}</span>{% endif %}</header>
   {% block content %}{% endblock %}
   <footer>数据来自本地运行记录 · 时间按 Asia/Shanghai 展示</footer>
 </main>

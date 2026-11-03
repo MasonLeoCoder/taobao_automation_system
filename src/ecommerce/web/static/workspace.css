@@ -1,4 +1,16 @@
 /* 工作台布局；控件外观统一放在form_controls.css。 */
+.workspace-environment-card{margin-top:16px;flex-shrink:0;min-width:0}
+.workspace-environment-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.workspace-environment-database{display:flex;flex-direction:column;gap:3px;margin-top:9px;min-width:0}
+.ui-environment-header{display:inline-flex;align-items:center;gap:8px;max-width:100%}
+@media(max-width:700px){
+  .workspace-environment-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}
+  .workspace-environment-card .ui-environment-caption{display:none}
+  .workspace-environment-database{margin-top:0;text-align:right}
+  .workspace-header-test{flex-wrap:wrap;height:auto;min-height:78px;padding:14px 0;row-gap:8px}
+  .workspace-header.workspace-header-test .local.ui-environment-header{flex-shrink:1;white-space:normal}
+  .ui-environment-header-database{min-width:0}
+}
 .workspace-sidebar{min-height:0}
 .workspace-header{gap:12px}
 .workspace-header>span:first-child{min-width:0;overflow-wrap:anywhere}
