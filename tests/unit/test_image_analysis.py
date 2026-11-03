@@ -163,7 +163,7 @@ class ImageAnalysisTests(TestCase):
 
     def test_preview_route_csrf_and_image_identity(self):
         """弹窗无业务写入，缩略图固定同商品批次摘要，跨来源拒绝。"""
-        page=self.client.get('/analysis/images/products/123/new?dialog=1'); self.assertEqual(page.status_code,200); self.assertIn('data-ia-form',page.text)
+        page=self.client.get('/analysis/images/products/123/new?dialog=1'); self.assertEqual(page.status_code,302); self.assertIn('module=main_images',page.headers['Location'])
         self.assertNotIn('name="allow_paid" required checked',page.text)
         data=self.preview(); image=data['input']['images'][0]; frame=image['frames'][0]
         url=f'/analysis/images/products/123/preview?batch=7&media=30&piece=1&sha={frame["sha256"]}'

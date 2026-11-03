@@ -6,4 +6,14 @@
 .ia-frame-list figcaption{overflow-wrap:anywhere;margin-top:8px}
 .ia-source-fold{scroll-margin-top:24px}.ia-source-fold .ia-frame-list{max-width:900px;margin-inline:auto}
 .ia-source-fold .ia-frame-list img{max-height:none;width:100%}
+.ia-module-analysis{display:flex;flex-direction:column;gap:12px;margin:24px 0}
+.ia-module-analysis>.ca-heading{margin:0;align-items:center}
+.ia-module-analysis>.ui-form-note{margin:0}
+.ia-history-filter{min-width:0;max-width:100%;display:flex;align-items:end;gap:16px;flex:1;flex-wrap:wrap}
+.ia-history-filter .ui-field{min-width:0;max-width:100%;flex:0 1 630px}
+.ia-history-filter .ui-button{margin-bottom:0}
 @media(max-width:640px){.ia-preview-grid{grid-template-columns:1fr}.ia-workspace-tabs>*{flex:1;text-align:center}}
+
+.ia-history-panel{grid-template-columns:minmax(0,1fr)}
+.ia-history-panel .table-wrap,.ia-history-panel .ca-heading>div{min-width:0;max-width:100%}
+.ia-history-filter .ss-trigger{min-width:0;max-width:100%;width:100%}

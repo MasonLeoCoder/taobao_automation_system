@@ -11,10 +11,10 @@ SECTIONS=('总体判断','主图分析','详情分析','联合检查','选品线
 MARKER=re.compile(r'【((?:主图|详情)[1-9]\d*(?:[｜|]片段[1-9]\d*)?)】')
 
 
-def generation(text,finish_reason,group=False):
+def generation(text,finish_reason,group=False,sections=SECTIONS):
     """只判断可读章节及完整结束，不用定位检查阻止报告阅读。"""
     text=text if isinstance(text,str) else ''; headings=re.findall(r'^\s*#{1,3}\s+(.+?)\s*$',text,re.M)
-    missing=[] if group else [name for name in SECTIONS if not any(name in h for h in headings)]
+    missing=[] if group else [name for name in sections if not any(name in h for h in headings)]
     issues=(['接口未完整结束，未自动续写'] if finish_reason!='stop' else [])+['缺少章节：'+s for s in missing]
     if not text.strip(): issues.append('尚无可读报告')
     return dict(complete=not issues,state='available' if not issues else 'incomplete',finish_reason=finish_reason,missing_sections=missing,issues=issues)
@@ -53,12 +53,23 @@ def content(data,origin='execution',issues=None):
     response=final['response'] if final else {}; text=response.get('text') or ''; sent={}
     for call in data['calls']:
         if call.get('response'): sent.update(lookup(call['request'].get('messages') or []))
-    incoming=data['task']['parameters']['plan']['input']; generated=generation(text,response.get('finish_reason'))
+    rules=data['task']['rules']; incoming=data['task']['parameters']['plan']['input']
+    generated=generation(text,response.get('finish_reason'),sections=rules.get('sections',SECTIONS))
     if not final: generated['state']='not_generated'
-    return dict(schema_version='images-report-v1',markdown=text,generation=generated,validation=check(text,sent),
+    value=dict(schema_version=rules.get('report_version','images-report-v1'),markdown=text,generation=generated,validation=check(text,sent),
         source_images=incoming['images'],scope=incoming['scope'],source_hash=fingerprint(incoming),detail_revisions={},
         phases=[dict(index=v['chunk_index'],text=v['response']['text']) for v in data['calls'] if v['chunk_index']>0 and v.get('response')],
         issues=issues or [],inspection=dict(origin=origin,rule_version='images-local-check-v1',checked_at=database_now().isoformat()+'+08:00'),review_status='unreviewed')
+    if rules.get('module'): value['module']=rules['module']
+    return value
+
+
+def adapter(module):
+    """将独立章节注入共享执行器；参数：模块；返回：报告适配器。"""
+    from functools import partial
+    from types import SimpleNamespace
+    from .kinds import kind
+    return SimpleNamespace(generation=partial(generation,sections=kind(module)['sections']),content=content,message=message)
 
 
 def message(value):

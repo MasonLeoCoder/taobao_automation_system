@@ -1,5 +1,5 @@
 """页面路由与只读状态接口。"""
-from flask import Blueprint, abort, current_app, jsonify, render_template,request, send_file
+from flask import Blueprint, abort, current_app, jsonify, render_template,request, send_file,redirect,url_for
 from ecommerce.modules.monitoring.service import overview, task_history, local_task_alerts
 from ecommerce.shared.features import FEATURES
 
@@ -391,17 +391,19 @@ def collection_product(product_id):
         candidate=report_navigation.target(settings,product_id,request.args['return_to'])
         if candidate[2] and candidate[1] in ('图片分析','图片报告'):
             image_source_origin=report_navigation.origin(settings,product_id)
-    composite_view=None; image_analysis_view=None
+    composite_view=None; image_analysis_view=None; image_module_view=None
+    if module in ('main_images','detail_images') and selected and selected.get('visibility')=='published' and settings.task_backend=='mysql' and settings.collection_backend=='mysql':
+        from ecommerce.modules.image_analysis.independent import history as image_history
+        image_module_view=image_history(settings,product_id,module,selected['id'])
     analysis_kind=request.args.get('analysis','reviews')
     if module=='composite':
         if analysis_kind not in ('reviews','images'):abort(400,description='综合分析类别无效')
         if analysis_kind=='images':
-            from ecommerce.modules.image_analysis.service import dashboard
-            image_analysis_view=dashboard(settings,product_id)
+            return redirect(url_for('pages.collection_product',product_id=product_id,module='main_images'))
         else:
             from ecommerce.modules.composite_analysis.service import dashboard
             composite_view=dashboard(settings,product_id)
-    return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,image_analysis_view=image_analysis_view,analysis_kind=analysis_kind,image_source_origin=image_source_origin,
+    return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,image_analysis_view=image_analysis_view,image_module_view=image_module_view,analysis_kind=analysis_kind,image_source_origin=image_source_origin,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=image_source_origin['return_to'] if image_source_origin else safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),

@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block title %}{{ data.label }}分析设置{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='composite_analysis.css') }}"><link rel="stylesheet" href="{{ url_for('static',filename='image_analysis.css') }}">{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='image_analysis.js') }}" defer></script>{% endblock %}
+{% block content %}<section class="panel ca-new"><h1>{{ data.label }}分析</h1><div data-ia-container>{% include 'image_module_form.html' %}</div><a href="{{ url_for('pages.collection_product',product_id=product,module=data.module,batch=data.batch_id or none) }}">返回{{ data.label }}模块</a></section>{% endblock %}

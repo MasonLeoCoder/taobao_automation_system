@@ -28,6 +28,8 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(composite_analysis)
     from ecommerce.web.routes.image_analysis import image_analysis
     app.register_blueprint(image_analysis)
+    from ecommerce.web.routes.image_modules import image_modules
+    app.register_blueprint(image_modules)
     from ecommerce.web.routes.ai import ai, ConnectionCheck
     app.extensions['ai_check'] = ConnectionCheck()
     app.register_blueprint(ai)

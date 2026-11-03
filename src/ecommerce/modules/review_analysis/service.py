@@ -163,7 +163,7 @@ def read(settings, task_id):
     """读取结果并派生进程存活提示；参数：配置和编号；返回：完整持久数据，不调用AI。"""
     data = repository.read(settings, identifier(task_id))
     task = data['task']
-    if task['analysis_type'] in ('composite','images'):raise LookupError('请从综合分析对应入口读取该记录。')
+    if task['analysis_type'] in ('composite','images','main_images','detail_images'):raise LookupError('请从对应分析入口读取该记录。')
     owner = task.get('owner') or {}
     task['owner_alive'] = owner_alive(owner.get('pid'), owner.get('started_at')) if owner else False
     task['appears_interrupted'] = task['status'] in {'queued', 'running'} and task['owner_alive'] is False
@@ -447,6 +447,11 @@ def execute(settings, task_id, events):
     """执行一次恢复轮次；参数：任务和通用日志会话；返回：终态，不自动重试。"""
     data = repository.read(settings, task_id)
     task = data['task']
+    if task['rule_version'] in ('main-images-v1','detail-images-v1'):
+        from ecommerce.modules.image_analysis import independent
+        from ecommerce.modules.image_analysis.runtime import execute as execute_images
+        independent.read(settings,task_id,task['analysis_type'])
+        return execute_images(settings,task_id,events,create_client,module=task['analysis_type'])
     if task['rule_version']=='images-v1':
         from ecommerce.modules.image_analysis.runtime import execute as execute_images
         return execute_images(settings,task_id,events,create_client)

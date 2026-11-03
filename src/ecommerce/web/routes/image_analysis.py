@@ -33,9 +33,8 @@ def arguments():
 @image_analysis.get('/analysis/images/products/<product>/new')
 def new(product):
     """读取图片预检、完整发送描述及费用计划。"""
-    data=service.preview(settings(),product,**arguments())
-    return render_template('image_analysis_form.html' if request.args.get('dialog')=='1' else 'image_analysis_new.html',
-        data=data,product=product,active='collections',shop_name=settings().shop_name)
+    service.product_id(product)
+    return redirect(url_for('pages.collection_product',product_id=product,module='main_images'))
 
 
 @image_analysis.get('/analysis/images/products/<product>/preview')
@@ -57,16 +56,25 @@ def preview_image(product):
 @image_analysis.post('/api/analysis/images/products/<product>')
 def start(product):
     """明确费用确认后创建；不自动重复POST。"""
-    values=payload({'main_batch','detail_batch','model','input_hash','plan_hash','allow_paid','force','output_tokens','allow_partial'},
-        {'main_batch','detail_batch','model','input_hash','plan_hash'})
-    value=service.start(settings(),product,**values); value['url']=url_for('.result',task_id=value['id'])
-    return jsonify(value)
+    raise ValueError('联合图片分析入口已停用，请进入主图或详情图片模块分别分析')
 
 
 @image_analysis.get('/analysis/images/tasks/<task_id>')
 def result(task_id):
     """固定版本阅读及三格式附件导出，零AI调用。"""
-    data=service.read(settings(),task_id)
+    return result_view(service.read(settings(),task_id))
+
+
+def result_view(data):
+    """共享独立与既有报告的安全阅读、固定版本及附件导出。"""
+    task_id=data['task']['id']; module=data.get('kind',{}).get('module'); label=data.get('kind',{}).get('label')
+    endpoint='image_modules.result' if module else 'image_analysis.result'
+    def result_link(**values):
+        """构造固定类型的版本及导出地址。"""
+        return url_for(endpoint,task_id=task_id,**({'module':module} if module else {}),**values)
+    def frame_link(sha):
+        """构造本任务的图片副本地址。"""
+        return url_for('image_modules.frame' if module else 'image_analysis.frame',task_id=task_id,sha=sha,**({'module':module} if module else {}))
     if request.args.get('version'):
         version=int(request.args['version']); data['report']=next((v for v in data['reports'] if v['version']==version),None)
         if not data['report']: raise LookupError('报告版本不存在')
@@ -80,11 +88,14 @@ def result(task_id):
             styles=[]
             for filename in ('form_controls.css','composite_analysis.css','image_analysis.css'):
                 with current_app.open_resource('static/'+filename) as file: styles.append(file.read().decode('utf-8'))
-            body=render_template('image_analysis_export.html',data=data,content=content,rendered=report.render(content),styles='\n'.join(styles)); mime='text/html'
+            body=render_template('image_analysis_export.html',data=data,content=content,rendered=report.render(content),styles='\n'.join(styles),report_title=label+'分析报告' if label else '主图与详情选品报告'); mime='text/html'
         else: raise ValueError('下载格式无效')
         return Response(body,content_type=mime+'; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="images-{task_id}.{download}"'})
     return render_template('image_analysis_result.html',data=data,content=content,reading=report.reading(content) if content else None,
-        product=product,active='collections',shop_name=settings().shop_name)
+        product=product,active='collections',shop_name=settings().shop_name,report_title=label+'分析报告' if label else '主图与详情选品报告',
+        result_link=result_link,frame_link=frame_link,check_url=url_for('image_modules.recheck',module=module,task_id=task_id) if module else url_for('image_analysis.recheck',task_id=task_id),
+        return_url=url_for('pages.collection_product',product_id=product,module=module,batch=data['task']['parameters']['plan']['input']['batches'][0]['id']) if module else url_for('pages.collection_product',product_id=product,module='composite'),
+        return_label='返回'+label+'模块' if label else '返回综合分析')
 
 
 @image_analysis.get('/analysis/images/tasks/<task_id>/frames/<sha>')

@@ -3,7 +3,7 @@ from ecommerce.modules.composite_analysis import runtime as shared
 from . import planner,report
 
 
-def execute(settings,task_id,events,client_factory):
+def execute(settings,task_id,events,client_factory,module=None):
     """将已预检图片发送至视觉接口，文本汇总同样使用冻结视觉能力。"""
     class Client:
         """将共享执行方法适配到显式视觉接口。"""
@@ -14,7 +14,8 @@ def execute(settings,task_id,events,client_factory):
         def complete_messages(self,messages,**options):
             """只走图片专用契约；参数：真实消息；返回：响应。"""
             return self.client.complete_images(messages,**options)
-    return shared.execute(settings,task_id,events,Client,planning=planner,reporting=report)
+    reporting=report if module is None else report.adapter(module)
+    return shared.execute(settings,task_id,events,Client,planning=planner,reporting=reporting)
 
 
 def recheck(settings,data,report_id):

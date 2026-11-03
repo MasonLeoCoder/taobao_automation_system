@@ -1,0 +1,7 @@
+{% from 'form_controls.html' import action_link %}
+{% if image_module_view %}{% set analysis=image_module_view %}
+<section class="ia-module-analysis" aria-label="{{ analysis.kind.label }}分析">
+  <div class="ui-source-card ca-heading"><div><h3>{{ analysis.kind.label }}分析</h3><p class="ui-form-note">分析范围：当前批次 {{ selected.id }} 的全部 {{ view.total }} 张图片，包括所有分页。缺失图片将在预检中说明。</p></div><div class="module-actions">{% if analysis.latest_result %}{{ action_link('查看本批报告',url_for('image_modules.result',module=module,task_id=analysis.latest_result.id),'primary') }}{% endif %}<a class="ui-button {{ 'ui-secondary' if analysis.latest_result else 'ui-primary' }}" data-ia-open href="{{ url_for('image_modules.new',module=module,product=product.platform_product_id,batch=selected.id) }}">分析{{ analysis.kind.label }}</a>{{ action_link('查看分析记录',url_for('image_modules.history',module=module,product=product.platform_product_id,batch=selected.id)) }}</div></div>
+  {% if analysis.latest_result %}<p class="ui-form-note">本批报告已生成 · {{ analysis.latest_result.created_at|string|full_local_time }} · {{ analysis.latest_result.model }}。重新分析须确认费用，旧报告保留。</p>{% else %}<p class="ui-form-note">本批尚无已完整生成的{{ analysis.kind.label }}独立报告。</p>{% endif %}
+  {% if analysis.tasks and analysis.tasks[0].status!='succeeded' %}{% set recent=analysis.tasks[0] %}<p class="ui-form-note">最近分析：{{ recent.message }} {{ action_link('查看内容与进度',url_for('image_modules.result',module=module,task_id=recent.id)) }}</p>{% endif %}
+</section>{% endif %}
