@@ -336,9 +336,29 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-tool-thumbnail{border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-surface-soft);color:var(--control-text)}
 .ui-tool-avatar{border-radius:50%;background:var(--control-surface-soft)}
 /* 工作台分组导航：共享控件外观，页面样式仅处理布局。 */
-.ui-workspace-group-toggle,.ui-workspace-mobile-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;list-style:none;cursor:pointer;color:var(--ink);font-size:12px;font-weight:650;padding:11px 12px;border-radius:7px;min-height:44px}
+:root{--workspace-motion:240ms;--workspace-easing:cubic-bezier(.22,.68,0,1)}
+.ui-workspace-group-toggle,.ui-workspace-mobile-toggle{display:flex;align-items:center;gap:10px;list-style:none;cursor:pointer;color:var(--control-text);font:600 12px/1.65 var(--control-font);padding:10px 9px;border:1px solid transparent;border-radius:10px;min-height:52px;transition:background-color 160ms ease,border-color 160ms ease,color 160ms ease}
 .ui-workspace-group-toggle::-webkit-details-marker,.ui-workspace-mobile-toggle::-webkit-details-marker{display:none}
-.ui-workspace-group-toggle:hover,.ui-workspace-mobile-toggle:hover{background:#f3f7f5}
+.ui-workspace-group-toggle:hover,.ui-workspace-mobile-toggle:hover{background:var(--control-surface-soft);color:var(--control-accent)}
 .ui-workspace-group-toggle:focus-visible,.ui-workspace-mobile-toggle:focus-visible{outline:3px solid #3e9e85;outline-offset:-3px}
 .ui-workspace-mobile-toggle{border:1px solid var(--line);background:#f5f8f7;font-size:13px}
 .ui-workspace-planned{display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;font-size:10px;font-weight:400;line-height:1.7;padding:1px 6px;border:1px solid #e3e8e6;border-radius:4px;color:#7a8983;background:#f6f8f7}
+.workspace-icon-wrap{border-radius:8px;color:var(--control-label);background:#f4f7f6;transition:color 160ms ease,background-color 160ms ease}
+.workspace-group[data-current-group]>.ui-workspace-group-toggle{background:#eff6f3;border-color:#e4eeea;color:var(--control-accent)}
+.workspace-group[data-current-group]>.ui-workspace-group-toggle .workspace-icon-wrap{color:var(--control-accent);background:#e0eee8}
+.workspace-group-title .workspace-current-location{font-size:10px;line-height:16px;font-weight:400;color:var(--control-label);opacity:0;transition:max-height var(--workspace-motion) var(--workspace-easing),opacity var(--workspace-motion) ease}
+.workspace-group:not([open]) .workspace-current-location,.workspace-group[data-expanded=false] .workspace-current-location{opacity:1}
+.workspace-chevron{color:#8a9c96;transition:transform var(--workspace-motion) var(--workspace-easing),color 160ms ease}
+.workspace-group-items::before{background:#e3ebe7}
+.workspace-nav .workspace-nav-link{color:var(--control-label);border-radius:7px;transition:background-color 160ms ease,color 160ms ease}
+.workspace-nav .workspace-nav-link:hover{background:#f3f7f5;color:var(--control-accent)}
+.workspace-nav .workspace-nav-link.active{background:#e8f2ed;color:var(--control-accent);font-weight:600}
+.workspace-nav-link.active::before{background:#358875}
+.workspace-nav .ui-workspace-planned{font-size:9px;padding:0 5px;border-color:#e6ebe8;color:#7e8d86;background:#f7f9f8}
+.workspace-menu{scrollbar-color:transparent transparent}
+.workspace-menu:hover,.workspace-menu:focus-within{scrollbar-color:#c4d4cc transparent}
+.workspace-menu::-webkit-scrollbar{width:5px}
+.workspace-menu::-webkit-scrollbar-thumb{background:transparent;border-radius:9px}
+.workspace-menu:hover::-webkit-scrollbar-thumb,.workspace-menu:focus-within::-webkit-scrollbar-thumb{background:#c4d4cc}
+@media(prefers-reduced-motion:reduce){.ui-workspace-group-toggle,.ui-workspace-mobile-toggle,.workspace-icon-wrap,.workspace-chevron,.workspace-nav .workspace-nav-link,.workspace-group-title .workspace-current-location{transition:none}}
+@media(forced-colors:active){.workspace-nav-link.active,.workspace-group[data-current-group]>.ui-workspace-group-toggle{outline:1px solid Highlight}.workspace-group-items::before{background:CanvasText}}

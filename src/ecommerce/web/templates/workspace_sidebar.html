@@ -1,16 +1,21 @@
 {% set groups = workspace_navigation(active|default(none)) %}
+{% from 'form_controls.html' import workspace_icon, workspace_chevron %}
 <details class="workspace-menu" data-workspace-menu open>
-  <summary class="ui-workspace-mobile-toggle">功能导航 <span aria-hidden="true">⌄</span></summary>
+  <summary class="ui-workspace-mobile-toggle"><span>功能导航</span>{{ workspace_chevron() }}</summary>
+  <div class="workspace-menu-body">
   <nav class="workspace-nav" aria-label="主导航">
     {% for group in groups %}
     <details class="workspace-group" data-nav-group="{{ group.key }}"{% if group.current %} data-current-group open{% endif %}>
-      <summary class="ui-workspace-group-toggle"><span>{{ group.label }}</span><span class="workspace-chevron" aria-hidden="true">⌄</span></summary>
+      <summary class="ui-workspace-group-toggle"><span class="workspace-icon-wrap">{{ workspace_icon(group.key) }}</span><span class="workspace-group-title"><span>{{ group.label }}</span>{% for item in group['items'] if item.current %}<span class="workspace-current-location">{{ item.label }}</span>{% endfor %}</span>{{ workspace_chevron() }}</summary>
+      <div class="workspace-group-panel">
       <div class="workspace-group-items">
         {% for item in group['items'] %}
         <a class="workspace-nav-link{{ ' active' if item.current }}" href="{{ item.href }}"{% if item.current %} aria-current="page"{% endif %}><span>{{ item.label }}</span>{% if item.planned %}<span class="ui-workspace-planned">待建设</span>{% endif %}</a>
         {% endfor %}
       </div>
+      </div>
     </details>
     {% endfor %}
   </nav>
+  </div>
 </details>
