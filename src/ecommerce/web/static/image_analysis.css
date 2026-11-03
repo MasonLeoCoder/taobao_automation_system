@@ -17,3 +17,11 @@
 .ia-history-panel{grid-template-columns:minmax(0,1fr)}
 .ia-history-panel .table-wrap,.ia-history-panel .ca-heading>div{min-width:0;max-width:100%}
 .ia-history-filter .ss-trigger{min-width:0;max-width:100%;width:100%}
+
+/* 报告标题与导航为两列，按钮作为同组排列，窄屏移到标题下方。 */
+.ia-report-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 24px;align-items:start;min-width:0}
+.ia-report-eyebrow{grid-column:1/-1;margin:0}
+.ia-report-identity{min-width:0;overflow-wrap:anywhere}
+.ia-report-identity h1{margin-top:0}
+.ia-report-actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end;align-items:flex-start;max-width:100%}
+@media(max-width:900px){.ia-report-header{grid-template-columns:minmax(0,1fr)}.ia-report-eyebrow{grid-column:auto}.ia-report-actions{justify-content:flex-start}.ia-report-actions>.ui-button{flex:1 1 auto}}
