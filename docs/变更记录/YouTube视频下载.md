@@ -32,7 +32,7 @@
 
 视频 `VlFoYM8LsBQ`：全英｜长大以后，朋友越来越少，正常吗？Why is it so hard to make friends as an adult?，频道Leah's Diary 莉雅老师，时长376秒。实际解析到21个可校验直接视频格式、109个音轨格式，最高1080P/60帧；其中有不同语言与动态范围版本，音轨数量不是语言数量。HLS/故事板/受保护内容不混入可直接核验的完整文件选项。
 
-本轮逻辑缓存 `6d51bc3c67b54ffcabdcc2ead6890ea5`。正式数据库tasks 124→129（新增5），task_events 12759→12780（新增21），其余30业务表行数相同；这是本轮快照，不据此声称其他表全部内容未变。无本轮DDL/备注修改，当前保持0020_composite_analysis、32业务表/386列/67外键。未修改/删除旧任务，也无淘宝采集或付费AI。完整本机证据在忽略目录workspace/youtube-integration.json，未提交签名来源和业务缓存。
+本轮逻辑缓存 `6d51bc3c67b54ffcabdcc2ead6890ea5`。正式数据库tasks 124→129（新增5），task_events 12759→12780（新增21），其余30业务表行数相同；这是本轮快照，不据此声称其他表全部内容未变。无本轮DDL/备注修改，当前保持0020_composite_analysis、32业务表/386列/67外键。未修改/删除旧任务，也无淘宝采集或付费AI。完整本机证据在忽略目录workspace/development/runs/undated-youtube/results/youtube-integration.json，未提交签名来源和业务缓存。
 
 |动作|真实任务编号|结果|
 |---|---|---|

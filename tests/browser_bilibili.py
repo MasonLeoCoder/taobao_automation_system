@@ -7,7 +7,7 @@ from playwright.sync_api import sync_playwright, expect
 
 sys.stdout.reconfigure(encoding='utf-8')
 root = Path(__file__).resolve().parents[1]
-report = json.loads((root / 'workspace/bilibili_integration.json').read_text(encoding='utf-8'))
+report = json.loads((root / 'workspace/development/runs/undated-bilibili/results/bilibili_integration.json').read_text(encoding='utf-8'))
 samples = report['samples']
 output = root / 'workspace/output/reports/bilibili'
 output.mkdir(parents=True, exist_ok=True)

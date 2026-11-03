@@ -6,7 +6,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 sys.stdout.reconfigure(encoding='utf-8')
-root=Path(__file__).resolve().parents[1];report=json.loads((root/'workspace/youtube-integration.json').read_text(encoding='utf-8'))
+root=Path(__file__).resolve().parents[1];report=json.loads((root/'workspace/development/runs/undated-youtube/results/youtube-integration.json').read_text(encoding='utf-8'))
 record=report['result'];identifier=report['cache_id'];out=root/'workspace/output/reports/youtube';out.mkdir(parents=True,exist_ok=True)
 videos=[(k,a) for k,a in record['resources'].items() if a['kind']=='video']
 first_key,first=videos[0];second_key,second=videos[1]

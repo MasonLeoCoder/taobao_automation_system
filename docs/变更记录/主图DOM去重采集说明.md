@@ -28,4 +28,4 @@ flowchart LR
 
 本轮没有替用户停止、继续或重启真实采集任务，没有下载真实商品图片。此前任务`8bc7f34f90bb40d3a8608f5b012c1b03`中已保存基本信息批次100不受此代码修改影响。旧采集进程仍加载旧代码；需要在网页停止旧任务后，新建“仅主图”任务使用新规则。Web服务按既定授权更新，访问地址保持原8000端口。
 
-本机验证日志：`workspace/dom-main-images-regression.log`、`workspace/dom-main-images-browser.log`、`workspace/dom-main-images-browser-final.log`。操作见[使用指南](../使用指南.md)。真实平台验收另按[功能逐项验收清单](../功能逐项验收清单.md)记录。
+本机验证日志：`workspace/development/runs/undated-dom-main-images/logs/dom-main-images-regression.log`、`workspace/development/runs/undated-dom-main-images/logs/dom-main-images-browser.log`、`workspace/development/runs/undated-dom-main-images/logs/dom-main-images-browser-final.log`。操作见[使用指南](../使用指南.md)。真实平台验收另按[功能逐项验收清单](../功能逐项验收清单.md)记录。

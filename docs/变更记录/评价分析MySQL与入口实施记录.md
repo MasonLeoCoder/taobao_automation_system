@@ -145,7 +145,7 @@ flowchart LR
 
 正式只读来源：平台商品1050158363561，数据库商品3，评价批次96，观察601～700共100条；实际计算1组分类+1次报告、共2次请求，完整分类输入9782字符、分类输出上限38912 Token，最低预留195576、推荐上限215134。这些为发送前估算，不是实际消耗或费用。桌面1440/手机390展开实际长文本、预算不足切回自动、模型反复开关、关闭焦点恢复及无横向溢出核对通过，脚本错误0；所有写请求和外站请求被阻止，远程缩略图不在本轮验收范围，真实AI调用0。
 
-原8000端口Web已核对归属后重启，独立采集进程未操作。CLI真实只读preview与Web的100条、来源分组和预计2次请求一致。证据位于Git忽略目录workspace/output/reports/review_sending/20261029/：before.json、after.json、preview.json、cli-preview.json、browser.json、unit-tests.log、review-sending-1440.png/390.png及review-sending-preview-1440.png/390.png；独立验证配置只在workspace/verification/review_sending.toml，不提交凭据。人工验收仍待用户查看弹窗和明确启动实际分析。
+原8000端口Web已核对归属后重启，独立采集进程未操作。CLI真实只读preview与Web的100条、来源分组和预计2次请求一致。证据位于Git忽略目录workspace/output/reports/review_sending/20261029/：before.json、after.json、preview.json、cli-preview.json、browser.json、unit-tests.log、review-sending-1440.png/390.png及review-sending-preview-1440.png/390.png；独立验证配置只在workspace/development/runs/undated-review-sending/configs/review_sending.toml，不提交凭据。人工验收仍待用户查看弹窗和明确启动实际分析。
 
 ```mermaid
 flowchart TD
@@ -205,7 +205,7 @@ flowchart TD
 
 正式任务桌面1440/手机390只读页面检查已保存93/100、7条问题、8处本地规范化、费用未勾选及7条补处理实际文字，无横向溢出、脚本错误0；写请求全部拦截，未调用AI。本地恢复已执行两遍验证第二遍新增0；CLI resume --preview与Web的7条编号及2次请求一致。真实后续7条分析和AI报告均未执行，人工复核与完整分析仍待用户选择。
 
-证据保存在Git忽略目录workspace/output/reports/review_recovery/20261030/：before.json、after.json、recovery-result.json、browser.json、cli-preview.json、unit-tests.log/final-unit-tests.log、recovery-1440.png/390.png。原始评价及返回只保留在本地证据，未提交Git；验证配置workspace/verification/review_recovery.toml也不提交。8000端口Web核对归属后重启，未停止采集进程。
+证据保存在Git忽略目录workspace/output/reports/review_recovery/20261030/：before.json、after.json、recovery-result.json、browser.json、cli-preview.json、unit-tests.log/final-unit-tests.log、recovery-1440.png/390.png。原始评价及返回只保留在本地证据，未提交Git；验证配置workspace/development/runs/undated-review-recovery/configs/review_recovery.toml也不提交。8000端口Web核对归属后重启，未停止采集进程。
 
 ```mermaid
 flowchart TD

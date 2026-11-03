@@ -47,7 +47,7 @@ DASH视频轨与音轨分别下载、按内容身份和摘要核验，再由现�
 |完整声音M4A|2,357,710|12,358,724|
 |PNG封面|1,446,020|1,003,884|
 
-普通视频SHA256：`ec0c780ac6efd0ccd2ad7e737693b1cd897a86b18e39875a50f69a44d9ed966d`。课程视频SHA256：`e49514ef48d506f86013f20665a5c304cd7b26aa72883b7f9fbb8ea950a9a0fc`。完整的本机快照、轨道规格、任务行和两轮表数量在忽略目录 `workspace/bilibili_integration_first.json`、`workspace/bilibili_integration.json`，不提交业务/签名数据。
+普通视频SHA256：`ec0c780ac6efd0ccd2ad7e737693b1cd897a86b18e39875a50f69a44d9ed966d`。课程视频SHA256：`e49514ef48d506f86013f20665a5c304cd7b26aa72883b7f9fbb8ea950a9a0fc`。完整的本机快照、轨道规格、任务行和两轮表数量在忽略目录 `workspace/development/runs/undated-bilibili/results/bilibili_integration_first.json`、`workspace/development/runs/undated-bilibili/results/bilibili_integration.json`，不提交业务/签名数据。
 
 独立SQLite任务额外验证真实课程CDN续传：`72b0c936449a49279450e5bada938af3`主动暂停为needs_attention，保留524,288字节；`d6e88a9594f0420c8304253205964fe6`恢复成功，服务器206返回 `bytes 524288-5890993/5890994`。完成轨道5,890,994字节，SHA256 `55f8bf29880e4b4cfb929a958d8cdd1e10a7d5f286521d1e6ba5ca903a3aae08`，与原完整视频轨一致。两编号只属于独立验证目录，不是正式MySQL任务，不与前述16任务混算。
 
