@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}综合选品分析设置{% endblock %}
+{% block title %}交叉分析设置{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='composite_analysis.css') }}">{% endblock %}
 {% block extra_scripts %}<script src="{{ url_for('static',filename='composite_analysis.js') }}" defer></script>{% endblock %}
-{% block content %}<section class="panel ca-new"><h1>综合选品分析</h1><div data-ca-container>{% include 'composite_analysis_form.html' %}</div><a href="{{ url_for('pages.collection_product',product_id=product,module='composite') }}">返回综合分析</a></section>{% endblock %}
+{% block content %}<section class="panel ca-new"><h1>交叉分析</h1><div data-ca-container>{% include 'composite_analysis_form.html' %}</div><a href="{{ url_for('pages.collection_product',product_id=product,module='composite') }}">返回交叉分析</a></section>{% endblock %}

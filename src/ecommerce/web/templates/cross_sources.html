@@ -1,0 +1,17 @@
+{% from 'form_controls.html' import field,select_control,input_control,action_link %}
+{% macro source_url(source,return_to,mode=none) -%}
+{% if source.kind in ['main_images','detail_images'] %}{{ url_for('image_modules.result',module=source.kind,task_id=source.analysis_id,version=source.version,return_to=return_to,return_mode=mode) }}{% else %}{{ url_for('review_analysis.result' if source.kind=='reviews' else 'question_analysis.result',task_id=source.analysis_id,version=source.version,return_to=return_to,return_mode=mode) }}{% endif %}
+{%- endmacro %}
+{% macro picker(data,product,return_to,selection,mode=none) -%}
+<div class="ca-source-picker">
+{% for kind,label in data.kinds.items() %}{% set options=data.choices[kind] %}{% set selected=selection.get(kind,options[0].id if options else '') %}{% set current=namespace(source=options[0] if options else none) %}{% for item in options if item.id==selected %}{% set current.source=item %}{% endfor %}{% set unit='条评价' if kind=='reviews' else '个问题' if kind=='questions' else '张原图' %}
+<section class="ui-source-card ca-source-row" data-cross-row="{{ kind }}" data-label="{{ label }}">
+<label class="ui-consent-row ca-kind">{{ input_control({'type':'checkbox','name':'use_'~kind,'checked':kind in selection,'disabled':not options,'data-cross-use':kind}) }}<strong>{{ label }}</strong></label>
+<div class="ca-source-choice">
+{% if options %}{% call field(label~'来源报告') %}{% call select_control({'name':kind~'_report','data-searchable-select':true,'data-select-label':label~'来源报告','data-cross-report':kind}) %}
+{% for source in options %}{% set ref=dict(source,kind=kind) %}<option value="{{ source.id }}" {{ 'selected' if source.id==selected }} data-source-url="{{ source_url(ref,return_to,mode)|trim }}" data-source-summary="采集于 {{ source.captured_at or '未记录' }} · {{ source.source_count }}{{ unit }} · {{ source.pending_count or 0 }}处依据待核对">批次 {{ source.batch_id }} · 版本 {{ source.version }} · 保存于 {{ source.created_at|string|truncate(19,true,'') }} · {{ '完整' if source.complete else '可读，需留意限制' }}</option>{% endfor %}
+{% endcall %}{% endcall %}{% else %}<p class="ui-form-note" data-cross-source-summary>{% if current.source %}采集于 {{ current.source.captured_at or '未记录' }} · {{ current.source.source_count }}{{ unit }} · {{ current.source.pending_count or 0 }}处依据待核对{% endif %}</p><p class="ui-form-note">{{ data.availability[kind].note }}</p>{% endif %}
+<p class="ui-form-note" data-cross-source-summary>{% if current.source %}采集于 {{ current.source.captured_at or '未记录' }} · {{ current.source.source_count }}{{ unit }} · {{ current.source.pending_count or 0 }}处依据待核对{% endif %}</p><p class="ui-form-note">{{ data.availability[kind].note }}{% if options %} · 默认按采集时间选择，可手动换版本{% endif %}</p></div>
+<div class="ca-source-action">{% if options %}<a class="ui-button ui-secondary" data-report-source data-cross-view href="{{ source_url(dict(current.source,kind=kind),return_to,mode)|trim }}">查看来源报告</a>{% else %}{{ action_link('前往采集' if not data.availability[kind].latest_batch else '前往分析',url_for('pages.collection_product',product_id=product,module='reviews' if kind=='reviews' else kind)) }}{% endif %}</div>
+</section>{% endfor %}</div>
+{%- endmacro %}

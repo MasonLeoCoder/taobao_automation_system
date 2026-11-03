@@ -6,6 +6,7 @@ from ecommerce.web.routes.composite_analysis import invalid
 from ecommerce.modules.image_analysis import service,report,runtime,store
 from ecommerce.infrastructure.images import vision
 from ecommerce.infrastructure.storage import analysis_store as repository
+from ecommerce.web import report_navigation
 from ecommerce.shared.exceptions import TaskBusy
 import sqlalchemy as sa
 
@@ -68,9 +69,12 @@ def result(task_id):
 def result_view(data):
     """共享独立与既有报告的安全阅读、固定版本及附件导出。"""
     task_id=data['task']['id']; module=data.get('kind',{}).get('module'); label=data.get('kind',{}).get('label')
+    product=data['product']['platform_product_id']; source_origin=report_navigation.origin(settings(),product)
     endpoint='image_modules.result' if module else 'image_analysis.result'
     def result_link(**values):
         """构造固定类型的版本及导出地址。"""
+        if source_origin and not values.get('download'):
+            values.update(return_to=source_origin['return_to'],return_mode=source_origin['mode'],return_state=source_origin['state'])
         return url_for(endpoint,task_id=task_id,**({'module':module} if module else {}),**values)
     def frame_link(sha):
         """构造本任务的图片副本地址。"""
@@ -92,7 +96,7 @@ def result_view(data):
         else: raise ValueError('下载格式无效')
         return Response(body,content_type=mime+'; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="images-{task_id}.{download}"'})
     return render_template('image_analysis_result.html',data=data,content=content,reading=report.reading(content) if content else None,
-        product=product,active='collections',shop_name=settings().shop_name,report_title=label+'分析报告' if label else '主图与详情选品报告',
+        product=product,source_origin=source_origin,active='collections',shop_name=settings().shop_name,report_title=label+'分析报告' if label else '主图与详情选品报告',
         result_link=result_link,frame_link=frame_link,check_url=url_for('image_modules.recheck',module=module,task_id=task_id) if module else url_for('image_analysis.recheck',task_id=task_id),
         return_url=url_for('pages.collection_product',product_id=product,module=module,batch=data['task']['parameters']['plan']['input']['batches'][0]['id']) if module else url_for('pages.collection_product',product_id=product,module='composite'),
         return_label='返回'+label+'模块' if label else '返回综合分析')

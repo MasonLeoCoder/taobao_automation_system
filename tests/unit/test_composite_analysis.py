@@ -108,15 +108,12 @@ class CompositeTests(TestCase):
         self.assertEqual(content['validation']['counts']['valid_count'], 2)
         self.assertEqual(saved['task']['processed_count'], 0)
         self.assertEqual(saved['task']['usage']['total_tokens'], 300)
-        page = self.client.get('/analysis/composite/tasks/'+task)
-        self.assertEqual(page.status_code, 200); self.assertIn('ui-report-evidence', page.text)
-        for fmt in ('md','html','json'):
-            response = self.client.get('/analysis/composite/tasks/'+task+'?download='+fmt)
-            self.assertEqual(response.status_code, 200)
-        checked = self.client.post('/api/analysis/composite/tasks/'+task+'/check', json={'report_id': saved['report']['id']}, headers=self.headers)
-        self.assertEqual(checked.status_code, 200); self.assertEqual(checked.json['ai_calls'], 0)
-        self.assertEqual(len(service.read(self.settings, task)['reports']), 2)
-        self.assertEqual(self.client.post('/api/analysis/composite/tasks/'+task+'/check', json={'report_id': saved['report']['id']}, headers=self.headers).status_code, 400)
+        # 旧综合执行与存储保留，但新Web只读取cross-v1，不提供旧报告兼容入口。
+        self.assertEqual(self.client.get('/analysis/composite/tasks/'+task).status_code,400)
+        checked = runtime.recheck(self.settings,saved,saved['report']['id'])
+        self.assertEqual(checked['ai_calls'],0)
+        self.assertEqual(len(service.read(self.settings,task)['reports']),2)
+        with self.assertRaises(ValueError): runtime.recheck(self.settings,service.read(self.settings,task),saved['report']['id'])
         self.assertEqual(client.complete_messages.call_count, 1)
         with self.assertRaises(LookupError): service.read(self.settings, self.question_task)
 

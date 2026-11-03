@@ -2,7 +2,8 @@
 import json
 from flask import Blueprint, request, render_template, current_app, jsonify, Response, url_for, redirect
 from ecommerce.web.routes.review_analysis import protect, payload
-from ecommerce.modules.composite_analysis import service, report, runtime
+from ecommerce.modules.cross_analysis import service, report, runtime
+from ecommerce.modules.cross_analysis.kinds import KINDS
 from ecommerce.shared.exceptions import TaskBusy
 from ecommerce.web import report_navigation
 
@@ -39,11 +40,17 @@ def new(product):
     """读取预览和候选，不创建任务；参数：所选版本和模型；返回：弹窗或整页。"""
     raw = request.args.get('output_tokens')
     output = int(raw) if raw else None
-    data = service.preview(settings(), product, request.args.get('review_report'), request.args.get('question_report'), request.args.get('model'), output)
-    default_return = url_for('.new', product=product, review_report=data['review_report'], question_report=data['question_report'],
-        model=data['model'], output_tokens=data['plan']['report_output_tokens'])
+    allowed = {'sources','dialog','model','output_tokens','origin'} | {k+'_report' for k in KINDS}
+    if set(request.args)-allowed or any(len(request.args.getlist(k)) != 1 for k in request.args):
+        raise ValueError('交叉分析预览参数无效。')
+    if request.args.get('sources') not in (None,'1') or any(k+'_report' in request.args for k in KINDS) and request.args.get('sources') != '1':
+        raise ValueError('来源选择标识无效，请重新选择报告。')
+    selection = {k:request.args[k+'_report'] for k in KINDS if request.args.get(k+'_report')} if request.args.get('sources') == '1' else None
+    data = service.preview(settings(), product, selection, request.args.get('model'), output)
+    default_return = url_for('.new', product=product, sources='1', **{k+'_report':v for k,v in data['selection'].items()},
+        model=data['model'], output_tokens=data['plan']['report_output_tokens'] if data['plan'] else None)
     candidate = report_navigation.target(settings(), product, request.args['origin']) if request.args.get('origin') else None
-    source_return = candidate[0] if candidate and candidate[1] != '综合分析设置' else default_return
+    source_return = candidate[0] if candidate and candidate[1] != '交叉分析设置' else default_return
     return render_template('composite_analysis_form.html' if request.args.get('dialog') == '1' else 'composite_analysis_new.html',
         data=data, product=product, source_return=source_return, active='collections', shop_name=settings().shop_name)
 
@@ -58,7 +65,7 @@ def source_return(product):
         from urllib.parse import urlsplit, parse_qs
         values = {k: v[0] for k, v in parse_qs(urlsplit(destination).query).items()}
         try:
-            service.preview(settings(), product, values.get('review_report'), values.get('question_report'), values.get('model'),
+            service.preview(settings(), product, {k:values[k+'_report'] for k in KINDS if values.get(k+'_report')}, values.get('model'),
                 int(values['output_tokens']) if values.get('output_tokens') else None)
         except (ValueError, LookupError):
             destination = url_for('pages.collection_product', product_id=product, module='composite'); valid = False
@@ -74,8 +81,8 @@ def source_return(product):
 @composite_analysis.post('/api/analysis/composite/products/<product>')
 def start(product):
     """创建确认的固定计划；参数：JSON；返回：任务地址或已有成功报告选择。"""
-    values = payload({'review_report','question_report','model','input_hash','plan_hash','allow_paid','force','output_tokens'},
-                     {'review_report','question_report','model','input_hash','plan_hash'})
+    values = payload({'selection','model','input_hash','plan_hash','allow_paid','force','output_tokens'},
+                     {'selection','model','input_hash','plan_hash'})
     value = service.start(settings(), product, **values); value['url'] = url_for('.result', task_id=value['id'])
     return jsonify(value)
 
@@ -91,7 +98,7 @@ def result(task_id):
     product = data['product']['platform_product_id']; download = request.args.get('download')
     if download:
         if not content: raise ValueError('尚无已保存报告。')
-        if download == 'md': body = content['markdown']; mime = 'text/markdown'
+        if download == 'md': body = report.markdown(content); mime = 'text/markdown'
         elif download == 'json': body = json.dumps(data, ensure_ascii=False, default=str); mime = 'application/json'
         elif download == 'html':
             styles = []

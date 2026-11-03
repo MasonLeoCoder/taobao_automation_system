@@ -19,3 +19,13 @@
 .ca-reading details{scroll-margin-top:20px}
 @media(max-width:1000px){.ca-reading-layout{grid-template-columns:minmax(0,1fr)}.ca-directory{position:static;max-height:none}}
 @media(max-width:700px){.ca-source-grid{grid-template-columns:minmax(0,1fr)}.ca-panel,.ca-reading{gap:18px}.ca-heading,.ca-latest{align-items:flex-start;gap:12px}.ca-heading>.ui-button{width:100%}.ca-metrics{gap:12px}.ca-paper{padding:18px}}
+
+/* 四类来源共用布局；控件外观仍由公共组件维护。 */
+.ca-source-picker{display:grid;gap:16px;margin-bottom:24px;min-width:0}
+.ca-source-row{display:grid;grid-template-columns:100px minmax(0,1fr) auto;gap:20px;align-items:center}
+.ca-kind{margin:0}.ca-source-choice{min-width:0}.ca-source-choice .ui-field{margin:0}.ca-source-choice p{margin:8px 0 0}
+.ca-report-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;align-items:start}
+.ca-report-heading>div{min-width:0;overflow-wrap:anywhere}
+.ca-report-navigation{display:flex;gap:12px;flex-wrap:wrap}.ca-source-picker .ss-container{min-width:0}
+@media(max-width:900px){.ca-report-heading{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){.ca-source-row{grid-template-columns:minmax(0,1fr);gap:12px}.ca-source-action .ui-button{width:100%}.ca-kind{align-self:start}.ca-report-navigation{width:100%}.ca-report-navigation>.ui-button{flex:1 1 auto}}

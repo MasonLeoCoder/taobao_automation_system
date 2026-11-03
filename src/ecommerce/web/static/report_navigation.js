@@ -7,14 +7,15 @@
   const folds=root=>{const counts=new Map();return [...root.querySelectorAll('details')].map(node=>{const base=node.id||hash(node.querySelector(':scope > summary')?.textContent||'');const n=counts.get(base)||0;counts.set(base,n+1);return {node,key:base+':'+n};});};
   const snapshotFolds=root=>folds(root).map(({node,key})=>({key,open:node.open}));
   const applyFolds=(root,values)=>{const state=new Map((values||[]).map(v=>[v.key,v.open]));for(const {node,key} of folds(root))if(state.has(key))node.open=state.get(key);};
-  const formState=form=>({fields:Object.fromEntries(['review_report','question_report','model','output_tokens'].map(key=>[key,form.elements[key].value])),
+  const fields=['reviews_report','questions_report','main_images_report','detail_images_report','model','output_tokens'];
+  const formState=form=>({fields:Object.fromEntries(fields.map(key=>[key,key.endsWith('_report')&&!form.elements['use_'+key.slice(0,-7)]?.checked?'':form.elements[key]?.value||''])),
     isDialog:!!form.closest('dialog'),folds:snapshotFolds(form),scroll:form.querySelector('.ui-confirm-body')?.scrollTop||0});
   const prune=()=>{const keys=[],names=[];for(let i=0;i<sessionStorage.length;i++)names.push(sessionStorage.key(i));for(const key of names){if(!key?.startsWith(prefix))continue;try{const value=JSON.parse(sessionStorage.getItem(key));if(!Number.isFinite(value.created)||Date.now()-value.created>maxAge)sessionStorage.removeItem(key);else keys.push({key,created:value.created});}catch{sessionStorage.removeItem(key);}}
     keys.sort((a,b)=>b.created-a.created);for(const entry of keys.slice(9))sessionStorage.removeItem(entry.key);};
   document.addEventListener('click',event=>{
     const link=event.target.closest('a[data-report-source]');if(!link||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
     const url=new URL(link.href,location.origin),target=url.searchParams.get('return_to');if(!target||url.origin!==location.origin)return;
-    try{prune();const id=crypto.randomUUID().replaceAll('-',''),form=link.closest('[data-ca-form]');
+    try{prune();const id=crypto.randomUUID().replaceAll('-',''),form=link.closest('[data-ca-form],[data-cross-picker]');
       const main=document.getElementById('main');const value={created:Date.now(),target:normalized(target),y:scrollY,
         folds:main?snapshotFolds(main):[],form:form?formState(form):null};
       sessionStorage.setItem(prefix+id,JSON.stringify(value));url.searchParams.set('return_state',id);link.href=url.href;
@@ -25,12 +26,12 @@
   const restore=async()=>{
     const url=new URL(location.href),id=url.searchParams.get('_report_back'),invalid=url.searchParams.get('_report_return_notice')==='1';
     if(!id&&!invalid)return;url.searchParams.delete('_report_back');url.searchParams.delete('_report_return_notice');history.replaceState(history.state,'',url.pathname+url.search+url.hash);
-    if(invalid){notice('原返回页面已失效，已返回该商品的综合分析页。');return;}
+    if(invalid){notice('原返回页面已失效，已返回该商品的交叉分析页。');return;}
     let state;
     try{if(!/^[a-f0-9]{32}$/.test(id))throw Error();state=JSON.parse(sessionStorage.getItem(prefix+id));
       const validFolds=rows=>Array.isArray(rows)&&rows.every(v=>typeof v?.key==='string'&&typeof v.open==='boolean');
       if(!state||!Number.isFinite(state.created)||!Number.isFinite(state.y)||!validFolds(state.folds)||Date.now()-state.created>maxAge||state.target!==normalized(location.href))throw Error();
-      if(state.form&&(!validFolds(state.form.folds)||typeof state.form.isDialog!=='boolean'||!Number.isFinite(state.form.scroll)||!state.form.fields||!['review_report','question_report','model','output_tokens'].every(k=>typeof state.form.fields[k]==='string')))throw Error();
+      if(state.form&&(!validFolds(state.form.folds)||typeof state.form.isDialog!=='boolean'||!Number.isFinite(state.form.scroll)||!state.form.fields||!fields.every(k=>typeof state.form.fields[k]==='string')))throw Error();
     }catch{notice('阅读位置记录已失效，已返回原页面；请重新选择需要查看的位置。');return;}
     const main=document.getElementById('main');if(main)applyFolds(main,state.folds);
     if(state.form?.isDialog){
@@ -41,7 +42,7 @@
       if(form){applyFolds(form,state.form.folds);form.querySelector('.ui-confirm-body').scrollTop=state.form.scroll;
         form.closest('dialog').addEventListener('close',()=>requestAnimationFrame(()=>{if(!document.querySelector('dialog[open]'))scrollTo({top:state.y,behavior:'instant'});}),{once:true});}
       else notice('原分析设置无法恢复，资料可能已变化；请重新选择来源报告，未发出AI请求。');
-    }else if(state.form){const form=document.querySelector('[data-ca-form]');if(form)applyFolds(form,state.form.folds);}
+    }else if(state.form){const form=document.querySelector('[data-ca-form],[data-cross-picker]');if(form){applyFolds(form,state.form.folds);if(form.matches('[data-cross-picker]')){for(const key of fields){if(!key.endsWith('_report'))continue;const value=state.form.fields[key],select=form.elements[key],use=form.elements['use_'+key.slice(0,-7)];if(select&&use){if([...select.options].some(o=>o.value===value)){select.value=value;use.checked=true;}else use.checked=false;}}form.dispatchEvent(new Event('cross:selection-restored'));}}}
     clearConsent();if(!state.form?.isDialog)requestAnimationFrame(()=>requestAnimationFrame(()=>scrollTo({top:state.y,behavior:'instant'})));
   };
   restore();

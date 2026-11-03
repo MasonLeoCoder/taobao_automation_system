@@ -41,8 +41,11 @@ def units(incoming):
     return result
 
 
-def plan(root, config, model, incoming, rules, output_tokens=None):
+def plan(root, config, model, incoming, rules, output_tokens=None, *, messages_builder=None, units_builder=None):
     """完整预检消息、分片与汇总上界；参数：配置及固定输入；返回：不联网计划。"""
+    # 新交叉分析复用容量/预算核心，旧任务仍使用原消息与拆分规则。
+    messages = messages_builder or globals()['messages']
+    units = units_builder or globals()['units']
     profile = capability(config, model); counter = Counter(root, config, profile)
     output = config.report_output_tokens if output_tokens is None else output_tokens
     if type(output) is not int or not 512 <= output <= profile['max_output_tokens']:

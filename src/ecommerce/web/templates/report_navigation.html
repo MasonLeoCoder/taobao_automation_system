@@ -3,7 +3,7 @@
 <a class="ui-button ui-secondary" data-report-source href="{{ url_for(endpoint,task_id=task_id,version=version,return_to=return_to,return_mode=mode) }}">{{ label }}</a>
 {%- endmacro %}
 {% macro origin_hint(nav) -%}
-{% if nav %}<p class="ui-form-note">来自：{{ nav.label }}{% if not nav.valid %} · 原返回位置已失效，将返回该商品的综合分析页。{% endif %}</p>{% endif %}
+{% if nav %}<p class="ui-form-note">来自：{{ nav.label }}{% if not nav.valid %} · 原返回位置已失效，将返回该商品的交叉分析页。{% endif %}</p>{% endif %}
 {%- endmacro %}
 {% macro back_link(nav) -%}
 {% if nav %}{{ action_link('← 返回'~nav.label,nav.href) }}{% endif %}

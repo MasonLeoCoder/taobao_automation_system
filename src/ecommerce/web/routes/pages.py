@@ -401,7 +401,7 @@ def collection_product(product_id):
         if analysis_kind=='images':
             return redirect(url_for('pages.collection_product',product_id=product_id,module='main_images'))
         else:
-            from ecommerce.modules.composite_analysis.service import dashboard
+            from ecommerce.modules.cross_analysis.service import dashboard
             composite_view=dashboard(settings,product_id)
     return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,image_analysis_view=image_analysis_view,image_module_view=image_module_view,analysis_kind=analysis_kind,image_source_origin=image_source_origin,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,

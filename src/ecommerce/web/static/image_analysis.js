@@ -57,7 +57,7 @@
   };
   document.querySelectorAll('[data-ia-open]').forEach(link=>link.addEventListener('click',event=>{event.preventDefault();openDialog(link.href);}));
   document.querySelectorAll('[data-ia-check]').forEach(button=>button.onclick=async()=>{button.disabled=true;const feedback=document.querySelector('[data-ia-check-feedback]');
-    try{await post(button.dataset.iaCheck,{report_id:button.dataset.reportId});location.href=location.pathname;}
+    try{await post(button.dataset.iaCheck,{report_id:button.dataset.reportId});const next=new URL(location.href);next.searchParams.delete("version");location.href=next.href;}
     catch(error){feedback.textContent=error.confirmed?error.message:'本地检查保存结果未知，请刷新核对；该操作没有调用AI。';button.disabled=false;}
   });
 })();
