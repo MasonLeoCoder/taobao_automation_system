@@ -12,7 +12,7 @@ DIRECT = {
     'pages.collection_product': 'catalog', 'pages.collection_products': 'catalog',
     'image_tools.main_images': 'catalog', 'image_tools.detail_images': 'catalog',
 }
-BLUEPRINTS = {'analysis': 'analysis', 'favorites': 'favorites', 'ai': 'ai',
+BLUEPRINTS = {'ledger': 'ledger', 'analysis': 'analysis', 'favorites': 'favorites', 'ai': 'ai',
               'review_analysis': 'catalog', 'question_analysis': 'catalog', 'composite_analysis': 'catalog',
               'image_analysis': 'catalog', 'image_modules': 'catalog',
               'image_tools': 'tools', 'video_tools': 'tools', 'bilibili_tools': 'tools', 'youtube_tools': 'tools'}

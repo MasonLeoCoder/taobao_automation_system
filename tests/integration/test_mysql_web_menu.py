@@ -45,15 +45,15 @@ class MySQLWebMenuTests(TestCase):
         groups, items = self.read(None)
         self.assertEqual((len(groups), len(items)), (6, 31))
         table = self.tables['web_menu_items']
-        before = self.connection.execute(sa.select(table).where(table.c.menu_key == 'ledger')).mappings().one()
-        self.connection.execute(table.update().where(table.c.menu_key == 'ledger').values(name='事务内收支账本', is_visible=False))
-        after = self.connection.execute(sa.select(table).where(table.c.menu_key == 'ledger')).mappings().one()
+        before = self.connection.execute(sa.select(table).where(table.c.menu_key == 'business-data')).mappings().one()
+        self.connection.execute(table.update().where(table.c.menu_key == 'business-data').values(name='事务内收支账本', is_visible=False))
+        after = self.connection.execute(sa.select(table).where(table.c.menu_key == 'business-data')).mappings().one()
         self.assertGreater(after['updated_at'], before['updated_at'])
         self.assertLess(abs((after['updated_at'] - database_now()).total_seconds()), 10)
         for changes, code in ((dict(group_key='missing-group'), 1452), (dict(sort_order=-1), 3819),
                               (dict(construction_status='not-implemented'), 3819)):
             with self.subTest(changes=changes), self.assertRaises(sa.exc.DBAPIError) as caught, self.connection.begin_nested():
-                self.connection.execute(table.update().where(table.c.menu_key == 'ledger').values(**changes))
+                self.connection.execute(table.update().where(table.c.menu_key == 'business-data').values(**changes))
             self.assertEqual(caught.exception.orig.args[0], code)
         group = self.tables['web_menu_groups']
         with self.assertRaises(sa.exc.IntegrityError), self.connection.begin_nested():
@@ -65,23 +65,23 @@ class MySQLWebMenuTests(TestCase):
                 self.connection.exec_driver_sql('UPDATE web_menu_items SET '+field+'=2 WHERE menu_key=\'ledger\'')
             self.assertEqual(caught.exception.orig.args[0], 3819)
         with self.assertRaises(sa.exc.IntegrityError), self.connection.begin_nested():
-            self.connection.execute(table.insert().values(menu_key='ledger', name='重复主键', group_key='operations', construction_status='planned'))
+            self.connection.execute(table.insert().values(menu_key='business-data', name='重复主键', group_key='operations', construction_status='planned'))
 
     def test_mysql_edit_refresh_hide_disable_parent_and_preserve_existing_config(self):
         items, groups = self.tables['web_menu_items'], self.tables['web_menu_groups']
-        self.connection.execute(items.update().where(items.c.menu_key == 'ledger').values(
+        self.connection.execute(items.update().where(items.c.menu_key == 'business-data').values(
             name='真实MySQL事务账本', sort_order=0, group_key='research', is_visible=False))
-        response = self.client.get('/plans/ledger')
+        response = self.client.get('/plans/business-data')
         self.assertEqual(response.status_code, 200)
         self.assertIn('<h1>真实MySQL事务账本</h1>', response.get_data(as_text=True))
         self.connection.execute(groups.update().where(groups.c.group_key == 'research').values(is_enabled=False))
-        self.assertEqual(self.client.get('/plans/ledger').status_code, 403)
+        self.assertEqual(self.client.get('/plans/business-data').status_code, 403)
         self.connection.execute(groups.update().where(groups.c.group_key == 'research').values(is_enabled=True))
-        self.assertEqual(self.client.get('/plans/ledger').status_code, 200)
+        self.assertEqual(self.client.get('/plans/business-data').status_code, 200)
         # 使用冻结种子补缺函数，不能改写刚才的人工设置。
         from importlib import import_module
         migration = import_module('ecommerce.infrastructure.storage.mysql_migrations.versions.0025_web_menu')
         migration.seed_missing(self.connection)
-        row = self.connection.execute(sa.select(items).where(items.c.menu_key == 'ledger')).mappings().one()
+        row = self.connection.execute(sa.select(items).where(items.c.menu_key == 'business-data')).mappings().one()
         self.assertEqual((row['name'], row['sort_order'], row['group_key'], row['is_visible']),
                          ('真实MySQL事务账本', 0, 'research', False))

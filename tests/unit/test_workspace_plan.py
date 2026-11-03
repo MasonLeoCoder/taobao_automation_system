@@ -53,7 +53,7 @@ class WorkspacePlanTests(TestCase):
         expected = {'home': '/', 'collection': '/modules/collection',
                     'searches': '/collections/searches', 'catalog': '/collections/details',
                     'analysis': '/analysis/searches', 'favorites': '/favorites',
-                    'tools': '/tools', 'tasks': '/tasks', 'logs': '/logs', 'ai': '/settings/ai'}
+                    'tools': '/tools', 'tasks': '/tasks', 'logs': '/logs', 'ai': '/settings/ai', 'ledger': '/plans/ledger'}
         with self.app.test_request_context('/'):
             actual = {item['key']: item['href'] for group in workspace_navigation('home')
                       for item in group['items'] if not item['planned']}
@@ -80,9 +80,7 @@ class WorkspacePlanTests(TestCase):
 
     def test_ledger_and_listing_explain_scope_without_fake_actions(self):
         """账本与填写页明确实际用途、已有能力及尚未建设范围。"""
-        text = self.client.get('/plans/ledger').get_data(as_text=True)
-        for phrase in ('手动记录进货、投流', '收支结余与经营利润', '销售金额和平台到账款不重复计算'):
-            self.assertIn(phrase, text)
+        self.assertEqual(self.client.get('/plans/ledger').status_code, 409)
         text = self.client.get('/plans/listing').get_data(as_text=True)
         self.assertIn('现有命令行已具备', text)
         self.assertIn('不提供上架或提交按钮', text)

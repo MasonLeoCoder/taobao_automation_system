@@ -46,6 +46,7 @@ class MenuDatabaseTests(TestCase):
         self.tables = metadata.tables
         with self.engine.begin() as connection:
             MIGRATION.seed_missing(connection)
+            connection.execute(self.tables['web_menu_items'].update().where(self.tables['web_menu_items'].c.menu_key == 'ledger').values(construction_status='available'))
         mocked = patch('ecommerce.infrastructure.storage.web_menus.task_store',
                        return_value=SimpleNamespace(engine=self.engine, tables=self.tables))
         self.store = mocked.start()
@@ -67,44 +68,44 @@ class MenuDatabaseTests(TestCase):
 
     def nav(self):
         """读取独立请求的菜单；参数：无；返回：六组有效菜单。"""
-        with self.app.test_request_context('/plans/ledger'):
-            return workspace_navigation('plan:ledger')
+        with self.app.test_request_context('/plans/business-data'):
+            return workspace_navigation('plan:business-data')
 
     def test_names_group_order_and_plan_title_refresh_without_restart(self):
         self.change('research', group=True, name='市场研究')
-        self.change('ledger', name='收支管理', group_key='research', sort_order=0)
-        response = self.client.get('/plans/ledger')
+        self.change('business-data', name='收支管理', group_key='research', sort_order=0)
+        response = self.client.get('/plans/business-data')
         text = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
         self.assertIn('<h1>收支管理</h1>', text)
         self.assertIn('市场研究 / 收支管理', text)
         group = next(group for group in self.nav() if group['key'] == 'research')
-        self.assertEqual(group['items'][0]['key'], 'ledger')
-        self.assertEqual(group['items'][0]['href'], '/plans/ledger')
-        self.change('ledger', name='真实账本')
-        self.assertIn('<h1>真实账本</h1>', self.client.get('/plans/ledger').get_data(as_text=True))
+        self.assertEqual(group['items'][0]['key'], 'business-data')
+        self.assertEqual(group['items'][0]['href'], '/plans/business-data')
+        self.change('business-data', name='真实账本')
+        self.assertIn('<h1>真实账本</h1>', self.client.get('/plans/business-data').get_data(as_text=True))
 
     def test_one_snapshot_per_request_but_no_cross_request_cache(self):
         with patch('ecommerce.infrastructure.storage.web_menus.read', wraps=__import__(
                 'ecommerce.infrastructure.storage.web_menus', fromlist=['read']).read) as reader:
-            self.client.get('/plans/ledger')
+            self.client.get('/plans/business-data')
             self.assertEqual(reader.call_count, 1)
-            self.client.get('/plans/ledger')
+            self.client.get('/plans/business-data')
             self.assertEqual(reader.call_count, 2)
 
     def test_hide_and_disable_are_independent_and_parent_retains_child_setting(self):
-        self.change('ledger', is_visible=False)
-        self.assertEqual(self.client.get('/plans/ledger').status_code, 200)
-        self.assertFalse(any(item['key'] == 'ledger' for group in self.nav() for item in group['items']))
+        self.change('business-data', is_visible=False)
+        self.assertEqual(self.client.get('/plans/business-data').status_code, 200)
+        self.assertFalse(any(item['key'] == 'business-data' for group in self.nav() for item in group['items']))
         self.change('operations', group=True, is_enabled=False)
-        response = self.client.get('/plans/ledger')
+        response = self.client.get('/plans/business-data')
         self.assertEqual(response.status_code, 403)
         self.assertIn('所属分组“店铺经营”已停用', response.get_data(as_text=True))
         self.change('operations', group=True, is_enabled=True)
-        self.assertEqual(self.client.get('/plans/ledger').status_code, 200)
+        self.assertEqual(self.client.get('/plans/business-data').status_code, 200)
         self.change('operations', group=True, is_visible=False)
         self.assertFalse(any(group['key'] == 'operations' for group in self.nav()))
-        self.assertEqual(self.client.get('/plans/ledger').status_code, 200)
+        self.assertEqual(self.client.get('/plans/business-data').status_code, 200)
 
     def test_empty_group_is_hidden_and_disabled_related_links_are_removed(self):
         with self.engine.begin() as connection:
@@ -157,15 +158,15 @@ class MenuDatabaseTests(TestCase):
     def test_configuration_failure_missing_key_and_wrong_construction_fail_closed(self):
         action = self.stub('collection_jobs.create')
         with patch('ecommerce.infrastructure.storage.web_menus.read', side_effect=MySQLStorageError('合成断库')):
-            self.assertEqual(self.client.get('/plans/ledger').status_code, 503)
+            self.assertEqual(self.client.get('/plans/business-data').status_code, 503)
             self.assertEqual(self.client.post('/api/collection-jobs', json={}).status_code, 503)
         action.assert_not_called()
-        self.change('ledger', construction_status='available')
-        self.assertEqual(self.client.get('/plans/ledger').status_code, 503)
-        self.change('ledger', construction_status='planned')
+        self.change('business-data', construction_status='available')
+        self.assertEqual(self.client.get('/plans/business-data').status_code, 503)
+        self.change('business-data', construction_status='planned')
         with self.engine.begin() as connection:
             table = self.tables['web_menu_items']
-            connection.execute(table.delete().where(table.c.menu_key == 'ledger'))
+            connection.execute(table.delete().where(table.c.menu_key == 'business-data'))
         self.assertEqual(self.client.get('/').status_code, 503)
 
     def test_shared_resource_ownership_cannot_bypass_disabled_catalog(self):
@@ -178,11 +179,11 @@ class MenuDatabaseTests(TestCase):
             self.assertEqual(self.client.get('/api/collections/batches/1/records').status_code, 200)
 
     def test_seed_missing_does_not_override_user_changes(self):
-        self.change('ledger', name='用户账本', sort_order=7, is_enabled=False)
+        self.change('business-data', name='用户账本', sort_order=7, is_enabled=False)
         with self.engine.begin() as connection:
             MIGRATION.seed_missing(connection)
             row = connection.execute(sa.select(self.tables['web_menu_items']).where(
-                self.tables['web_menu_items'].c.menu_key == 'ledger')).mappings().one()
+                self.tables['web_menu_items'].c.menu_key == 'business-data')).mappings().one()
             self.assertEqual((row['name'], row['sort_order'], row['is_enabled']), ('用户账本', 7, False))
 
     def test_shared_file_owners_keep_list_thumbnails_but_not_disabled_detail_data(self):
@@ -209,7 +210,7 @@ class MenuDatabaseTests(TestCase):
             if rule.endpoint in ('static', 'pages.health'):
                 continue
             path = re.sub(r'<(?:int:)?[^>]+>', '1', str(rule))
-            path = path.replace('/plans/1', '/plans/ledger')
+            path = path.replace('/plans/1', '/plans/business-data')
             method = 'GET' if 'GET' in rule.methods else 'POST'
             with self.app.test_request_context(path, method=method, json={}):
                 self.assertIsInstance(requirements(menu_data()), tuple, rule.endpoint)
