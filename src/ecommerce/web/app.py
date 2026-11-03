@@ -18,6 +18,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024)
     from ecommerce.web.routes.pages import pages
     app.register_blueprint(pages)
+    from ecommerce.web.routes.workspace import workspace
+    from ecommerce.web.workspace_plan import workspace_navigation
+    app.register_blueprint(workspace)
+    app.add_template_global(workspace_navigation)
     from ecommerce.web.routes.analysis import analysis
     app.register_blueprint(analysis)
     from ecommerce.web.routes.review_analysis import review_analysis

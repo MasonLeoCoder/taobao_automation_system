@@ -1,0 +1,16 @@
+{% set groups = workspace_navigation(active|default(none)) %}
+<details class="workspace-menu" data-workspace-menu open>
+  <summary class="ui-workspace-mobile-toggle">功能导航 <span aria-hidden="true">⌄</span></summary>
+  <nav class="workspace-nav" aria-label="主导航">
+    {% for group in groups %}
+    <details class="workspace-group" data-nav-group="{{ group.key }}"{% if group.current %} data-current-group open{% endif %}>
+      <summary class="ui-workspace-group-toggle"><span>{{ group.label }}</span><span class="workspace-chevron" aria-hidden="true">⌄</span></summary>
+      <div class="workspace-group-items">
+        {% for item in group['items'] %}
+        <a class="workspace-nav-link{{ ' active' if item.current }}" href="{{ item.href }}"{% if item.current %} aria-current="page"{% endif %}><span>{{ item.label }}</span>{% if item.planned %}<span class="ui-workspace-planned">待建设</span>{% endif %}</a>
+        {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
+  </nav>
+</details>

@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% from 'form_controls.html' import action_link %}
+{% block title %}{{ plan.label }} · 功能规划{% endblock %}
+{% block breadcrumb %}{{ plan.group }} / {{ plan.label }}{% endblock %}
+{% block content %}
+<section class="intro plan-intro">
+  <div><p class="eyebrow">{{ plan.group }} · 功能规划</p><h1>{{ plan.label }}</h1><p>{{ plan.problem }}</p></div>
+  <span class="ui-workspace-planned plan-status">待建设</span>
+</section>
+<div class="plan-notice"><strong>已纳入规划，尚未建设</strong><p>这里先说明准备解决的问题。具体功能与使用方式将在建设时确定，目前不提供业务操作。</p></div>
+<div class="plan-grid">
+  <section class="panel plan-help"><p class="eyebrow">计划提供的帮助</p><h2>希望在这里完成什么</h2><ul>{% for text in plan.help_items %}<li>{{ text }}</li>{% endfor %}</ul></section>
+  <section class="panel"><p class="eyebrow">需要准备的资料</p><h2>从哪些信息开始</h2><p class="plan-copy">{{ plan.inputs }}</p><p>资料不足时，计划明确说明可判断的范围和需要补充的内容。</p></section>
+  {% if plan.note %}<section class="panel plan-note"><h2>与现有能力的关系</h2><p class="plan-copy">{{ plan.note }}</p></section>{% endif %}
+</div>
+<section class="panel plan-existing"><div><p class="eyebrow">目前可以先使用</p><h2>已有功能入口</h2><p>以下入口已接入工作台，可以继续使用。</p></div><div class="plan-links">{% for item in plan.related_links %}{{ action_link(item.label, item.href) }}{% endfor %}</div></section>
+{% endblock %}

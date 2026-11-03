@@ -9,28 +9,18 @@
   {% block extra_head %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static',filename='searchable_select.css') }}">
   <link rel="stylesheet" href="{{ url_for('static',filename='form_controls.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static',filename='workspace.css') }}">
 </head>
 <body>
 <a class="skip" href="#main">跳到主要内容</a>
-<aside>
+<aside class="workspace-sidebar">
   <a class="brand" href="/">商<span>电商工作台<small>ECOMMERCE WORKSPACE</small></span></a>
   <div class="shop"><span class="dot"></span>{{ shop_name }}<small>单店铺 · 本地工作空间</small></div>
-  <nav aria-label="主导航">
-    <a class="{{ 'active' if active == 'home' }}" href="/">工作台概览</a>
-    <a class="{{ 'active' if active == 'tasks' }}" href="/tasks">任务记录</a>
-    <a class="{{ 'active' if active == 'logs' }}" href="/logs">运行日志</a>
-    <a class="{{ 'active' if active == 'collections' and ('/searches' in request.path or '/batches' in request.path or request.args.get('view')=='searches') }}" href="{{ url_for('pages.collection_searches') }}">搜索列表</a>
-    <a class="{{ 'active' if active == 'collections' and '/searches' not in request.path and '/batches' not in request.path and request.args.get('view')!='searches' }}" href="{{ url_for('pages.collection_details') }}">商品库</a>
-    <a class="{{ 'active' if active == 'collection' }}" href="{{ url_for('pages.module',key='collection') }}">商品采集</a>
-    <a class="{{ 'active' if active == 'analysis' }}" href="{{ url_for('analysis.index') }}">搜索词分析</a>
-    <a class="{{ 'active' if active == 'favorites' }}" href="{{ url_for('favorites.index') }}">我的关注</a>
-    <a class="{{ 'active' if active == 'tools' }}" href="{{ url_for('image_tools.index') }}">工具箱</a>
-  </nav>
-  <nav aria-label="设置"><a class="{{ 'active' if active == 'ai' }}" href="{{ url_for('ai.index') }}">AI设置</a></nav>
-  <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。<small>基础架构 · v0.2</small></div>
+  {% include 'workspace_sidebar.html' %}
+  <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。</div>
 </aside>
 <main id="main">
-  <header><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span><span class="local"><span class="dot"></span>本地服务</span></header>
+  <header class="workspace-header"><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span><span class="local"><span class="dot"></span>本地服务</span></header>
   {% block content %}{% endblock %}
   <footer>数据来自本地运行记录 · 时间按 Asia/Shanghai 展示</footer>
 </main>
@@ -63,6 +53,7 @@
 <script src="{{ url_for('static',filename='help_tooltip.js') }}" defer></script>
 <script src="{{ url_for('static',filename='collection.js') }}" defer></script>
 <script src="{{ url_for('static',filename='back_to_top.js') }}" defer></script>
+<script src="{{ url_for('static',filename='workspace_navigation.js') }}" defer></script>
 {% block extra_scripts %}{% endblock %}
 <script src="{{ url_for('static',filename='report_navigation.js') }}" defer></script>
 </body></html>
