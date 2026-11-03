@@ -20,7 +20,7 @@
   <div class="sidebar-note">从资料到运营<br>让重复工作有序发生。</div>
 </aside>
 <main id="main">
-  <header class="workspace-header"><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span><span class="local"><span class="dot"></span>本地服务</span></header>
+  <header class="workspace-header"><span>我的工作空间 <b>/</b> {% block breadcrumb %}概览{% endblock %}</span><span class="local"><span class="dot"></span>{{ environment_label() }} · {{ environment_database() }}</span></header>
   {% block content %}{% endblock %}
   <footer>数据来自本地运行记录 · 时间按 Asia/Shanghai 展示</footer>
 </main>

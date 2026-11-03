@@ -126,7 +126,7 @@ def parser() -> argparse.ArgumentParser:
     database = commands.add_parser("database", help="MySQL 基础连接、显式升级、字段字典与独立库验证")
     database_actions = database.add_subparsers(dest="action", required=True)
     database_actions.add_parser("check", help="只读核对连接、版本、表字段备注及关联约束")
-    database_actions.add_parser("upgrade", help="使用迁移账号显式升级 MySQL 表结构")
+    database_actions.add_parser("upgrade", help="统一升级正式、人工测试和自动验证库；验证配置仅准备验证库")
     database_actions.add_parser('replay-events',help='补写属于当前库的本地事件流水；不执行浏览器动作')
     database_actions.add_parser('migrate-collection-jobs',help='核对并迁移当前派发记录到统一申请表，不启动采集')
     dictionary = database_actions.add_parser("dictionary", help="按同版结构生成完整中文字段字典")
@@ -156,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         settings = load_settings(args.config)
+        from ecommerce.infrastructure.storage.environments import label, assert_writable
+        if args.command not in ('database','status','logs','collections','tasks','web'):
+            assert_writable(settings.mysql)
+        if settings.environment == 'test' and getattr(args,'submit',False):
+            raise ValueError('人工测试环境禁止提交真实店铺上架')
+        print('运行环境：'+label(settings)+'；数据库：'+settings.mysql.database, file=sys.stderr)
         prepare_workspace(settings)
         setup_logging(settings)
         if args.command == 'analysis':

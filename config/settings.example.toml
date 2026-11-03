@@ -1,3 +1,4 @@
+environment = "production" # production正式 / test人工测试 / verify自动验证，必须与库名匹配。
 # 项目配置模板：程序默认读取 config/settings.toml，不自动读取本文件。
 # 仅首次部署时复制为 settings.toml，再在本机填写 MySQL 密码。
 # 后续更新项目时逐项补充配置，保留已有密码和本机值，不覆盖整个实际配置。

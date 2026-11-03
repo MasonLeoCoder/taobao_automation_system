@@ -129,6 +129,7 @@ class Settings:
     collection_backend: str = "files"
     collection_module_timeouts: dict = field(default_factory=lambda: {name:120000 for name in
         ('basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions')})
+    environment: str = ""
     active_platform: str = 'qianniu'
     qianniu_session_path: Path | None = None
     qianniu_profile_path: Path | None = None
@@ -255,6 +256,13 @@ def load_settings(config_path: str | None = None, root: Path | None = None) -> S
     settings=replace(settings,collection_module_timeouts={**settings.collection_module_timeouts,**module_timeouts})
     settings=replace(settings,bilibili=bilibili_options(values.get('bilibili',{}),root))
     settings=replace(settings,youtube=youtube_options(values.get('youtube',{}),root))
+    inferred = {'taobao_automation': 'production', 'taobao_automation_test': 'test', 'taobao_automation_verify': 'verify'}.get(settings.mysql.database, '')
+    environment = values.get('environment', inferred)
+    if environment not in ('', 'production', 'test', 'verify') or (environment and environment != inferred):
+        raise ValueError('环境标识与数据库名称不匹配')
+    settings = replace(settings, environment=environment)
+    from ecommerce.infrastructure.storage.environments import validate
+    validate(settings)
     settings.for_platform("taobao")  # 配置冲突在启动前报错，避免混用会话。
     return settings
 

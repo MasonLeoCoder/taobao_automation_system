@@ -43,6 +43,13 @@ def create_mysql_engine(settings: MySQLSettings, *, migration=False):
     engine = sa.create_engine(url,pool_size=2,max_overflow=1,pool_pre_ping=True,pool_recycle=1800,
         hide_parameters=True,connect_args={"connect_timeout":settings.connect_timeout,"read_timeout":10,"write_timeout":10})
 
+    @sa.event.listens_for(engine, "before_cursor_execute")
+    def guard_write(connection, cursor, statement, parameters, context, executemany):
+        """维护期间拒绝SQL写入；参数：SQL执行上下文；返回：无。"""
+        from ecommerce.infrastructure.storage.environments import assert_writable
+        if not re.match(r'^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|SET|USE)\b', statement, re.I):
+            assert_writable(settings)
+
     @sa.event.listens_for(engine,"connect")
     def configure_session(connection, record):
         """统一会话时区及严格写入；参数：DBAPI 连接、池记录；返回：无。"""

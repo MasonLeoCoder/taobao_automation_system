@@ -20,7 +20,8 @@ def settings_from_payload(values, *, mysql=None):
     if mysql is not None and mysql_connection_target(previous)!=mysql_connection_target(mysql):
         raise ValueError('采集申请数据库与当前连接目标不匹配')
     values['mysql']=mysql if mysql is not None else previous
-    return Settings(**values)
+    from ecommerce.infrastructure.storage.environments import validate
+    return validate(Settings(**values))
 
 
 def execute(workspace, identifier, claim_token, *, bootstrap=None):

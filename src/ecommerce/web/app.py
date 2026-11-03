@@ -10,13 +10,26 @@ def create_app(settings: Settings | None = None) -> Flask:
     """创建 Web 应用；参数：可选配置；返回：Flask 应用。"""
     settings = settings or load_settings()
     prepare_workspace(settings)
-    initialize(settings.task_database)
-    if settings.task_backend=='mysql' and settings.collection_backend=='mysql':
+    from ecommerce.infrastructure.storage.environments import label, validate, state_path, assert_writable
+    validate(settings)
+    maintenance = state_path(settings.mysql)
+    if not maintenance or not maintenance.exists():
+        initialize(settings.task_database)
+    if settings.task_backend=='mysql' and settings.collection_backend=='mysql' and (not maintenance or not maintenance.exists()):
         from ecommerce.modules.collection.dispatch import on_web_start
         on_web_start(settings)
     app = Flask(__name__)
     app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024,
                       WORKSPACE_MENU_DATABASE=settings.task_backend == 'mysql')
+    app.add_template_global(lambda: label(settings), 'environment_label')
+    app.add_template_global(lambda: settings.mysql.database, 'environment_database')
+    @app.before_request
+    def environment_guard():
+        """维护期间阻止页面写入；参数：无；返回：503或正常继续。"""
+        from flask import request
+        if request.method not in ('GET','HEAD','OPTIONS'):
+            assert_writable(settings.mysql)
+
     from ecommerce.web.routes.pages import pages
     app.register_blueprint(pages)
     from ecommerce.web.routes.workspace import workspace

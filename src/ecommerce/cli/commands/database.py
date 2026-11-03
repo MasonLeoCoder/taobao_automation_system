@@ -39,6 +39,10 @@ def execute(settings,args):
                 json.dump(report,handle,ensure_ascii=False,indent=2)
             print('派发申请迁移完成，未启动采集；报告：'+str(path))
             return 0
+        if args.action=='upgrade' and settings.mysql.database in ('taobao_automation','taobao_automation_test'):
+            from ecommerce.infrastructure.storage.environments import upgrade_all
+            print(json.dumps(upgrade_all(settings.root),ensure_ascii=False,indent=2))
+            return 0
         if args.action=='upgrade':
             from ecommerce.infrastructure.tasks.lock import all_browser_resources
             with all_browser_resources(settings):

@@ -20,7 +20,7 @@ connect_timeout = 5
 
 ## 模板与实际配置
 
-settings.example.toml现为MySQL正式库部署模板，显式使用task_backend=mysql、collection_backend=mysql、database=taobao_automation和root单账号；淘宝采用Chrome/native_cdp，新机器需安装Chrome。模板与本机实际配置采用相同的32个已启用配置项、分组和顺序，当前有效参数一致，仅实际配置中的密码不同。文件顶部区分模板与实际配置的用途；路径和环境变量兼容项作为注释示例保留。
+settings.example.toml现为MySQL正式库部署模板，显式使用task_backend=mysql、collection_backend=mysql、database=taobao_automation和root单账号；淘宝采用Chrome/native_cdp，新机器需安装Chrome。模板与本机实际配置采用对应的已启用配置项、分组和顺序，当前有效参数一致，仅实际配置中的密码不同。文件顶部区分模板与实际配置的用途；路径和环境变量兼容项作为注释示例保留。
 
 首次部署在项目根目录CMD执行，实际配置已存在时跳过复制：
 
@@ -77,7 +77,7 @@ if not exist "workspace" mkdir "workspace"
 if not exist "workspace\settings.verify.toml" copy "config\settings.example.toml" "workspace\settings.verify.toml"
 ```
 
-仅在该本地副本中把[mysql].database改为taobao_automation_verify，并填写本机管理员密码，其他相对路径仍按项目根目录解析。workspace已被Git忽略，实际密码不能回填到示例模板。验证库尚未建表或未升级时，先正常结束采集，再显式执行以下upgrade；已有当前结构时跳过升级，先check后verify：
+在该本地副本中同时把environment改为verify、[mysql].database改为taobao_automation_verify，并填写本机管理员密码，其他相对路径仍按项目根目录解析。workspace已被Git忽略，实际密码不能回填到示例模板。验证库尚未建表或未升级时，先正常结束采集，再显式执行以下upgrade；已有当前结构时跳过升级，先check后verify：
 
 ```cmd
 python main.py --config "workspace/settings.verify.toml" database upgrade
@@ -98,3 +98,5 @@ check只读；verify在独立验证库使用合成数据并回滚，不向正式
 Web在原地址http://127.0.0.1:8000完成重启，任务、日志、采集资料及对应API共6个查询入口返回200。重启前后15张核心采集资料表的计数和规范内容哈希一致，活动采集0、待补写流水0。本地配置仍被Git忽略；此次未启动真实淘宝采集，原账号及授权保留。
 
 本机证据目录：workspace/output/reports/mysql_single_account_20261029，包含admin_checks.json、post_checks.json、web_restart.json及测试日志，均不含管理员密码值。关联JSON定义统一见[数据库字段取值说明](../数据库字段取值说明.md)，常用数据库命令见[命令参考](命令参考.md)。
+
+2026-11-03新增人工测试配置与统一维护规则，见[正式与测试环境](正式与测试环境.md)。正式与人工测试配置的environment、库名、工作目录、端口和资料路径分别填写，其他配置项对应；模板仍不保存实际密码。
