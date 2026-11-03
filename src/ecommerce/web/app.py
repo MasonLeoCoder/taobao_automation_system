@@ -15,7 +15,8 @@ def create_app(settings: Settings | None = None) -> Flask:
         from ecommerce.modules.collection.dispatch import on_web_start
         on_web_start(settings)
     app = Flask(__name__)
-    app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024)
+    app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024,
+                      WORKSPACE_MENU_DATABASE=settings.task_backend == 'mysql')
     from ecommerce.web.routes.pages import pages
     app.register_blueprint(pages)
     from ecommerce.web.routes.workspace import workspace
@@ -111,4 +112,6 @@ def create_app(settings: Settings | None = None) -> Flask:
         response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' https://img.alicdn.com; media-src 'self' https://cloud.video.taobao.com; frame-ancestors 'none'; base-uri 'self'"
         return response
 
+    from ecommerce.web.menu_access import install
+    install(app)
     return app

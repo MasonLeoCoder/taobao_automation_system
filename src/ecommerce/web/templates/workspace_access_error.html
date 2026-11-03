@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block title %}{{ '菜单配置暂不可用' if unavailable else '功能已停用' }}{% endblock %}
+{% block content %}
+<section class="intro"><div><p class="eyebrow">工作台访问提示</p><h1>{{ '菜单配置暂不可用' if unavailable else '功能已停用' }}</h1><p>{{ message }}</p></div></section>
+<section class="panel"><p>请在数据库工具中核对菜单配置，修改并提交后刷新本页。</p><p>菜单隐藏仅影响侧栏展示；功能或所属分组停用后，页面与新的业务操作会受限。</p></section>
+{% endblock %}

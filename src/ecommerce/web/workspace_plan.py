@@ -1,5 +1,7 @@
 """工作台菜单与静态功能规划；不读取业务数据或创建执行任务。"""
-from flask import request, url_for
+from flask import current_app, g, request, url_for
+from ecommerce.modules.workspace_menu import service as menu_service
+from ecommerce.infrastructure.storage.mysql import MySQLStorageError
 
 
 def planned(key, label, problem, help_items, inputs, related, note=''):
@@ -133,6 +135,27 @@ GROUPS = (
 ITEMS = {item['key']: item for group in GROUPS for item in group['items']}
 
 
+def default_rows():
+    """生成程序已登记菜单目录；参数：无；返回：非MySQL兼容默认及校验目录，不写数据库。"""
+    groups = [dict(group_key=group['key'], name=group['label'], sort_order=number*10,
+                   is_enabled=True, is_visible=True) for number, group in enumerate(GROUPS, 1)]
+    items = [dict(menu_key=item['key'], group_key=group['key'], name=item['label'], sort_order=number*10,
+                  construction_status='planned' if item['planned'] else 'available', is_enabled=True, is_visible=True)
+             for group in GROUPS for number, item in enumerate(group['items'], 1)]
+    return groups, items
+
+
+def menu_data():
+    """请求内共用菜单快照；参数：无；返回：数据库配置，正式MySQL不静默降级。"""
+    if not hasattr(g, 'workspace_menu'):
+        try:
+            g.workspace_menu = menu_service.snapshot(current_app.config['SETTINGS'].mysql, default_rows(),
+                database=current_app.config['WORKSPACE_MENU_DATABASE'])
+        except MySQLStorageError as error:
+            raise menu_service.MenuConfigurationError(str(error)) from None
+    return g.workspace_menu
+
+
 def active_key(active):
     """沿用原页面归属；参数：模板active；返回：唯一菜单标识或空值。"""
     if active == 'collections':
@@ -145,12 +168,22 @@ def active_key(active):
 
 def workspace_navigation(active=None):
     """生成本次页面菜单；参数：原页面标识；返回：含链接与当前项的六组菜单。"""
+    if getattr(g, 'workspace_menu_error', False):
+        return []
+    data = menu_data()
     selected = active_key(active)
     result = []
-    for group in GROUPS:
-        items = [dict(item, href=url_for(item['endpoint'], **item['values']),
-                      current=item['key'] == selected) for item in group['items']]
-        result.append(dict(group, items=items, current=any(item['current'] for item in items)))
+    for group in sorted(data['groups'].values(), key=lambda row: (row['sort_order'], row['group_key'])):
+        items = []
+        for row in sorted(data['items'].values(), key=lambda row: (row['sort_order'], row['menu_key'])):
+            if row['group_key'] != group['group_key'] or not menu_service.visible(data, row['menu_key']):
+                continue
+            item = ITEMS[row['menu_key']]
+            items.append(dict(item, label=row['name'], href=url_for(item['endpoint'], **item['values']),
+                              current=item['key'] == selected))
+        if items:
+            result.append(dict(key=group['group_key'], label=group['name'], items=items,
+                               current=any(item['current'] for item in items)))
     return result
 
 
@@ -159,7 +192,9 @@ def plan_page(key):
     item = ITEMS.get(key)
     if not item or not item['planned']:
         return None
-    group = next(group for group in GROUPS if item in group['items'])
-    related = [dict(ITEMS[value], href=url_for(ITEMS[value]['endpoint'], **ITEMS[value]['values']))
-               for value in item['related']]
-    return dict(item, group=group['label'], related_links=related)
+    data = menu_data()
+    row = data['items'][key]
+    related = [dict(ITEMS[value], label=data['items'][value]['name'],
+                    href=url_for(ITEMS[value]['endpoint'], **ITEMS[value]['values']))
+               for value in item['related'] if menu_service.enabled(data, value)]
+    return dict(item, label=row['name'], group=data['groups'][row['group_key']]['name'], related_links=related)

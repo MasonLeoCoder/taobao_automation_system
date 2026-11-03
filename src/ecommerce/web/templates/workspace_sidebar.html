@@ -4,6 +4,7 @@
   <summary class="ui-workspace-mobile-toggle"><span>功能导航</span>{{ workspace_chevron() }}</summary>
   <div class="workspace-menu-body">
   <nav class="workspace-nav" aria-label="主导航">
+    {% if not groups %}<p>暂无可显示菜单，请核对数据库配置。</p>{% endif %}
     {% for group in groups %}
     <details class="workspace-group" data-nav-group="{{ group.key }}"{% if group.current %} data-current-group open{% endif %}>
       <summary class="ui-workspace-group-toggle"><span class="workspace-icon-wrap">{{ workspace_icon(group.key) }}</span><span class="workspace-group-title"><span>{{ group.label }}</span>{% for item in group['items'] if item.current %}<span class="workspace-current-location">{{ item.label }}</span>{% endfor %}</span>{{ workspace_chevron() }}</summary>

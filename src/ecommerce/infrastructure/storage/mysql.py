@@ -9,7 +9,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import URL
 
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v24 import REVISION, PREVIOUS_REVISION, build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v25 import REVISION, PREVIOUS_REVISION, build_metadata
 from ecommerce.infrastructure.storage.mysql_checks import check_expression_tree
 from ecommerce.shared.config import MySQLSettings,mysql_password
 
@@ -98,7 +98,7 @@ def upgrade_schema(settings):
             try:
                 revision = current_revision(connection)
                 tables = set(sa.inspect(connection).get_table_names())
-                if revision not in (None,'0001_mysql_foundation','0002_beijing_time','0003_search_origin','0004_list_detail_entry','0005_remove_history_import','0006_list_sales','0007_basic_info','0008_collection_recovery','0009_collection_jobs','0010_product_favorites','0011_analysis','0012_analysis_sending','0013_analysis_recovery','0014_analysis_review','0015_analysis_comments','0016_review_pipeline','0017_direct_review_report','0018_report_checks','0019_question_analysis','0020_composite_analysis','0021_image_analysis','0022_separate_image_analysis',PREVIOUS_REVISION,REVISION):
+                if revision not in (None,'0001_mysql_foundation','0002_beijing_time','0003_search_origin','0004_list_detail_entry','0005_remove_history_import','0006_list_sales','0007_basic_info','0008_collection_recovery','0009_collection_jobs','0010_product_favorites','0011_analysis','0012_analysis_sending','0013_analysis_recovery','0014_analysis_review','0015_analysis_comments','0016_review_pipeline','0017_direct_review_report','0018_report_checks','0019_question_analysis','0020_composite_analysis','0021_image_analysis','0022_separate_image_analysis','0023_image_kind_comments',PREVIOUS_REVISION,REVISION):
                     raise MySQLStorageError("数据库结构版本高于或不兼容当前程序，未执行迁移")
                 if revision is None and tables-{"alembic_version"}:
                     raise MySQLStorageError("数据库存在未完成迁移或非本项目表，请核对结构；未删表、未自动盖章")
