@@ -17,3 +17,4 @@ storage/*.json
 
 config/settings.test.toml
 workspace_test/
+素材/
