@@ -134,8 +134,8 @@ class MySQLLedgerTests(TestCase):
                 self.assertEqual(self.client.get(path).status_code, 403)
             self.assertEqual(self.client.post('/ledger/write', data=dict(action='entry')).status_code, 403)
 
-    def test_modal_json_save_errors_and_retired_limit_write(self):
-        """异步提交校验失败返回错误且不写账，旧额度写入口拒绝，新建与修改沿用原事务保护。"""
+    def test_modal_json_save_errors_and_limit_write(self):
+        """异步校验失败不写账，明细及额度保存沿用本机保护。"""
         data = {**self.form(), 'month':'2040-10', 'action':'entry', 'token':self.app.config['COLLECTION_TOKEN']}
         headers = {'Accept':'application/json'}
         response = self.client.post('/ledger/write', data={**data, 'amount':'-1'}, headers=headers)
@@ -149,10 +149,9 @@ class MySQLLedgerTests(TestCase):
         response = self.client.post('/ledger/write', data={**data,'revision':'1','amount':'35.75'}, headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(repository.get_entry(None, data['id'])['amount'], Decimal('35.75'))
-        budget_before = service.overview(None, '2040-10')['budget']
         response = self.client.post('/ledger/write', data={**data,'action':'limit','amount':'999'}, headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(service.overview(None, '2040-10')['budget'], budget_before)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(service.overview(None, '2040-10')['budget'], Decimal('999'))
 
     def test_shares_ignore_voids_other_months_and_detail_filters(self):
         """真实聚合按月份和状态取数，筛选只缩小明细而非分类占比。"""
@@ -171,8 +170,8 @@ class MySQLLedgerTests(TestCase):
         service.save_limit(None, dict(month='2040-10',amount='500'))
         html = self.client.get('/plans/ledger?month=2040-10').get_data(as_text=True)
         self.assertIn('¥500.00', html)
-        self.assertNotIn('保存止损线', html)
-        self.assertNotIn('name="action" value="limit"', html)
+        self.assertIn('data-ledger-limit-open', html)
+        self.assertIn('data-ledger-limit-form', html)
 
     def test_feedback_reports_actual_month_and_rejects_invalid_receipt(self):
         """补记回执显示发生月份而非正在查看的月份；失效或伪造回执不产生成功提示。"""
@@ -187,3 +186,34 @@ class MySQLLedgerTests(TestCase):
         self.assertNotIn('data-ledger-notice', self.client.get('/plans/ledger?month=2040-11&receipt=invalid').get_data(as_text=True))
         response = self.client.post('/ledger/write', data={**data,'revision':'1','occurred_at':'2040-11-01T00:00:00'}, headers={'Accept':'application/json'})
         self.assertIn('已更新，归入2040年11月', self.client.get(response.json['redirect']).get_data(as_text=True))
+
+    def test_limit_modal_upsert_month_independence_and_errors(self):
+        """所选月新建及更新同一行，保留创建时间，独立月份和无效输入不互相覆盖。"""
+        data = dict(action='limit',month='2040-10',amount='500.25',token=self.app.config['COLLECTION_TOKEN'])
+        headers = {'Accept':'application/json'}
+        self.assertIsNone(service.overview(None, '2040-10')['budget'])
+        response = self.client.post('/ledger/write',data=data,headers=headers)
+        self.assertEqual(response.status_code,200)
+        self.assertIn('2040年10月止损线已保存',self.client.get(response.json['redirect']).get_data(as_text=True))
+        table=self.tables['ledger_monthly_limits']
+        first=self.conn.execute(sa.select(table).where(table.c.month==service.month('2040-10')[0])).mappings().one()
+        self.client.post('/ledger/write',data={**data,'amount':'750.50'},headers=headers)
+        updated=self.conn.execute(sa.select(table).where(table.c.month==first['month'])).mappings().one()
+        self.assertEqual(updated['created_at'],first['created_at'])
+        self.assertGreaterEqual(updated['updated_at'],first['updated_at'])
+        self.assertEqual(updated['amount'],Decimal('750.50'))
+        self.assertEqual(self.conn.scalar(sa.select(sa.func.count()).select_from(table).where(table.c.month==first['month'])),1)
+        self.client.post('/ledger/write',data={**data,'month':'2040-11','amount':'0'},headers=headers)
+        self.assertEqual(service.overview(None,'2040-10')['budget'],Decimal('750.50'))
+        self.assertEqual(service.overview(None,'2040-11')['budget'],Decimal('0'))
+        for amount in ('-1','0.001','10000000000',''):
+            self.assertEqual(self.client.post('/ledger/write',data={**data,'amount':amount},headers=headers).status_code,400)
+        self.assertEqual(service.overview(None,'2040-10')['budget'],Decimal('750.50'))
+        response=self.client.post('/ledger/write',data={**data,'amount':'0.001'})
+        self.assertEqual(response.status_code,400)
+        self.assertIn('value="0.001"',response.get_data(as_text=True))
+        self.assertIn('id="limit-editor" open=',response.get_data(as_text=True))
+        self.assertEqual(self.client.post('/ledger/write',data={**data,'token':''},headers=headers).status_code,403)
+        self.assertEqual(self.client.post('/ledger/write',data=data,headers={**headers,'Origin':'https://example.com'}).status_code,403)
+        response=self.client.post('/ledger/write',data={**data,'return_view':'categories'},headers=headers)
+        self.assertTrue(response.json['redirect'].startswith('/ledger/categories?'))

@@ -39,8 +39,8 @@
 <button{{ attributes({'type':'button','id':'back-to-top','hidden':true,'aria-label':'回到顶部','title':'回到顶部'},'ui-button ui-secondary ui-back-to-top') }}><span aria-hidden="true">↑</span><span class="ui-back-to-top-label">回顶部</span></button>
 {%- endmacro %}
 
-{% macro action_link(text,href,variant='secondary') -%}
-<a href="{{ href }}" class="ui-button ui-{{ variant }}">{{ text }}</a>
+{% macro action_link(text,href,variant='secondary',attrs={}) -%}
+<a href="{{ href }}"{{ attributes(attrs,'ui-button ui-' ~ variant) }}>{{ text }}</a>
 {%- endmacro %}
 
 {% macro action_menu(label,secondary=false) -%}
@@ -58,8 +58,12 @@
 <a href="{{ href }}"{{ attributes(attrs,'ui-data-chip') }}><span>{{ label }}</span><b>{{ count }}<small>件</small></b></a>
 {%- endmacro %}
 
-{% macro distribution_bar(value,label) -%}
-<meter class="ui-distribution-bar" min="0" max="100" value="{{ value }}" aria-label="{{ label }}">{{ '%.1f'|format(value) }}%</meter>
+{% macro distribution_bar(value,label,attrs={}) -%}
+<meter{{ attributes(attrs,'ui-distribution-bar') }} min="0" max="100" value="{{ value }}" aria-label="{{ label }}">{{ '%.1f'|format(value) }}%</meter>
+{%- endmacro %}
+
+{% macro status_pill(text,tone='neutral') -%}
+<span class="ui-status-pill" data-tone="{{ tone }}">{{ text }}</span>
 {%- endmacro %}
 
 {% macro help_label(label,description,attrs={}) -%}

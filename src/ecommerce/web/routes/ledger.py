@@ -41,7 +41,7 @@ def protect_request():
             abort(403, description='页面已失效，请刷新后重试')
 
 
-def page(error=None, form=None, categories_mode=False):
+def page(error=None, form=None, categories_mode=False, limit_form=None):
     """渲染账本和错误原输入；参数：错误、表单、分类模式；返回：HTML。"""
     settings = current_app.config['SETTINGS']
     selected = request.values.get('month') or database_now().strftime('%Y-%m')
@@ -59,9 +59,12 @@ def page(error=None, form=None, categories_mode=False):
         entry['occurred_at'] = entry['occurred_at'].isoformat(timespec='seconds')
     entry = {**dict(id=uuid4().hex, revision=0, occurred_at=database_now().isoformat(timespec='seconds'),
                     direction='expense', category_id='', amount='', note=''), **(entry or {})}
+    limit_open = limit_form is not None or request.args.get('edit_limit') == '1'
     return render_template('ledger.html', **data, entry=entry, selected_month=selected,
         selected_label=selected_label, notice=notice_message(),
-        entry_open=bool(form is not None or request.args.get('edit') or request.args.get('new') == '1'),
+        limit_open=limit_open,
+        limit_value=limit_form.get('amount', '') if limit_form is not None else (data['budget'] if data['budget'] is not None else ''),
+        entry_open=bool(not limit_open and (form is not None or request.args.get('edit') or request.args.get('new') == '1')),
         filters=filters, categories_mode=categories_mode, error=error, active='ledger',
         title=menu_data()['items']['ledger']['name'], shop_name=settings.shop_name)
 
@@ -73,8 +76,10 @@ def invalid(error):
         return jsonify(error=str(error)), 400
     if request.method == 'POST':
         try:
-            return page(str(error), request.form if request.form.get('action') == 'entry' else None,
-                        request.form.get('action') == 'category'), 400
+            action = request.form.get('action')
+            return page(str(error), request.form if action == 'entry' else None,
+                        action == 'category' or (action == 'limit' and request.form.get('return_view') == 'categories'),
+                        limit_form=request.form if action == 'limit' else None), 400
         except ValueError:
             pass
     return render_template('workspace_access_error.html', message=str(error), unavailable=False,
@@ -105,9 +110,12 @@ def write():
         repository.void_entry(settings, request.form.get('id', ''), service.integer(request.form.get('revision', ''), 1))
     elif action == 'category':
         service.save_category(settings, request.form)
+    elif action == 'limit':
+        service.save_limit(settings, request.form)
     else:
         raise ValueError('不支持的操作')
-    target = url_for('ledger.categories' if action == 'category' else 'ledger.index', month=selected)
+    endpoint = 'ledger.categories' if action == 'category' or (action == 'limit' and request.form.get('return_view') == 'categories') else 'ledger.index'
+    target = url_for(endpoint, month=selected)
     message = ''
     if action == 'entry':
         occurred = datetime.fromisoformat(request.form['occurred_at'])
@@ -115,8 +123,10 @@ def write():
         message = f'已更新，归入{destination}' if int(request.form.get('revision', '0')) else f'已记入{destination}'
     elif action == 'void':
         message = '账目已作废'
+    elif action == 'limit':
+        message = f'{int(selected[:4])}年{int(selected[5:])}月止损线已保存'
     if message:
-        target = url_for('ledger.index', month=selected, receipt=notice_signer().dumps(message))
+        target = url_for(endpoint, month=selected, receipt=notice_signer().dumps(message))
     if request.accept_mimetypes.best == 'application/json':
         return jsonify(redirect=target)
     return redirect(target, code=303)

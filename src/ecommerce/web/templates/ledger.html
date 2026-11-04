@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'form_controls.html' import input_control,select_control,textarea_control,control_button,action_link,modal_shell,distribution_bar %}
+{% from 'form_controls.html' import input_control,select_control,textarea_control,control_button,action_link,modal_shell,distribution_bar,status_pill %}
 {% macro hidden(action) %}<input type="hidden" name="token" value="{{ config.COLLECTION_TOKEN }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="month" value="{{ selected_month }}">{% endmacro %}
 {% block title %}{{ title }}{% endblock %}
 {% block breadcrumb %}{{ title }}{% endblock %}
@@ -7,7 +7,7 @@
 {% block content %}
 {% macro money(value) -%}{{ '−' if value < 0 else '' }}¥{{ '{:,.2f}'.format(value|abs) }}{%- endmacro %}
 {% macro note_text(value) -%}
-{% if value|length > 40 or '\n' in value %}<details class="ledger-note-details"><summary><span class="ledger-note-preview">{{ value[:100] }}</span><span class="ledger-note-expand">展开备注</span><span class="ledger-note-collapse">收起备注</span></summary><div class="ledger-note-full">{{ value }}</div></details>{% else %}<span class="ledger-note-short">{{ value or '—' }}</span>{% endif %}
+{% if value %}<details class="ledger-note-details" data-ledger-note><summary><span class="ledger-note-preview">{{ value[:100] }}</span><span class="ledger-note-expand">展开备注</span><span class="ledger-note-collapse">收起备注</span></summary><div class="ledger-note-full">{{ value }}</div></details>{% else %}<span class="ledger-note-short">—</span>{% endif %}
 {%- endmacro %}
 <div class="ledger-heading">
   <h1>{{ title }}{% if categories_mode %}<small>分类管理</small>{% endif %}</h1>
@@ -21,12 +21,20 @@
   </div>
 </div>
 {% if notice %}<p class="ledger-notice" role="status" data-ledger-notice>{{ notice }}</p>{% endif %}
-{% if error and not entry_open %}<p class="ledger-error" role="alert">{{ error }}</p>{% endif %}
+{% if error and not entry_open and not limit_open %}<p class="ledger-error" role="alert">{{ error }}</p>{% endif %}
 <section class="ledger-metrics" aria-label="{{ selected_label }}收支概况">
-  <article class="card ledger-cost"><span>花费</span><strong class="ledger-number">{{ money(totals.expense) }}</strong><div class="ledger-budget"><span>止损线 <b>{{ money(budget) if budget is not none else '未设置' }}</b></span><span class="{{ 'ledger-over-limit' if remaining is not none and remaining < 0 }}">{{ '超出' if remaining is not none and remaining < 0 else '剩余' }} <b>{{ money(remaining|abs) if remaining is not none else '未设置' }}</b></span></div></article>
+  <article class="card ledger-cost"><span>花费</span><strong class="ledger-number">{{ money(totals.expense) }}</strong><div class="ledger-budget">{{ action_link('止损线 ' ~ (money(budget) if budget is not none else '未设置'),url_for('ledger.categories' if categories_mode else 'ledger.index',month=selected_month,edit_limit='1'),'text',{'data-ledger-limit-open':true,'aria-label':selected_label ~ '止损线，点击修改'}) }}<span class="{{ 'ledger-over-limit' if remaining is not none and remaining < 0 }}">{{ '超出' if remaining is not none and remaining < 0 else '剩余' }} <b>{{ money(remaining|abs) if remaining is not none else '未设置' }}</b></span></div></article>
   <article class="card"><span>收入</span><strong class="ledger-number">{{ money(totals.income) }}</strong></article>
   <article class="card"><span>收支结余</span><strong class="ledger-number">{{ money(balance) }}</strong></article>
 </section>
+{% call modal_shell('limit-editor','修改止损线' if budget is not none else '设置止损线',selected_label ~ ' · 保存后自动更新剩余或超出金额。',eyebrow='经营账本',close_attrs={'data-ra-close':false,'data-ledger-close':true,'aria-label':'关闭止损线弹窗','autofocus':false},dialog_attrs={'open':limit_open}) %}
+<div class="ledger-modal-body" data-auto-open="{{ 'true' if limit_open else 'false' }}">
+<p class="ledger-error" role="alert" data-ledger-error{% if not error or not limit_open %} hidden{% endif %}>{{ error if limit_open else '' }}</p>
+<form method="post" action="{{ url_for('ledger.write') }}" data-ledger-limit-form>{{ hidden('limit') }}<input type="hidden" name="return_view" value="{{ 'categories' if categories_mode else 'ledger' }}">
+<label class="ui-field"><span class="ui-label">{{ selected_label }}止损金额（元）</span>{{ input_control({'type':'number','name':'amount','min':'0','max':'9999999999.99','step':'0.01','required':true,'value':limit_value,'placeholder':'填写止损金额'}) }}</label>
+<div class="ledger-actions">{{ control_button('保存止损线',{'type':'submit'}) }}{{ control_button('取消',{'type':'button','data-ledger-close':true},'secondary') }}</div>
+<noscript>{{ action_link('返回账本',url_for('ledger.categories' if categories_mode else 'ledger.index',month=selected_month)) }}</noscript>
+</form></div>{% endcall %}
 {% if categories_mode %}
 <section class="card ledger-panel"><h2>新增分类</h2><form method="post" action="{{ url_for('ledger.write') }}" class="ledger-filters">{{ hidden('category') }}<input type="hidden" name="id" value="0"><input type="hidden" name="is_enabled" value="1"><label class="ui-field"><span class="ui-label">分类名称</span>{{ input_control({'name':'name','maxlength':'80','required':true}) }}</label><label class="ui-field"><span class="ui-label">排序</span>{{ input_control({'name':'sort_order','type':'number','min':'0','max':'2147483647','value':'0','required':true}) }}</label>{{ control_button('新增分类',{'type':'submit'}) }}</form></section>
 <section class="card ledger-panel"><h2>已有分类</h2><p class="muted">停用后不用于新账目；历史明细保留，改名后同步显示新名称。</p>
@@ -34,7 +42,7 @@
 {% else %}
 {% call modal_shell('entry','修改账目' if entry.revision|int else '记一笔','填写实际发生时间，保存后按该时间归入对应月份。',eyebrow='经营账本',close_attrs={'data-ra-close':false,'data-ledger-close':true,'aria-label':'关闭记账弹窗','autofocus':false},dialog_attrs={'open':entry_open}) %}
 <div class="ledger-modal-body" data-auto-open="{{ 'true' if entry_open else 'false' }}">
-<p class="ledger-error" role="alert" data-ledger-error{% if not error %} hidden{% endif %}>{{ error or '' }}</p>
+<p class="ledger-error" role="alert" data-ledger-error{% if not error or not entry_open %} hidden{% endif %}>{{ error if entry_open else '' }}</p>
 <form method="post" action="{{ url_for('ledger.write') }}" data-ledger-entry-form>{{ hidden('entry') }}<input type="hidden" name="id" value="{{ entry.id }}"><input type="hidden" name="revision" value="{{ entry.revision }}">
 <div class="ledger-entry-grid">
 <label class="ui-field"><span class="ui-label">账目发生时间（北京时间）</span>{{ input_control({'type':'datetime-local','name':'occurred_at','step':'1','value':entry.occurred_at,'min':'1000-01-01T00:00','max':'9998-12-31T23:59:59','required':true}) }}</label>
@@ -49,25 +57,25 @@
 <label class="ui-field"><span class="ui-label">分类</span>{% call select_control({'name':'category','aria-label':'筛选分类','data-searchable-select':true,'data-select-label':'筛选分类','data-placeholder':'全部分类','data-allow-empty-option':'true'}) %}<option value="">全部分类</option>{% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category == c.id|string }}>{{ c.name }}</option>{% endfor %}{% endcall %}</label>
 <label class="ui-field"><span class="ui-label">收支</span>{% call select_control({'name':'direction','aria-label':'筛选收支'}) %}{% for key,label in [('','全部收支'),('expense','支出'),('income','收入')] %}<option value="{{ key }}" {{ 'selected' if filters.direction == key }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
 <label class="ui-field"><span class="ui-label">状态</span>{% call select_control({'name':'status','aria-label':'筛选状态'}) %}{% for key,label in [('active','正常'),('void','已作废'),('','全部状态')] %}<option value="{{ key }}" {{ 'selected' if filters.status == key }}>{{ label }}</option>{% endfor %}{% endcall %}</label>{{ control_button('筛选',{'type':'submit'},'secondary') }}</form></div>
-<div class="ledger-table-wrap"><table class="ledger-table"><thead><tr><th>发生时间</th><th>收支</th><th>分类</th><th class="ledger-number">金额</th><th>备注</th><th>操作</th></tr></thead><tbody>
+<div class="ledger-table-wrap"><table class="ledger-table"><colgroup><col class="ledger-col-date"><col class="ledger-col-direction"><col class="ledger-col-category"><col class="ledger-col-amount"><col class="ledger-col-note"><col class="ledger-col-actions"></colgroup><thead><tr><th>发生时间</th><th>收支</th><th>分类</th><th class="ledger-number">金额</th><th>备注</th><th>操作</th></tr></thead><tbody>
 {% for row in rows %}<tr class="ledger-row{{ ' ledger-row-void' if row.status == 'void' }}">
 <td class="ledger-date"><time datetime="{{ row.occurred_at.isoformat() }}+08:00" title="{{ row.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }} 北京时间">{{ row.occurred_at.strftime('%Y-%m-%d %H:%M') }}</time></td>
-<td class="ledger-direction">{{ '支出' if row.direction == 'expense' else '收入' }}{{ ' · 已作废' if row.status == 'void' }}</td>
+<td class="ledger-direction">{{ status_pill('支出' if row.direction == 'expense' else '收入',row.direction) }}{% if row.status == 'void' %}<small class="ledger-void">已作废</small>{% endif %}</td>
 <td class="ledger-category">{{ row.category_name }}</td>
 <td class="ledger-amount ledger-number">{{ money(row.amount) }}</td>
 <td class="ledger-note-cell{{ ' ledger-no-note' if not row.note }}">{{ note_text(row.note) }}</td>
-<td class="ledger-row-actions">{% if row.status == 'active' %}{{ action_link('修改',url_for('ledger.index',month=selected_month,edit=row.id)+'#entry') }}<form method="post" action="{{ url_for('ledger.write') }}">{{ hidden('void') }}<input type="hidden" name="id" value="{{ row.id }}"><input type="hidden" name="revision" value="{{ row.revision }}">{{ control_button('作废',{'type':'submit'},'secondary') }}</form>{% else %}<span>已作废</span>{% endif %}</td>
+<td class="ledger-row-actions">{% if row.status == 'active' %}{{ action_link('修改',url_for('ledger.index',month=selected_month,edit=row.id)+'#entry','edit',{'class':'ui-compact'}) }}<form method="post" action="{{ url_for('ledger.write') }}">{{ hidden('void') }}<input type="hidden" name="id" value="{{ row.id }}"><input type="hidden" name="revision" value="{{ row.revision }}">{{ control_button('作废',{'type':'submit','class':'ui-compact'},'danger') }}</form>{% else %}<span>已作废</span>{% endif %}</td>
 </tr>{% else %}<tr class="ledger-empty"><td colspan="6">暂无符合条件的账目，可以点击“＋记一笔”开始记录。</td></tr>{% endfor %}
 </tbody></table></div>
 <nav class="ledger-actions" aria-label="明细分页"><span>共 {{ count }} 笔 · 第 {{ page }} / {{ pages }} 页</span>{% if page > 1 %}{{ action_link('上一页',url_for('ledger.index',month=selected_month,category=filters.category,direction=filters.direction,status=filters.status,page=page-1)) }}{% endif %}{% if page < pages %}{{ action_link('下一页',url_for('ledger.index',month=selected_month,category=filters.category,direction=filters.direction,status=filters.status,page=page+1)) }}{% endif %}</nav>
 </section>
-<section class="card ledger-panel ledger-shares"><div class="ledger-section-heading"><h2>分类占比</h2><span class="muted">{{ selected_label }} · 整月正常账目</span></div>
+<section class="card ledger-panel ledger-shares"><div class="ledger-section-heading"><h2>分类占比</h2><span class="muted">{{ selected_label }}</span></div>
 <div class="ledger-share-grid">
 {% for direction,label in [('expense','支出'),('income','收入')] %}
-<section class="ledger-share-group" aria-label="{{ label }}分类占比"><div class="ledger-share-heading"><h3>{{ label }}</h3><b>{{ money(totals[direction]) }}</b></div>
+<section class="ledger-share-group ui-surface-panel" data-tone="{{ direction }}" aria-label="{{ label }}分类占比"><div class="ledger-share-heading"><h3>{{ label }}</h3><b>{{ money(totals[direction]) }}</b></div>
 {% for group in shares[direction] %}
-<div class="ledger-share-row"><div class="ledger-share-label"><span>{{ group.name }}</span><span class="ledger-share-values"><b>{{ money(group.amount) }}</b><span>{{ '%.2f'|format(group.percent) }}%</span></span></div>
-{{ distribution_bar(group.percent,group.name ~ ' · ' ~ label ~ '占比 ' ~ ('%.2f'|format(group.percent)) ~ '%') }}</div>
+<div class="ledger-share-row"><div class="ledger-share-label"><span>{{ group.name }}</span><span class="ledger-share-values"><b>{{ money(group.amount) }}</b>{{ status_pill(('%.2f'|format(group.percent)) ~ '%','share-' ~ direction) }}</span></div>
+{{ distribution_bar(group.percent,group.name ~ ' · ' ~ label ~ '占比 ' ~ ('%.2f'|format(group.percent)) ~ '%',{'data-tone':direction,'data-size':'comfortable'}) }}</div>
 {% else %}<p>暂无{{ label }}</p>{% endfor %}</section>
 {% endfor %}</div></section>
 {% endif %}

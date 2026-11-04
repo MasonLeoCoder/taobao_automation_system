@@ -109,3 +109,7 @@ flowchart LR
 ## 可选筛选保留空值项（2026-11-04）
 
 搜索型下拉默认仍排除空值占位项。对于“全部”等有效空值筛选，在select_control属性中传入`{'data-allow-empty-option': 'true'}`（值为小写字符串）（实际HTML为`data-allow-empty-option="true"`），并保持select非required。启用后会保留未禁用的空值选项、按原选项文字显示且可勾选；必填字段忽略该开关，disabled选项仍排除。当前仅账本明细分类筛选启用；其他字段未配置时行为不变。搜索框清空仍只清查询文本，不改变已选原生值。详见[账本恢复全部修复](账本分类筛选恢复全部.md)。
+
+## 账本启用的可选组件样式（2026-11-04）
+
+公共组件新增可选ui-edit（浅蓝）、ui-danger（浅红）、ui-text（行内操作）和ui-compact（紧凑尺寸）；外观统一在form_controls.css。action_link新增可选attrs参数传递class/data/可访问名称，旧调用默认不变。status_pill(text,tone)统一文字标签，expense浅灰/income浅绿及share-expense/share-income占比标签；ui-surface-panel的expense/income为浅橙/浅绿面板。distribution_bar新增可选attrs，data-tone=expense/income选择橙/绿、data-size=comfortable为9像素，未启用继续原7像素公共绿色。模块仅维护排列、宽度、间距和文字布局。
