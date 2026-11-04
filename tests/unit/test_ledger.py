@@ -32,3 +32,14 @@ class LedgerRulesTests(TestCase):
 
     def test_mysql_numeric_decimal_alias(self):
         self.assertEqual(_normalize_type('NUMERIC(12, 2)'), _normalize_type('DECIMAL(12, 2)'))
+
+    def test_shares_use_separate_denominators_and_amount_order(self):
+        """同名分类分方向计算，明细筛选之外的整月合计作为分母。"""
+        groups = [dict(name='补单', direction='expense', amount=Decimal('2')),
+                  dict(name='代发采购', direction='expense', amount=Decimal('10')),
+                  dict(name='提现', direction='income', amount=Decimal('1'))]
+        shares = service.category_shares(groups, dict(expense=Decimal('12'), income=Decimal('1')))
+        self.assertEqual([row['name'] for row in shares['expense']], ['代发采购', '补单'])
+        self.assertEqual([row['percent'] for row in shares['expense']], [Decimal('83.33'), Decimal('16.67')])
+        self.assertEqual(shares['income'][0]['percent'], Decimal('100'))
+        self.assertEqual(service.category_shares([], dict(expense=Decimal(0), income=Decimal(0))), dict(expense=[], income=[]))

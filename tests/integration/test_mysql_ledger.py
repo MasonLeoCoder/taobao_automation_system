@@ -133,3 +133,42 @@ class MySQLLedgerTests(TestCase):
             for path in ('/plans/ledger', '/ledger/categories'):
                 self.assertEqual(self.client.get(path).status_code, 403)
             self.assertEqual(self.client.post('/ledger/write', data=dict(action='entry')).status_code, 403)
+
+    def test_modal_json_save_errors_and_retired_limit_write(self):
+        """异步提交校验失败返回错误且不写账，旧额度写入口拒绝，新建与修改沿用原事务保护。"""
+        data = {**self.form(), 'month':'2040-10', 'action':'entry', 'token':self.app.config['COLLECTION_TOKEN']}
+        headers = {'Accept':'application/json'}
+        response = self.client.post('/ledger/write', data={**data, 'amount':'-1'}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json)
+        self.assertIsNone(repository.get_entry(None, data['id']))
+        response = self.client.post('/ledger/write', data=data, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['redirect'], '/plans/ledger?month=2040-10')
+        response = self.client.post('/ledger/write', data={**data,'revision':'1','amount':'35.75'}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(repository.get_entry(None, data['id'])['amount'], Decimal('35.75'))
+        budget_before = service.overview(None, '2040-10')['budget']
+        response = self.client.post('/ledger/write', data={**data,'action':'limit','amount':'999'}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(service.overview(None, '2040-10')['budget'], budget_before)
+
+    def test_shares_ignore_voids_other_months_and_detail_filters(self):
+        """真实聚合按月份和状态取数，筛选只缩小明细而非分类占比。"""
+        categories = list(self.conn.scalars(sa.select(self.tables['ledger_categories'].c.id).limit(2)))
+        for amount, category in (('10', categories[0]), ('2', categories[1])):
+            service.save_entry(None, {**self.form(), 'amount':amount, 'category_id':str(category)})
+        voided = self.form()
+        service.save_entry(None, voided)
+        repository.void_entry(None, voided['id'], 1)
+        service.save_entry(None, {**self.form(), 'occurred_at':'2040-11-01T00:00:00'})
+        service.save_entry(None, {**self.form(), 'direction':'income', 'amount':'1'})
+        data = service.overview(None, '2040-10', category=str(categories[1]), direction='expense')
+        self.assertEqual(data['count'], 1)
+        self.assertEqual([row['percent'] for row in data['shares']['expense']], [Decimal('83.33'), Decimal('16.67')])
+        self.assertEqual(data['shares']['income'][0]['percent'], Decimal('100'))
+        service.save_limit(None, dict(month='2040-10',amount='500'))
+        html = self.client.get('/plans/ledger?month=2040-10').get_data(as_text=True)
+        self.assertIn('¥500.00', html)
+        self.assertNotIn('保存止损线', html)
+        self.assertNotIn('name="action" value="limit"', html)

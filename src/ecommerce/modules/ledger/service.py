@@ -1,6 +1,6 @@
 """经营账本输入规则与公开业务入口。"""
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from ecommerce.infrastructure.storage import ledger as repository
 
@@ -83,5 +83,20 @@ def overview(settings, selected_month, category='', direction='', status='active
     start, end = month(selected_month)
     if direction not in {'', 'income', 'expense'} or status not in {'active', 'void', ''}:
         raise ValueError('筛选条件不正确')
-    return repository.overview(settings, start, end, integer(category, 1) if category else None,
+    data = repository.overview(settings, start, end, integer(category, 1) if category else None,
         direction, status, integer(page, 1))
+    data['shares'] = category_shares(data['groups'], data['totals'])
+    return data
+
+
+def category_shares(groups, totals):
+    """分别计算收入和支出的分类占比；参数：整月分类及方向总额；返回：按金额降序的两组占比。"""
+    result = {direction: [] for direction in ('expense', 'income')}
+    for group in groups:
+        direction = group['direction']
+        total = totals[direction]
+        percent = (group['amount'] * Decimal(100) / total).quantize(Decimal('.01'), rounding=ROUND_HALF_UP) if total else Decimal('0.00')
+        result[direction].append({**group, 'percent': percent})
+    for rows in result.values():
+        rows.sort(key=lambda row: (-row['amount'], row['name']))
+    return result

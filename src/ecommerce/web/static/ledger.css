@@ -6,9 +6,15 @@
 .ledger-panel{padding:24px;margin:18px 0;min-width:0}
 .ledger-entry-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 .ledger-note{grid-column:1/-1}.ledger-category-row{display:grid;grid-template-columns:minmax(140px,2fr) minmax(80px,1fr) minmax(90px,1fr) auto;gap:12px;align-items:end;margin:16px 0}
-.ledger-summary{display:flex;flex-wrap:wrap;gap:18px}.ledger-table-wrap{overflow-x:auto;margin:16px 0}
+.ledger-panel>.ledger-share-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:32px;margin-top:20px}
+.ledger-share-group{min-width:0}.ledger-share-heading,.ledger-share-label{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.ledger-share-heading h3{margin:0}.ledger-share-row{margin:20px 0}.ledger-share-label>span:first-child{min-width:0;overflow-wrap:anywhere}
+.ledger-share-label .ledger-share-values{display:flex;flex-wrap:wrap;justify-content:end;gap:12px;flex-shrink:0}
+.ledger-share-values>span{min-width:64px;text-align:right}.ledger-share-row .ui-distribution-bar{display:block;margin-top:9px}
+.ledger-modal-body{padding:24px 28px;overflow-y:auto;min-height:0}.ledger-modal-body .ledger-actions{margin-bottom:0}
+.ledger-table-wrap{overflow-x:auto;margin:16px 0}
 .ledger-table-wrap table{width:100%;min-width:780px}.ledger-note-cell{max-width:240px;overflow-wrap:anywhere;white-space:pre-wrap}
 .ledger-table-wrap td:last-child{display:flex;gap:8px;align-items:center}.ledger-table-wrap td form{margin:0}
 .ledger-error{padding:16px;border:1px solid currentColor;overflow-wrap:anywhere}
 @media(max-width:1100px){.ledger-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:650px){.ledger-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.ledger-entry-grid{grid-template-columns:minmax(0,1fr)}.ledger-panel{padding:16px}.ledger-category-row{grid-template-columns:repeat(2,minmax(0,1fr))}.ledger-filters .ui-field{width:100%}.ledger-filters .ui-control{width:100%}}
+@media(max-width:650px){.ledger-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.ledger-entry-grid,.ledger-panel>.ledger-share-grid{grid-template-columns:minmax(0,1fr)}.ledger-panel{padding:16px}.ledger-category-row{grid-template-columns:repeat(2,minmax(0,1fr))}.ledger-filters .ui-field{width:100%}.ledger-filters .ui-control{width:100%}.ledger-modal-body{padding:20px 18px}.ledger-share-label{flex-wrap:wrap}.ledger-share-label .ledger-share-values{margin-left:auto}}

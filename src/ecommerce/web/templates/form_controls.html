@@ -47,9 +47,9 @@
 <details class="ui-action-menu{{ ' ui-action-menu-secondary' if secondary }}"><summary>{{ label }} <span aria-hidden="true">⌄</span></summary><div>{{ caller() }}</div></details>
 {%- endmacro %}
 
-{% macro modal_shell(id,title,description) -%}
-<dialog id="{{ id }}" class="ui-modal" aria-labelledby="{{ id }}-title" aria-describedby="{{ id }}-description">
-  <header class="ui-modal-header"><div><p class="ui-modal-eyebrow">商品分析</p><h2 id="{{ id }}-title">{{ title }}</h2><p id="{{ id }}-description">{{ description }}</p></div>{{ control_button('×',{'type':'button','data-ra-close':true,'aria-label':'关闭分析弹窗','autofocus':true,'class':'ui-modal-close'},'secondary') }}</header>
+{% macro modal_shell(id,title,description,eyebrow='商品分析',close_attrs={},dialog_attrs={}) -%}
+<dialog id="{{ id }}"{{ attributes(dialog_attrs,'ui-modal') }} aria-labelledby="{{ id }}-title" aria-describedby="{{ id }}-description">
+  <header class="ui-modal-header"><div><p class="ui-modal-eyebrow">{{ eyebrow }}</p><h2 id="{{ id }}-title">{{ title }}</h2><p id="{{ id }}-description">{{ description }}</p></div>{{ control_button('×',dict({'type':'button','data-ra-close':true,'aria-label':'关闭分析弹窗','autofocus':true,'class':'ui-modal-close'},**close_attrs),'secondary') }}</header>
   <div class="ui-modal-content" data-ra-modal-content>{{ caller() }}</div>
 </dialog>
 {%- endmacro %}

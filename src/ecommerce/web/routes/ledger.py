@@ -2,7 +2,7 @@
 import secrets
 from urllib.parse import urlsplit
 from uuid import uuid4
-from flask import Blueprint, abort, current_app, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, url_for
 from ecommerce.modules.ledger import service
 from ecommerce.infrastructure.storage import ledger as repository
 from ecommerce.infrastructure.storage.time_values import database_now
@@ -43,6 +43,7 @@ def page(error=None, form=None, categories_mode=False):
     entry = {**dict(id=uuid4().hex, revision=0, occurred_at=database_now().isoformat(timespec='seconds'),
                     direction='expense', category_id='', amount='', note=''), **(entry or {})}
     return render_template('ledger.html', **data, entry=entry, selected_month=selected,
+        entry_open=bool(form is not None or request.args.get('edit') or request.args.get('new') == '1'),
         filters=filters, categories_mode=categories_mode, error=error, active='ledger',
         title=menu_data()['items']['ledger']['name'], shop_name=settings.shop_name)
 
@@ -50,6 +51,8 @@ def page(error=None, form=None, categories_mode=False):
 @ledger.errorhandler(ValueError)
 def invalid(error):
     """展示输入错误而不丢弃内容；参数：异常；返回：400页面。"""
+    if request.method == 'POST' and request.accept_mimetypes.best == 'application/json':
+        return jsonify(error=str(error)), 400
     if request.method == 'POST':
         try:
             return page(str(error), request.form if request.form.get('action') == 'entry' else None,
@@ -84,8 +87,9 @@ def write():
         repository.void_entry(settings, request.form.get('id', ''), service.integer(request.form.get('revision', ''), 1))
     elif action == 'category':
         service.save_category(settings, request.form)
-    elif action == 'limit':
-        service.save_limit(settings, request.form)
     else:
         raise ValueError('不支持的操作')
-    return redirect(url_for('ledger.categories' if action == 'category' else 'ledger.index', month=selected), code=303)
+    target = url_for('ledger.categories' if action == 'category' else 'ledger.index', month=selected)
+    if request.accept_mimetypes.best == 'application/json':
+        return jsonify(redirect=target)
+    return redirect(target, code=303)
