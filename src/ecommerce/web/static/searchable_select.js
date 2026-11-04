@@ -30,7 +30,9 @@
     const triggerLabel = select.dataset.triggerLabel || fieldLabel;
     const searchLabel = select.dataset.searchLabel || '查找' + fieldLabel;
     const unit = select.dataset.optionUnit || '个选项';
-    const choices = Array.from(select.options).filter(option => option.value && !option.disabled)
+    // 只有显式开启的非必填筛选才保留空值选项；必填表单仍排除“请选择”等占位项。
+    const allowEmptyOption = select.dataset.allowEmptyOption === 'true' && !select.required;
+    const choices = Array.from(select.options).filter(option => !option.disabled && (option.value !== '' || allowEmptyOption))
       .map(option => ({value:option.value, label:option.textContent.trim()}));
     const trigger = element('button', 'ui-control ss-trigger');
     trigger.type = 'button';
@@ -66,11 +68,11 @@
 
     function updateValue() {
       const option = select.selectedOptions[0];
-      valueText.textContent = select.value && option ? option.textContent.trim() : select.dataset.placeholder || '请选择' + fieldLabel;
+      valueText.textContent = (select.value !== '' || allowEmptyOption) && option ? option.textContent.trim() : select.dataset.placeholder || '请选择' + fieldLabel;
       trigger.title = valueText.textContent;
       trigger.setAttribute('aria-label', triggerLabel + '，当前：' + valueText.textContent);
       trigger.disabled = select.disabled;
-      trigger.classList.toggle('ss-placeholder', !select.value);
+      trigger.classList.toggle('ss-placeholder', !select.value && !allowEmptyOption);
     }
     function position() {
       if (!opened) return;
