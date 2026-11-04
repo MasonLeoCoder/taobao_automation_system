@@ -1,6 +1,15 @@
 /* 账本弹窗：保留原表单提交回退，异步保存失败时保留所有输入，不自动重试。 */
 (() => {
   'use strict';
+  const monthForm = document.querySelector('[data-ledger-month-form]');
+  monthForm?.elements.month.addEventListener('change', () => {
+    if (monthForm.checkValidity()) monthForm.requestSubmit();
+  });
+  if (document.querySelector('[data-ledger-notice]')) {
+    const url = new URL(location.href);
+    url.searchParams.delete('receipt');
+    history.replaceState(null, '', url);
+  }
   const dialog = document.getElementById('entry');
   const form = dialog?.querySelector('[data-ledger-entry-form]');
   const openButton = document.querySelector('[data-ledger-new]');

@@ -144,7 +144,8 @@ class MySQLLedgerTests(TestCase):
         self.assertIsNone(repository.get_entry(None, data['id']))
         response = self.client.post('/ledger/write', data=data, headers=headers)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json['redirect'], '/plans/ledger?month=2040-10')
+        self.assertTrue(response.json['redirect'].startswith('/plans/ledger?month=2040-10&receipt='))
+        self.assertIn('已记入2040年10月', self.client.get(response.json['redirect']).get_data(as_text=True))
         response = self.client.post('/ledger/write', data={**data,'revision':'1','amount':'35.75'}, headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(repository.get_entry(None, data['id'])['amount'], Decimal('35.75'))
@@ -172,3 +173,17 @@ class MySQLLedgerTests(TestCase):
         self.assertIn('¥500.00', html)
         self.assertNotIn('保存止损线', html)
         self.assertNotIn('name="action" value="limit"', html)
+
+    def test_feedback_reports_actual_month_and_rejects_invalid_receipt(self):
+        """补记回执显示发生月份而非正在查看的月份；失效或伪造回执不产生成功提示。"""
+        data = {**self.form(), 'month':'2040-11', 'action':'entry', 'token':self.app.config['COLLECTION_TOKEN']}
+        response = self.client.post('/ledger/write', data=data, headers={'Accept':'application/json'})
+        self.assertEqual(response.status_code, 200)
+        target = response.json['redirect']
+        self.assertTrue(target.startswith('/plans/ledger?month=2040-11&receipt='))
+        text = self.client.get(target).get_data(as_text=True)
+        self.assertIn('已记入2040年10月', text)
+        self.assertIn('2040年11月账目', text)
+        self.assertNotIn('data-ledger-notice', self.client.get('/plans/ledger?month=2040-11&receipt=invalid').get_data(as_text=True))
+        response = self.client.post('/ledger/write', data={**data,'revision':'1','occurred_at':'2040-11-01T00:00:00'}, headers={'Accept':'application/json'})
+        self.assertIn('已更新，归入2040年11月', self.client.get(response.json['redirect']).get_data(as_text=True))

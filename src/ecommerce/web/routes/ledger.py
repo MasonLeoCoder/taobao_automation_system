@@ -1,7 +1,9 @@
 """手动经营账本页面与本机表单提交。"""
 import secrets
+from datetime import datetime
 from urllib.parse import urlsplit
 from uuid import uuid4
+from itsdangerous import BadData, URLSafeTimedSerializer
 from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, request, url_for
 from ecommerce.modules.ledger import service
 from ecommerce.infrastructure.storage import ledger as repository
@@ -9,6 +11,20 @@ from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.web.workspace_plan import menu_data
 
 ledger = Blueprint('ledger', __name__)
+
+
+def notice_signer():
+    """构造短期操作回执签名器；参数：无；返回：随当前网页进程令牌失效的签名器。"""
+    return URLSafeTimedSerializer(current_app.config['COLLECTION_TOKEN'], salt='ledger-notice-v1')
+
+
+def notice_message():
+    """只展示近期成功操作的回执；参数：请求回执；返回：提示文字或空串。"""
+    try:
+        message = notice_signer().loads(request.args.get('receipt', ''), max_age=120)
+        return message if isinstance(message, str) and len(message) <= 80 else ''
+    except BadData:
+        return ''
 
 
 @ledger.before_request
@@ -32,6 +48,7 @@ def page(error=None, form=None, categories_mode=False):
     filters = {key: request.args.get(key, default) for key, default in
                (('category', ''), ('direction', ''), ('status', 'active'), ('page', '1'))}
     data = service.overview(settings, selected, **filters)
+    selected_label = f'{int(selected[:4])}年{int(selected[5:])}月'
     entry = form
     if entry is None and request.args.get('edit'):
         entry = repository.get_entry(settings, request.args['edit'])
@@ -43,6 +60,7 @@ def page(error=None, form=None, categories_mode=False):
     entry = {**dict(id=uuid4().hex, revision=0, occurred_at=database_now().isoformat(timespec='seconds'),
                     direction='expense', category_id='', amount='', note=''), **(entry or {})}
     return render_template('ledger.html', **data, entry=entry, selected_month=selected,
+        selected_label=selected_label, notice=notice_message(),
         entry_open=bool(form is not None or request.args.get('edit') or request.args.get('new') == '1'),
         filters=filters, categories_mode=categories_mode, error=error, active='ledger',
         title=menu_data()['items']['ledger']['name'], shop_name=settings.shop_name)
@@ -90,6 +108,15 @@ def write():
     else:
         raise ValueError('不支持的操作')
     target = url_for('ledger.categories' if action == 'category' else 'ledger.index', month=selected)
+    message = ''
+    if action == 'entry':
+        occurred = datetime.fromisoformat(request.form['occurred_at'])
+        destination = f'{occurred.year}年{occurred.month}月'
+        message = f'已更新，归入{destination}' if int(request.form.get('revision', '0')) else f'已记入{destination}'
+    elif action == 'void':
+        message = '账目已作废'
+    if message:
+        target = url_for('ledger.index', month=selected, receipt=notice_signer().dumps(message))
     if request.accept_mimetypes.best == 'application/json':
         return jsonify(redirect=target)
     return redirect(target, code=303)

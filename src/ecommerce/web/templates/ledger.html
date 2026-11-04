@@ -5,15 +5,27 @@
 {% block breadcrumb %}{{ title }}{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='ledger.css') }}">{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">日常经营 · 手动记账</p><h1>{{ title }}</h1><p>按账目发生时间统计收支，随时了解每月运营花费。</p></div></div>
-<nav class="ledger-actions">{{ action_link('账本明细',url_for('ledger.index',month=selected_month)) }}{{ action_link('管理分类',url_for('ledger.categories',month=selected_month)) }}{% if not categories_mode %}<a href="{{ url_for('ledger.index',month=selected_month,new='1') }}" class="ui-button ui-primary" data-ledger-new>记一笔</a>{% endif %}</nav>
+{% macro money(value) -%}{{ '−' if value < 0 else '' }}¥{{ '{:,.2f}'.format(value|abs) }}{%- endmacro %}
+{% macro note_text(value) -%}
+{% if value|length > 40 or '\n' in value %}<details class="ledger-note-details"><summary><span class="ledger-note-preview">{{ value[:100] }}</span><span class="ledger-note-expand">展开备注</span><span class="ledger-note-collapse">收起备注</span></summary><div class="ledger-note-full">{{ value }}</div></details>{% else %}<span class="ledger-note-short">{{ value or '—' }}</span>{% endif %}
+{%- endmacro %}
+<div class="ledger-heading">
+  <h1>{{ title }}{% if categories_mode %}<small>分类管理</small>{% endif %}</h1>
+  <div class="ledger-toolbar">
+    <form method="get" action="{{ url_for('ledger.categories' if categories_mode else 'ledger.index') }}" class="ledger-month-form" data-ledger-month-form>
+      <label class="ui-field"><span class="ui-label">月份</span>{{ input_control({'type':'month','name':'month','value':selected_month,'aria-label':'选择账目月份','required':true,'min':'1000-01','max':'9998-12'}) }}</label>
+      {% if not categories_mode %}{% for key in ['category','direction','status'] %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endfor %}{% endif %}
+      <noscript>{{ control_button('切换月份',{'type':'submit'},'secondary') }}</noscript>
+    </form>
+    {% if categories_mode %}{{ action_link('返回账本',url_for('ledger.index',month=selected_month)) }}{% else %}{{ action_link('管理分类',url_for('ledger.categories',month=selected_month)) }}<a href="{{ url_for('ledger.index',month=selected_month,new='1') }}" class="ui-button ui-primary" data-ledger-new>＋记一笔</a>{% endif %}
+  </div>
+</div>
+{% if notice %}<p class="ledger-notice" role="status" data-ledger-notice>{{ notice }}</p>{% endif %}
 {% if error and not entry_open %}<p class="ledger-error" role="alert">{{ error }}</p>{% endif %}
-<form method="get" class="ledger-filters">
-<label class="ui-field"><span class="ui-label">查看月份</span>{{ input_control({'type':'month','name':'month','value':selected_month,'required':true,'min':'1000-01','max':'9998-12'}) }}</label>
-{{ control_button('查看月份',{'type':'submit'}) }}</form>
-<section class="ledger-metrics" aria-label="整月收支概况">
-{% for label,value in [('本月支出',totals.expense),('本月收入',totals.income),('收支结余',balance),('月度止损线',budget)] %}<article class="card"><span>{{ label }}</span><strong>{{ '¥%.2f'|format(value) if value is not none else '未设置' }}</strong></article>{% endfor %}
-<article class="card"><span>{{ '超出止损线' if remaining is not none and remaining < 0 else '剩余额度' }}</span><strong>{{ '¥%.2f'|format(remaining|abs) if remaining is not none else '未设置' }}</strong></article>
+<section class="ledger-metrics" aria-label="{{ selected_label }}收支概况">
+  <article class="card ledger-cost"><span>花费</span><strong class="ledger-number">{{ money(totals.expense) }}</strong><div class="ledger-budget"><span>止损线 <b>{{ money(budget) if budget is not none else '未设置' }}</b></span><span class="{{ 'ledger-over-limit' if remaining is not none and remaining < 0 }}">{{ '超出' if remaining is not none and remaining < 0 else '剩余' }} <b>{{ money(remaining|abs) if remaining is not none else '未设置' }}</b></span></div></article>
+  <article class="card"><span>收入</span><strong class="ledger-number">{{ money(totals.income) }}</strong></article>
+  <article class="card"><span>收支结余</span><strong class="ledger-number">{{ money(balance) }}</strong></article>
 </section>
 {% if categories_mode %}
 <section class="card ledger-panel"><h2>新增分类</h2><form method="post" action="{{ url_for('ledger.write') }}" class="ledger-filters">{{ hidden('category') }}<input type="hidden" name="id" value="0"><input type="hidden" name="is_enabled" value="1"><label class="ui-field"><span class="ui-label">分类名称</span>{{ input_control({'name':'name','maxlength':'80','required':true}) }}</label><label class="ui-field"><span class="ui-label">排序</span>{{ input_control({'name':'sort_order','type':'number','min':'0','max':'2147483647','value':'0','required':true}) }}</label>{{ control_button('新增分类',{'type':'submit'}) }}</form></section>
@@ -33,22 +45,32 @@
 </div><div class="ledger-actions">{{ control_button('保存账目',{'type':'submit'}) }}{{ control_button('取消',{'type':'button','data-ledger-close':true},'secondary') }}</div></form></div>
 {% endcall %}
 <noscript><p>点击“记一笔”或“修改”后填写弹窗表单；<a href="{{ url_for('ledger.index',month=selected_month) }}">返回账本</a>。</p></noscript>
-<section class="card ledger-panel"><h2>分类汇总</h2><p class="muted">整月正常账目，收入与支出分别计算占比，不受明细筛选影响。</p>
+<section class="card ledger-panel ledger-detail-panel"><div class="ledger-section-heading"><h2>{{ selected_label }}账目 <small>{{ count }}笔</small></h2><form method="get" class="ledger-filters ledger-detail-filters"><input type="hidden" name="month" value="{{ selected_month }}">
+<label class="ui-field"><span class="ui-label">分类</span>{% call select_control({'name':'category','aria-label':'筛选分类','data-searchable-select':true,'data-select-label':'筛选分类','data-placeholder':'全部分类'}) %}<option value="">全部分类</option>{% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category == c.id|string }}>{{ c.name }}</option>{% endfor %}{% endcall %}</label>
+<label class="ui-field"><span class="ui-label">收支</span>{% call select_control({'name':'direction','aria-label':'筛选收支'}) %}{% for key,label in [('','全部收支'),('expense','支出'),('income','收入')] %}<option value="{{ key }}" {{ 'selected' if filters.direction == key }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
+<label class="ui-field"><span class="ui-label">状态</span>{% call select_control({'name':'status','aria-label':'筛选状态'}) %}{% for key,label in [('active','正常'),('void','已作废'),('','全部状态')] %}<option value="{{ key }}" {{ 'selected' if filters.status == key }}>{{ label }}</option>{% endfor %}{% endcall %}</label>{{ control_button('筛选',{'type':'submit'},'secondary') }}</form></div>
+<div class="ledger-table-wrap"><table class="ledger-table"><thead><tr><th>发生时间</th><th>收支</th><th>分类</th><th class="ledger-number">金额</th><th>备注</th><th>操作</th></tr></thead><tbody>
+{% for row in rows %}<tr class="ledger-row{{ ' ledger-row-void' if row.status == 'void' }}">
+<td class="ledger-date"><time datetime="{{ row.occurred_at.isoformat() }}+08:00" title="{{ row.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }} 北京时间">{{ row.occurred_at.strftime('%Y-%m-%d %H:%M') }}</time></td>
+<td class="ledger-direction">{{ '支出' if row.direction == 'expense' else '收入' }}{{ ' · 已作废' if row.status == 'void' }}</td>
+<td class="ledger-category">{{ row.category_name }}</td>
+<td class="ledger-amount ledger-number">{{ money(row.amount) }}</td>
+<td class="ledger-note-cell{{ ' ledger-no-note' if not row.note }}">{{ note_text(row.note) }}</td>
+<td class="ledger-row-actions">{% if row.status == 'active' %}{{ action_link('修改',url_for('ledger.index',month=selected_month,edit=row.id)+'#entry') }}<form method="post" action="{{ url_for('ledger.write') }}">{{ hidden('void') }}<input type="hidden" name="id" value="{{ row.id }}"><input type="hidden" name="revision" value="{{ row.revision }}">{{ control_button('作废',{'type':'submit'},'secondary') }}</form>{% else %}<span>已作废</span>{% endif %}</td>
+</tr>{% else %}<tr class="ledger-empty"><td colspan="6">暂无符合条件的账目，可以点击“＋记一笔”开始记录。</td></tr>{% endfor %}
+</tbody></table></div>
+<nav class="ledger-actions" aria-label="明细分页"><span>共 {{ count }} 笔 · 第 {{ page }} / {{ pages }} 页</span>{% if page > 1 %}{{ action_link('上一页',url_for('ledger.index',month=selected_month,category=filters.category,direction=filters.direction,status=filters.status,page=page-1)) }}{% endif %}{% if page < pages %}{{ action_link('下一页',url_for('ledger.index',month=selected_month,category=filters.category,direction=filters.direction,status=filters.status,page=page+1)) }}{% endif %}</nav>
+</section>
+<section class="card ledger-panel ledger-shares"><div class="ledger-section-heading"><h2>分类占比</h2><span class="muted">{{ selected_label }} · 整月正常账目</span></div>
 <div class="ledger-share-grid">
 {% for direction,label in [('expense','支出'),('income','收入')] %}
-<section class="ledger-share-group" aria-label="{{ label }}分类占比"><div class="ledger-share-heading"><h3>{{ label }}占比</h3><b>¥{{ '%.2f'|format(totals[direction]) }}</b></div>
+<section class="ledger-share-group" aria-label="{{ label }}分类占比"><div class="ledger-share-heading"><h3>{{ label }}</h3><b>{{ money(totals[direction]) }}</b></div>
 {% for group in shares[direction] %}
-<div class="ledger-share-row"><div class="ledger-share-label"><span>{{ group.name }}</span><span class="ledger-share-values"><b>¥{{ '%.2f'|format(group.amount) }}</b><span>{{ '%.2f'|format(group.percent) }}%</span></span></div>
+<div class="ledger-share-row"><div class="ledger-share-label"><span>{{ group.name }}</span><span class="ledger-share-values"><b>{{ money(group.amount) }}</b><span>{{ '%.2f'|format(group.percent) }}%</span></span></div>
 {{ distribution_bar(group.percent,group.name ~ ' · ' ~ label ~ '占比 ' ~ ('%.2f'|format(group.percent)) ~ '%') }}</div>
 {% else %}<p>暂无{{ label }}</p>{% endfor %}</section>
 {% endfor %}</div></section>
-<section class="card ledger-panel"><h2>账目明细</h2><form method="get" class="ledger-filters"><input type="hidden" name="month" value="{{ selected_month }}">
-<label class="ui-field"><span class="ui-label">分类</span>{% call select_control({'name':'category','data-searchable-select':true,'data-select-label':'筛选分类'}) %}<option value="">全部分类</option>{% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category == c.id|string }}>{{ c.name }}</option>{% endfor %}{% endcall %}</label>
-<label class="ui-field"><span class="ui-label">收支</span>{% call select_control({'name':'direction'}) %}{% for key,label in [('','全部收支'),('expense','支出'),('income','收入')] %}<option value="{{ key }}" {{ 'selected' if filters.direction == key }}>{{ label }}</option>{% endfor %}{% endcall %}</label>
-<label class="ui-field"><span class="ui-label">状态</span>{% call select_control({'name':'status'}) %}{% for key,label in [('active','正常'),('void','已作废'),('','全部状态')] %}<option value="{{ key }}" {{ 'selected' if filters.status == key }}>{{ label }}</option>{% endfor %}{% endcall %}</label>{{ control_button('筛选明细',{'type':'submit'},'secondary') }}</form>
-<div class="ledger-table-wrap"><table><thead><tr><th>账目发生时间</th><th>收支</th><th>分类</th><th>金额</th><th>备注</th><th>系统时间</th><th>操作</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }}</td><td>{{ '支出' if row.direction == 'expense' else '收入' }}{{ ' · 已作废' if row.status == 'void' }}</td><td>{{ row.category_name }}</td><td>¥{{ '%.2f'|format(row.amount) }}</td><td class="ledger-note-cell">{{ row.note or '—' }}</td><td><small>录入 {{ row.created_at.strftime('%Y-%m-%d %H:%M:%S') }}<br>修改 {{ row.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}</small></td><td>{% if row.status == 'active' %}{{ action_link('修改',url_for('ledger.index',month=selected_month,edit=row.id)+'#entry') }}<form method="post" action="{{ url_for('ledger.write') }}">{{ hidden('void') }}<input type="hidden" name="id" value="{{ row.id }}"><input type="hidden" name="revision" value="{{ row.revision }}">{{ control_button('作废',{'type':'submit'},'secondary') }}</form>{% else %}已作废{% endif %}</td></tr>{% else %}<tr><td colspan="7">暂无符合条件的账目，可以先记一笔。</td></tr>{% endfor %}</tbody></table></div>
-<nav class="ledger-actions" aria-label="明细分页"><span>共 {{ count }} 笔 · 第 {{ page }} / {{ pages }} 页</span>{% if page > 1 %}{{ action_link('上一页',url_for('ledger.index',month=selected_month,category=filters.category,direction=filters.direction,status=filters.status,page=page-1)) }}{% endif %}{% if page < pages %}{{ action_link('下一页',url_for('ledger.index',month=selected_month,category=filters.category,direction=filters.direction,status=filters.status,page=page+1)) }}{% endif %}</nav>
-</section>{% endif %}
+{% endif %}
 {% endblock %}
 
-{% block extra_scripts %}{% if not categories_mode %}<script src="{{ url_for('static',filename='ledger.js') }}" defer></script>{% endif %}{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='ledger.js') }}" defer></script>{% endblock %}
