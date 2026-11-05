@@ -89,3 +89,78 @@ class PublishNavigationBrowserTests(unittest.TestCase):
             self.assertFalse(product._dismiss_sku_notice(self.page))
         self.assertTrue(self.page.get_by_role('dialog').is_visible())
         self.assertFalse(self.page.evaluate('!!window.closedUnknown'))
+
+    def _brand_page(self):
+        """构造两个独立输入框；仅浮层搜索完整名称才返回目标选项。"""
+        self.page.goto("https://qianniu.test/category")
+        self.page.set_content('''
+            <input placeholder="可输入产品名称" value="粘毛器">
+            <input id="brand" placeholder="请输入" value="无品牌" aria-expanded="false">
+            <button id="unrelated" onclick="this.dataset.clicked='true'">无品牌/无注册商标</button>
+            <div class="sell-o-select-popup-overlay" hidden>
+              <div class="next-select-popup">
+                <input id="brand-search" type="search"><div id="options">无品牌</div>
+              </div>
+            </div>
+            <button id="next">确认，下一步</button>
+            <script>
+              const brand = document.querySelector('#brand');
+              const popup = document.querySelector('.sell-o-select-popup-overlay');
+              const search = document.querySelector('#brand-search');
+              const options = document.querySelector('#options');
+              const requested = '无品牌/无注册商标';
+              brand.onclick = () => { popup.hidden = false; brand.setAttribute('aria-expanded', 'true'); };
+              brand.oninput = () => { brand.dataset.edited = 'true'; };
+              search.oninput = () => {
+                options.textContent = '无品牌';
+                if (search.value !== requested || window.noBrandMatch) return;
+                setTimeout(() => {
+                  const option = document.createElement('div');
+                  option.className = 'options-item';
+                  option.textContent = requested;
+                  option.onclick = () => {
+                    brand.value = window.wrongSelection ? '无品牌' : option.textContent;
+                    popup.hidden = true;
+                    brand.setAttribute('aria-expanded', 'false');
+                  };
+                  options.appendChild(option);
+                }, 50);
+              };
+              document.querySelector('#next').onclick = () => {
+                sessionStorage.setItem('brandResult', JSON.stringify({
+                  selected: brand.value, query: search.value, directEdit: !!brand.dataset.edited,
+                  unrelatedClick: !!document.querySelector('#unrelated').dataset.clicked,
+                  productQuery: document.querySelector('input[placeholder="可输入产品名称"]').value
+                }));
+                location.href = '/editor';
+              };
+            </script>''')
+
+    def test_brand_search_uses_popup_and_selects_full_match_before_navigation(self):
+        self._brand_page()
+        with VerificationGuard(self.context), patch.object(actions, "SHORT_TIMEOUT_MS", 80):
+            result = product.select_brand_and_continue(self.page, "无品牌/无注册商标")
+        self.assertEqual(result.url, "https://qianniu.test/editor")
+        self.assertEqual(result.evaluate("JSON.parse(sessionStorage.getItem('brandResult'))"), {
+            "selected": "无品牌/无注册商标", "query": "无品牌/无注册商标", "directEdit": False,
+            "unrelatedClick": False, "productQuery": "粘毛器",
+        })
+
+    def test_missing_brand_does_not_click_outside_match_or_navigate(self):
+        self._brand_page()
+        self.page.evaluate("window.noBrandMatch = true")
+        with VerificationGuard(self.context), patch.object(product, "BRAND_WAIT_MS", 500):
+            with self.assertRaises(PlaywrightTimeoutError):
+                product.select_brand_and_continue(self.page, "无品牌/无注册商标")
+        self.assertEqual(self.page.url, "https://qianniu.test/category")
+        self.assertIsNone(self.page.locator('#unrelated').get_attribute('data-clicked'))
+        self.assertIsNone(self.page.evaluate("sessionStorage.getItem('brandResult')"))
+
+    def test_brand_value_must_match_after_selection(self):
+        self._brand_page()
+        self.page.evaluate("window.wrongSelection = true")
+        with VerificationGuard(self.context), patch.object(product, "BRAND_WAIT_MS", 600):
+            with self.assertRaisesRegex(AssertionError, "核对已选品牌"):
+                product.select_brand_and_continue(self.page, "无品牌/无注册商标")
+        self.assertEqual(self.page.url, "https://qianniu.test/category")
+        self.assertIsNone(self.page.evaluate("sessionStorage.getItem('brandResult')"))

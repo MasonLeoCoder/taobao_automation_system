@@ -1,5 +1,5 @@
 """千牛商品入口操作，迁移现有选择器。"""
-from .verification import qianniu_operation, checkpoint, page_step
+from .verification import qianniu_operation, checkpoint, expect, page_step
 from logging import getLogger as get_logger
 import re
 from urllib.parse import urlsplit
@@ -28,6 +28,8 @@ START_BUTTON_SELECTORS = (
     "button:has-text('开启')",
 )
 SEARCH_INPUT_SELECTOR = "input[placeholder*='可输入产品名称']"
+BRAND_POPUP = ":is(.sell-o-select-popup-overlay, .next-select-popup)"
+BRAND_WAIT_MS = 30_000
 
 
 def _safe_location(page: Page) -> str:
@@ -61,12 +63,31 @@ def _navigate(context, page, element):
 @qianniu_operation
 def select_brand_and_continue(page: Page, brand: str) -> Page:
     """选择品牌并进入下一步；参数：类目页、完整品牌名称；返回：后续页面。"""
-    if not brand.strip():
+    brand = brand.strip()
+    if not brand:
         raise ValueError("品牌不能为空")
-    page_step(lambda: page.get_by_placeholder("请输入", exact=True).click(), completed=lambda: page.locator("input:focus").count() == 1)
-    # 下拉框展开后，搜索输入框获得焦点，避免填写顶部的商品搜索框。
-    page_step(lambda: page.locator("input:focus").fill(brand.split("/", 1)[0]))
-    page_step(lambda: page.get_by_text(brand, exact=True).click(), completed=lambda: page.get_by_placeholder("请输入", exact=True).get_attribute("aria-expanded") == "false")
+    field = page.locator('input[placeholder="请输入"]:visible')
+    # 只取浮层外壳；同一个浮层内嵌选择组件时不重复匹配。
+    popup = page.locator(f"{BRAND_POPUP}:not({BRAND_POPUP} *):visible")
+    search = popup.locator('input:is(:not([type]), [type="text"], [type="search"]):visible')
+    expect(field, "定位品牌下拉框").to_have_count(1, timeout=BRAND_WAIT_MS)
+    if field.get_attribute("aria-expanded") != "true":
+        expect(popup, "展开品牌前核对其他选择浮层已收起").to_have_count(0, timeout=BRAND_WAIT_MS)
+        page_step(lambda: field.click(timeout=BRAND_WAIT_MS), description="打开品牌下拉框",
+                  completed=lambda: popup.count() == 1 and search.count() == 1)
+    expect(popup, "定位已展开的品牌浮层").to_have_count(1, timeout=BRAND_WAIT_MS)
+    expect(search, "定位品牌浮层内的搜索框").to_have_count(1, timeout=BRAND_WAIT_MS)
+    page_step(lambda: search.fill(brand, timeout=BRAND_WAIT_MS), description=f"在品牌浮层搜索：{brand}")
+
+    def selected() -> bool:
+        """核对下拉已关闭且品牌值一致；参数：无；返回：是否完成本次选择。"""
+        return popup.count() == 0 and field.count() == 1 and field.input_value(timeout=BRAND_WAIT_MS) == brand
+
+    option = popup.get_by_text(brand, exact=True).and_(page.locator(":visible"))
+    page_step(lambda: option.click(timeout=BRAND_WAIT_MS), description=f"选择完整匹配的品牌：{brand}",
+              completed=selected)
+    expect(popup, "核对品牌下拉已收起").to_have_count(0, timeout=BRAND_WAIT_MS)
+    expect(field, "核对已选品牌").to_have_value(brand, timeout=BRAND_WAIT_MS)
     get_logger(__name__).info("已选择品牌：%s", brand)
     next_button = page.get_by_role("button", name=re.compile(r"确认\s*[,，]\s*下一步"))
     next_page = _navigate(page.context, page, next_button)
