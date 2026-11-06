@@ -91,6 +91,16 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertTrue(all(NAMES[0] in line and '未找到同名图片' in line for line in logs.output))
         self.assert_core_unchanged()
 
+    def test_one_spec_uses_its_title_and_blank_spec_uses_final_guide(self):
+        title = '规格一宠物除毛刷'
+        inputs = SkuImageInputs({}, {})
+        with self.guard():
+            result = platform.fill_sku_media(self.page, NAMES, inputs, TITLE,
+                                             sku_titles={NAMES[0]:title, NAMES[1]:''})
+        self.assertEqual({row['name']: row['title'] for row in self.page.evaluate('records')},
+                         {NAMES[0]:title, NAMES[1]:TITLE})
+        self.assertTrue(all(fields == ['SKU搜索标题'] for fields in result.filled.values()))
+
     def test_extra_file_requests_after_upload_and_save_stay_intercepted_without_uploading_again(self):
         self.page.evaluate('extraFileRequests=true')
         with self.guard(), self.assertLogs('ecommerce.platforms.qianniu.verification', level='DEBUG') as logs:

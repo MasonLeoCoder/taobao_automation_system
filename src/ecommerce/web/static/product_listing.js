@@ -127,6 +127,25 @@
     }
   }
 
+  let skuOwner = null, skuDraft = {};
+
+  function saveSkuDraft() {
+    try { if (skuOwner) sessionStorage.setItem('listing-sku-titles:' + skuOwner, JSON.stringify(skuDraft)); }
+    catch { /* 当前页面仍可编辑 */ }
+  }
+
+  function checkSkuTitle(field) {
+    const value = field.value.replace(/\p{White_Space}/gu, '');
+    const width = [...value].reduce((sum, char) => sum + (char.codePointAt(0) < 128 ? 1 : 2), 0);
+    const issue = width > 30 ? '超过上限' : /[\x00-\x1f\x7f]/u.test(field.value) ? '请使用单行文本' : '';
+    const note = skuDraft[field.dataset.skuKey]?.issue || '';
+    const count = document.getElementById(field.getAttribute('aria-describedby'));
+    count.textContent = `${width} / 30${issue ? ' · ' + issue : !value && note ? ' · ' + note : ''}`;
+    count.classList.toggle('is-invalid', Boolean(issue || (!value && note)));
+    field.setAttribute('aria-invalid', String(Boolean(issue)));
+    return !issue;
+  }
+
   function checkTitles() {
     if (!node('titles')) return true;
     let valid = true;
@@ -141,7 +160,44 @@
       input.setAttribute('aria-invalid',String(Boolean(issue)));
       valid = valid && !issue;
     }
-    return valid;
+    const skuFields = [...node('skus').querySelectorAll('[data-sku-key]')];
+    return skuFields.map(checkSkuTitle).every(Boolean) && valid;
+  }
+
+  function renderSkus(data, preview) {
+    if (skuOwner !== data.id) {
+      skuOwner = data.id;
+      skuDraft = {};
+      try { if (skuOwner) skuDraft = JSON.parse(sessionStorage.getItem('listing-sku-titles:' + skuOwner)) || {}; }
+      catch { /* 保留空草稿 */ }
+    }
+    const rows = preview.skus || [];
+    node('skus').hidden = !rows.length;
+    node('skus').querySelector('tbody').replaceChildren(...rows.map((row, index) => {
+      const tr = element('tr'), name = row['销售规格'], spec = element('td');
+      spec.append(element('strong', name));
+      if (data.id) {
+        const key = `sku-${index + 1}`;
+        const field = element('input'), count = element('small');
+        field.type = 'text';
+        field.className = 'ui-control';
+        field.dataset.skuKey = key;
+        field.value = (data.task ? data.sku_titles?.[key] : skuDraft[key]?.title) || '';
+        field.disabled = Boolean(data.task);
+        field.placeholder = '留空使用导购标题';
+        field.setAttribute('aria-label', `${name}的 SKU 搜索标题`);
+        count.id = `listing-${key}-count`;
+        field.setAttribute('aria-describedby', count.id);
+        count.className = 'listing-title-count';
+        spec.className = 'listing-sku-title';
+        const label = element('small', 'SKU 搜索标题');
+        label.className = 'listing-sku-title-label';
+        spec.append(label, field, count);
+      }
+      tr.append(spec, ...['价格','数量','商家编码'].map(key => element('td',row[key])),
+        element('td',preview.sku_images?.[name] || '未匹配'));
+      return tr;
+    }));
   }
 
   function render(data) {
@@ -169,12 +225,8 @@
       node('issues').append(element('strong',label),list);
     }
     node('files').querySelector('dl').replaceChildren(...Object.entries(files).flatMap(([group,names]) => [element('dt',labels[group]),element('dd',names.join('、') || '未提供')]));
-    const rows = preview.skus || [];
-    node('skus').hidden = !rows.length;
-    node('skus').querySelector('tbody').replaceChildren(...rows.map(row => {
-      const tr = element('tr');
-      tr.append(...['销售规格','价格','数量','商家编码'].map(key => element('td',row[key])),element('td',preview.sku_images?.[row['销售规格']] || '未匹配')); return tr;
-    }));
+    renderSkus(data, preview);
+    root.dispatchEvent(new CustomEvent('listing:review', {detail:task ? null : data.id}));
     const validTitles = checkTitles();
     node('start').disabled = !data.id || !!task || busy || !validTitles;
     node('action').hidden = !!task;
@@ -230,6 +282,7 @@
   function resetReview() {
     if (node('manual-dialog').open) node('manual-dialog').close();
     clearTimeout(timer); remember(null); node('review').hidden = true; node('task').hidden = true;
+    root.dispatchEvent(new CustomEvent('listing:review'));
     currentPrompt = seenPrompt = sentPrompt = null;
     node('manual-open').hidden = true; node('feedback-note').textContent = '';
     logOwner = oldest = null; latest = 0; logBusy = logAgain = logReady = hasOlder = false;
@@ -324,6 +377,26 @@
   node('titles')?.addEventListener('input',() => {
     node('start').disabled = !checkTitles() || !id || busy;
   });
+  node('skus').addEventListener('input', event => {
+    const field = event.target;
+    if (!field.dataset.skuKey) return;
+    skuDraft[field.dataset.skuKey] = {title:field.value, manual:true};
+    saveSkuDraft();
+    node('start').disabled = !checkTitles() || !id || busy;
+  });
+  root.addEventListener('listing:sku-suggestions', event => {
+    const {job, rows} = event.detail;
+    if (job !== id || job !== skuOwner || busy || node('titles').disabled) return;
+    const byKey = new Map(rows.map(row => [row.sku_key, row]));
+    for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
+      const key = field.dataset.skuKey, row = byKey.get(key);
+      if (!row || skuDraft[key]?.manual) continue;
+      field.value = row.title;
+      skuDraft[key] = {title:row.title, issue:row.issue};
+    }
+    saveSkuDraft();
+    node('start').disabled = !checkTitles() || !id || busy;
+  });
   node('start').addEventListener('click',async () => {
     if (!id || busy || !checkTitles()) return;
     const body = {submit:node('submit').checked};
@@ -331,12 +404,18 @@
       body.titles = {title:node('title').value, guide:node('guide').value};
       node('titles').disabled = true;
     }
+    const skuFields = [...node('skus').querySelectorAll('[data-sku-key]')];
+    if (skuFields.length) {
+      body.sku_titles = Object.fromEntries(skuFields.map(field => [field.dataset.skuKey, field.value]));
+      skuFields.forEach(field => { field.disabled = true; });
+    }
     busy = true; node('start').disabled = true; node('import-fields').disabled = true;
     try {
       render(await api(`${base}/${id}/start`,body)); poll();
     } catch (error) {
       node('import-note').textContent = error.message; node('import-fields').disabled = false;
       if (node('titles')) node('titles').disabled = false;
+      skuFields.forEach(field => { field.disabled = false; });
       node('start').disabled = !checkTitles();
     } finally { busy = false; }
   });

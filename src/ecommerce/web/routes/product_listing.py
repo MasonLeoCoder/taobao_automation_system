@@ -10,6 +10,7 @@ from ecommerce.modules.product.web_listing import ListingConflict
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.modules.product.listing_profiles import support
+from ecommerce.modules.product.title_generation import TitleGeneration
 from ecommerce.shared.exceptions import TaskBusy
 
 product_listing = Blueprint('product_listing', __name__)
@@ -69,7 +70,8 @@ def index():
     choices = [dict(row, support=support(row)) for row in rows if row['is_visible'] and row['is_leaf']]
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
-        use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify')
+        use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify',
+        title_generation_enabled=use_catalog)
 
 
 @product_listing.post('/api/listing/preflight')
@@ -113,11 +115,45 @@ def logs(identifier):
 def start(identifier):
     """在后台启动一次已预检导入；参数：编号及仓库开关；返回：当前状态。"""
     data = request.get_json()
-    if not isinstance(data, dict) or set(data) not in ({'submit'}, {'submit', 'titles'}):
+    if not isinstance(data, dict) or 'submit' not in data or set(data) - {'submit', 'titles', 'sku_titles'}:
         abort(400, description='请明确本次是否提交到仓库')
     if 'titles' in data and not isinstance(data['titles'], dict):
         abort(400, description='标题参数无效')
-    return jsonify(workbench().start(identifier, data['submit'], titles=data.get('titles'))), 202
+    if 'sku_titles' in data and not isinstance(data['sku_titles'], dict):
+        abort(400, description='SKU 搜索标题参数无效')
+    return jsonify(workbench().start(identifier, data['submit'], titles=data.get('titles'),
+                                     sku_titles=data.get('sku_titles'))), 202
+
+
+@product_listing.get('/api/listing/<identifier>/titles/source')
+def title_source(identifier):
+    return jsonify(TitleGeneration(workbench(), identifier).source(
+        request.args.get('period', '7d'), request.args.get('batch') or None))
+
+
+@product_listing.get('/api/listing/<identifier>/titles/result')
+def title_result(identifier):
+    return jsonify(TitleGeneration(workbench(), identifier).latest())
+
+
+@product_listing.post('/api/listing/<identifier>/titles/preview')
+def title_preview(identifier):
+    request.max_content_length = 16 * 1024
+    return jsonify(TitleGeneration(workbench(), identifier).preview(request.get_json()))
+
+
+@product_listing.post('/api/listing/<identifier>/titles/generate')
+def title_generate(identifier):
+    request.max_content_length = 16 * 1024
+    data = request.get_json()
+    if not isinstance(data, dict) or set(data) != {'input', 'key', 'allow_paid', 'retry'}:
+        abort(400, description='请重新预览并确认本次请求')
+    try:
+        return jsonify(TitleGeneration(workbench(), identifier).generate(
+            data['input'], data['key'], data['allow_paid'], data['retry']))
+    except OSError:
+        current_app.logger.exception('标题生成记录读写失败')
+        abort(503, description='无法保存标题生成结果，请先查看已保存记录和费用。')
 
 
 @product_listing.post('/api/listing/<identifier>/feedback')

@@ -22,8 +22,8 @@
           <div class="ui-field">
             <span class="ui-label">商品文件夹</span>
             <label class="listing-folder-picker">
-              <input id="listing-folder" class="listing-folder-input" type="file" webkitdirectory multiple
-                aria-label="选择商品文件夹" aria-describedby="listing-folder-description">
+              {{ ui.input_control({'id':'listing-folder','class':'listing-folder-input','type':'file',
+                'webkitdirectory':true,'multiple':true,'aria-label':'选择商品文件夹','aria-describedby':'listing-folder-description'}) }}
               <span class="listing-folder-card">
                 <span class="listing-folder-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
@@ -63,14 +63,72 @@
         {% for key,label,limit in [('title','宝贝标题',60),('guide','导购标题',30)] %}
         <label class="ui-field listing-title">
           <span class="ui-label">{{ label }}</span>
-          <input type="text" class="ui-control" id="listing-{{ key }}" aria-describedby="listing-{{ key }}-count"
-            {% if key == 'title' %}required{% endif %}>
+          {{ ui.input_control({'type':'text','id':'listing-' ~ key,'aria-describedby':'listing-' ~ key ~ '-count',
+            'required':key == 'title'}) }}
           <span class="listing-title-count" id="listing-{{ key }}-count">0 / {{ limit }}</span>
+          <span class="listing-title-evidence" id="listing-{{ key }}-evidence" hidden></span>
         </label>
         {% endfor %}
       </div>
       <p class="ui-form-note">汉字按 2 个字符计算。导购标题可留空，填写时需达到 20 个字符。</p>
     </fieldset>
+    {% if title_generation_enabled %}
+    <details class="listing-ai" id="listing-ai" data-paid-enabled="{{ 'yes' if can_submit else 'no' }}" hidden>
+      <summary><strong>用搜索排行生成标题</strong><span>生成并比较 5 组候选</span></summary>
+      <div class="listing-ai-body">
+        <p id="listing-ai-message" class="ui-tool-feedback" role="status" hidden></p>
+        <section id="listing-ai-results" hidden aria-label="候选标题"></section>
+        <details id="listing-ai-settings" class="listing-ai-inner listing-ai-settings">
+          <summary>生成设置</summary>
+          <div class="listing-ai-settings-body">
+            <div class="listing-ai-filters">
+              {% call ui.field('统计周期') %}{% call ui.select_control({'id':'listing-ai-period'}) %}
+                <option value="7d">7天</option><option value="30d">30天</option><option value="day">日</option>
+              {% endcall %}{% endcall %}
+              {% call ui.field('采集批次') %}{% call ui.select_control({'id':'listing-ai-batch'}) %}
+                <option value="">最新有数据的批次</option>
+              {% endcall %}{% endcall %}
+            </div>
+            <div id="listing-ai-source" class="listing-ai-source"></div>
+            <label id="listing-ai-mismatch-label" class="listing-choice" hidden>
+              {{ ui.input_control({'id':'listing-ai-mismatch','type':'checkbox'}) }} 统计类目与发品类目不同，我确认使用此批数据
+            </label>
+            <details id="listing-ai-terms" class="listing-ai-inner" hidden>
+              <summary>核对和调整排行词 <span id="listing-ai-count"></span></summary>
+              <div class="listing-ai-filters">
+                {% call ui.field('筛选词类型') %}{% call ui.select_control({'id':'listing-ai-kind'}) %}
+                  <option value="">全部</option><option value="search">搜索词</option><option value="trend">趋势词</option>
+                  <option value="core">核心词</option><option value="modifier">修饰词</option>
+                {% endcall %}{% endcall %}
+                {% call ui.field('搜索本批词条') %}{{ ui.input_control({'type':'search','id':'listing-ai-search'}) }}{% endcall %}
+              </div>
+              <p class="ui-form-note">勾选适合商品的词，也可以分别指定两个标题的必用词。</p>
+              <div class="module-actions">
+                {{ ui.control_button('查看已选',{'id':'listing-ai-selected','type':'button','aria-pressed':'false'},'secondary') }}
+                {{ ui.control_button('恢复推荐',{'id':'listing-ai-recommend','type':'button'},'secondary') }}
+              </div>
+              <ul id="listing-ai-words" class="listing-ai-words"></ul>
+              {{ ui.control_button('显示更多词条',{'id':'listing-ai-more','type':'button','hidden':true},'secondary') }}
+            </details>
+            {% call ui.field('补充已确认的商品事实（选填）') %}{{ ui.textarea_control(
+              {'id':'listing-ai-facts','rows':2,'maxlength':600,'placeholder':'填写已确认的材质、用途或卖点'}) }}
+            {% endcall %}
+            <div class="module-actions">
+              {{ ui.control_button('预览本次请求',{'id':'listing-ai-preview','type':'button','disabled':true},'secondary') }}
+            </div>
+            <section id="listing-ai-plan" class="listing-ai-inner" hidden>
+              <h3>本次请求与费用</h3>
+              <p id="listing-ai-budget"></p>
+              <details><summary>查看将发送的商品资料和词条</summary><pre id="listing-ai-input"></pre></details>
+              {% if not can_submit %}<p class="ui-form-note">自动验证环境仅提供请求预览和已保存结果。</p>{% endif %}
+              <label class="listing-choice">{{ ui.input_control({'id':'listing-ai-paid','type':'checkbox'}) }} 我确认按上方资料发送 1 次付费请求</label>
+              {{ ui.control_button('确认并生成 5 组',{'id':'listing-ai-generate','type':'button','disabled':true}) }}
+            </section>
+          </div>
+        </details>
+      </div>
+    </details>
+    {% endif %}
     <div class="listing-fields" id="listing-summary"></div>
     <div class="listing-issues" id="listing-issues"></div>
     <details id="listing-files"><summary>查看识别到的文件</summary><dl></dl></details>
@@ -115,4 +173,7 @@
   <noscript>请选择启用了脚本的本机浏览器使用上架工作台。</noscript>
 </section>
 {% endblock %}
-{% block extra_scripts %}<script src="{{ url_for('static',filename='product_listing.js') }}" defer></script>{% endblock %}
+{% block extra_scripts %}
+<script src="{{ url_for('static',filename='product_listing.js') }}" defer></script>
+{% if title_generation_enabled %}<script src="{{ url_for('static',filename='listing_titles.js') }}" defer></script>{% endif %}
+{% endblock %}

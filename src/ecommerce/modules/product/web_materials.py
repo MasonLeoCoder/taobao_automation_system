@@ -18,7 +18,7 @@ from .listing_profiles import ATTRIBUTES, CATEGORY, GROUPS, LINT_ROLLER
 
 LIMIT = 512 * 1024**2
 MAX_FILES = 300
-NO_GUIDE_WARNING = '未提供导购标题，导购标题和 SKU 搜索标题将跳过'
+NO_GUIDE_WARNING = '未提供导购标题，导购标题及留空的 SKU 搜索标题将跳过'
 IMAGE_TYPES = {'.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG', '.webp': 'WEBP',
                '.gif': 'GIF', '.bmp': 'BMP', '.tif': 'TIFF', '.tiff': 'TIFF'}
 
@@ -52,6 +52,31 @@ def _probe_video(path):
         raise ValueError('视频没有可解码的画面')
 
 
+def title_width(value):
+    """ASCII 字符计 1，其余字符计 2。"""
+    return sum(1 if ord(char) < 128 else 2 for char in value)
+
+
+def compact_title(value):
+    """去掉仅用于分隔候选词组的空白。"""
+    return ''.join(value.split())
+
+
+def sku_specs(preview):
+    """用封存资料的行序分配标识，定位千牛时仍使用原规格名。"""
+    return [{'sku_key': f'sku-{index}', 'name': row['销售规格']}
+            for index, row in enumerate(preview['skus'], 1)]
+
+
+def validate_sku_title(value):
+    if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError('搜索标题必须为单行文本')
+    value = compact_title(value)
+    if title_width(value) > 30:
+        raise ValueError('搜索标题超过 30 字符（汉字计 2 字符）')
+    return value
+
+
 def validate_titles(title, guide):
     """按发品页字符口径核对标题，导购标题可留空。"""
     if not isinstance(title, str) or not title.strip():
@@ -59,10 +84,9 @@ def validate_titles(title, guide):
     if not isinstance(guide, str):
         raise ValueError('导购标题必须为文本')
     title, guide = title.strip(), guide.strip()
-    width = lambda value: sum(1 if ord(char) < 128 else 2 for char in value)
-    if width(title) > 60:
+    if title_width(title) > 60:
         raise ValueError('宝贝标题超过 60 字符（汉字计 2 字符）')
-    if guide and not 20 <= width(guide) <= 30:
+    if guide and not 20 <= title_width(guide) <= 30:
         raise ValueError('导购标题需要 20～30 字符（汉字计 2 字符）')
     return {'title': title, 'guide': guide}
 

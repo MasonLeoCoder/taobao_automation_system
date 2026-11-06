@@ -150,23 +150,27 @@ def _core_values(row):
 
 
 @qianniu_operation
-def fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None) -> SkuMediaResult:
-    """逐SKU填写两类图片及搜索标题；参数：页面、规格、图片匹配、Excel导购标题；返回：已核对及跳过字段。"""
+def fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None) -> SkuMediaResult:
+    """逐 SKU 填写图片和搜索标题，缺少专属标题时取导购标题。"""
     with intercept_file_dialogs(page):
-        return _fill_sku_media(page, names, images, guide_title)
+        return _fill_sku_media(page, names, images, guide_title,
+                               **({'sku_titles': sku_titles} if sku_titles is not None else {}))
 
 
-def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None) -> SkuMediaResult:
+def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None) -> SkuMediaResult:
     """执行逐SKU填写；参数及返回同公开入口；调用方负责全程接管文件选择请求。"""
     if not names or len(set(names)) != len(names) or any(not isinstance(name, str) or not name.strip() for name in names):
         raise ValueError('SKU补充信息需要非空、唯一的销售规格名称')
     result = SkuMediaResult()
-    title = guide_title.strip() if isinstance(guide_title, str) else ''
-    title_reason = None if title else 'Excel缺少导购标题或值为空'
-    if title and sum(1 if ord(char) < 128 else 2 for char in title) > 30:
-        title_reason = 'Excel导购标题超过SKU搜索标题30字符限制'
+    guide = guide_title.strip() if isinstance(guide_title, str) else ''
+    titles = sku_titles or {}
+    missing_title = 'Excel缺少导购标题或值为空' if sku_titles is None else 'SKU 搜索标题和导购标题均为空'
     rows = page.locator(SKU_GROUP).locator(SKU_ROWS)
     for name in names:
+        title = titles.get(name) or guide
+        title_reason = None if title else missing_title
+        if title and sum(1 if ord(char) < 128 else 2 for char in title) > 30:
+            title_reason = 'SKU 搜索标题超过 30 字符限制'
         checkpoint(f'填写SKU图片及搜索标题：{name}')
         matching = [rows.nth(i) for i in range(rows.count()) if rows.nth(i).locator(CREATED_NAMES).input_value() == name]
         if len(matching) != 1:

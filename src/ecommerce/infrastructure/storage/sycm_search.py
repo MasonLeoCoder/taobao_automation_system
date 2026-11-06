@@ -110,6 +110,13 @@ def browse(settings, category_id, period, batch_id=None, word_type='search', pag
         summaries = conn.execute(sa.select(types).where(types.c.batch_id == selected['id'])).mappings()
         result['types'] = {row['word_type']: dict(row) for row in summaries}
         selected['captured_rows'] = sum(row['row_count'] for row in result['types'].values())
+        if word_type is None:
+            query = (sa.select(detail, types.c.word_type)
+                .join(types, types.c.id == detail.c.batch_type_id)
+                .where(types.c.batch_id == selected['id'])
+                .order_by(types.c.word_type, detail.c.page_no, detail.c.row_no))
+            result['entries'] = [dict(row) for row in conn.execute(query).mappings()]
+            return result
         current = result['types'].get(word_type)
         if not current:
             return result

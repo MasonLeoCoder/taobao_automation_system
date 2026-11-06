@@ -118,6 +118,22 @@ class WebListingTests(TestCase):
         self.state(identifier, lambda state: state['phase'] == 'succeeded')
         self.assertEqual(self.open_publish.call_args.kwargs['title_overrides'], titles)
 
+    def test_edited_sku_title_is_validated_and_frozen_under_spec_name(self):
+        identifier = self.preflight().json['id']
+        url = f'/api/listing/{identifier}/start'
+        for titles in ({'sku-2':'未知规格'}, {'sku-1':'猫' * 15 + 'A'}):
+            response = self.client.post(url, headers=self.headers, json={'submit':False, 'sku_titles':titles})
+            self.assertEqual(response.status_code, 422)
+        self.open_publish.assert_not_called()
+        self.open_publish.return_value = '填写完成'
+        title = '猫' * 15
+        data = {'submit':False, 'sku_titles':{'sku-1':title[:5] + '　' + title[5:]}}
+        response = self.client.post(url, headers=self.headers, json=data)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json['sku_titles'], {'sku-1': title})
+        self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        self.assertEqual(self.open_publish.call_args.kwargs['sku_titles'], {'白色':title})
+
     def test_read_only_preflight_and_submit_off_preserve_single_task(self):
         data = self.preflight().json
         self.assertEqual(data['preview']['skus'][0]['价格'], '17.5')

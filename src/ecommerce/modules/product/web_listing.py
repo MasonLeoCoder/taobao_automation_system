@@ -20,7 +20,7 @@ from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from .service import open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
-from .web_materials import NO_GUIDE_WARNING, digest, import_materials, validate_titles
+from .web_materials import NO_GUIDE_WARNING, digest, import_materials, sku_specs, validate_sku_title, validate_titles
 from .listing_profiles import PROFILES, support
 
 _ID = re.compile('[0-9a-f]{32}')
@@ -85,10 +85,12 @@ class ListingWorkbench:
             if 'titles' in task:
                 manifest['preview'].update(task['titles'])
                 warnings = manifest['warnings']
-                warnings[:] = [warning for warning in warnings if warning != NO_GUIDE_WARNING]
+                warnings[:] = [warning for warning in warnings if not warning.startswith('未提供导购标题，')]
                 if not task['titles']['guide']:
                     warnings.append(NO_GUIDE_WARNING)
-            task = {key: value for key, value in task.items() if key not in {'pid', 'process_started', 'titles'}}
+            if 'sku_titles' in task:
+                manifest['sku_titles'] = task['sku_titles']
+            task = {key: value for key, value in task.items() if key not in {'pid', 'process_started', 'titles', 'sku_titles'}}
         return {**manifest, 'task': task}
 
     def jobs_for_tasks(self, task_ids):
@@ -115,7 +117,7 @@ class ListingWorkbench:
                     break
         return jobs
 
-    def start(self, identifier, submit, *, titles=None):
+    def start(self, identifier, submit, *, titles=None, sku_titles=None):
         """领取一份已确认的预检快照；参数：编号和明确布尔值；返回：现有或新任务状态。"""
         if type(submit) is not bool:
             raise ValueError('请选择本次是否提交到仓库')
@@ -135,6 +137,16 @@ class ListingWorkbench:
                 if not isinstance(titles, dict) or set(titles) != {'title', 'guide'}:
                     raise ValueError('请提供宝贝标题和导购标题')
                 state['titles'] = validate_titles(titles['title'], titles['guide'])
+            if sku_titles is not None:
+                names = {row['sku_key']: row['name'] for row in sku_specs(manifest['preview'])}
+                if not isinstance(sku_titles, dict) or set(sku_titles) - names.keys():
+                    raise ValueError('SKU 搜索标题包含本次导入中不存在的规格')
+                state['sku_titles'] = {}
+                for key, value in sku_titles.items():
+                    try:
+                        state['sku_titles'][key] = validate_sku_title(value)
+                    except ValueError as error:
+                        raise ValueError(f'规格「{names[key]}」的{error}') from None
             atomic_json(path / 'state.json', state)
             worker = _ListingRun(self.settings, path, state)
             try:
@@ -183,6 +195,8 @@ class _ListingRun:
         self.settings, self.path, self.state = settings, path, state
         self.manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
         self.preview = {**self.manifest['preview'], **state.get('titles', {})}
+        self.sku_titles = {row['name']: state['sku_titles'].get(row['sku_key'], '')
+                           for row in sku_specs(self.preview)} if 'sku_titles' in state else None
         binding = self.manifest.get('category_binding')
         self.profile = PROFILES[binding['profile']] if binding else None
         self.media, self.notes, self.attributes = {}, [], {}
@@ -309,7 +323,8 @@ class _ListingRun:
         if sku:
             for name, skipped in sku.skipped.items():
                 for label, reason in skipped.items():
-                    planned = self.preview['guide'] if label == 'SKU搜索标题' else self.preview['sku_images'].get(name)
+                    planned = ((self.sku_titles or {}).get(name) or self.preview['guide']
+                               if label == 'SKU搜索标题' else self.preview['sku_images'].get(name))
                     if planned:
                         self.notes.append(f'SKU「{name}」{label}未按预检完成：{reason}')
         self.sku_media = read_listing_fields(page)['sku_media']
@@ -419,6 +434,7 @@ class _ListingRun:
                 video_file=str(self.path / 'video' / files['video'][0]) if files['video'] else None,
                 submit=self.state['submit'], on_attention=self.attention,
                 on_submit_attention=self.submission_attention, web_review=self,
+                **({'sku_titles': self.sku_titles} if self.sku_titles is not None else {}),
                 **({'title_overrides': self.state['titles']} if 'titles' in self.state else {}))
         try:
             result = run_task(self.settings, 'product.submit' if self.state['submit'] else 'product.open', work)

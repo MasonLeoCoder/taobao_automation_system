@@ -93,7 +93,7 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
     return message
 
 
-def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None) -> str:
+def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None, sku_titles=None) -> str:
     """填写单商品；参数：配置、导航选项、素材、Excel、人工回调及提交开关；SKU目录默认Excel同级sku图；返回：如实填写及提交说明。"""
     if submit and (brand is None or product_info_file is None):
         raise ValueError("提交需要提供品牌和商品Excel，以完成填写并选择放入仓库")
@@ -230,7 +230,8 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                 attributes.get(label) for label in handlers)
             create_sales_specifications(page, sales_specifications)
             fill_sku_details(page, sku_details)
-            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, guide_title)
+            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, guide_title,
+                                             **({'sku_titles': sku_titles} if sku_titles is not None else {}))
             fill_fixed_price(page, fixed_price)
             fill_merchant_code(page, merchant_code)
             enable_multi_item_discount(page)
