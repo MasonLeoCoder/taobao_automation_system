@@ -61,6 +61,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     from ecommerce.web.routes.publish_categories import publish_categories
     app.extensions['publish_categories'] = CategoryWorkbench(settings)
     app.register_blueprint(publish_categories)
+    from ecommerce.modules.reports.sycm_search import SearchRankingWorkbench
+    from ecommerce.web.routes.sycm_search import sycm_search
+    app.extensions['sycm_search'] = SearchRankingWorkbench(settings)
+    app.register_blueprint(sycm_search)
     from ecommerce.web.routes.ledger import ledger
     app.register_blueprint(ledger)
     from ecommerce.web.routes.favorites import favorites

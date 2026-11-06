@@ -8,6 +8,7 @@ from functools import wraps
 from typing import Protocol
 from playwright.sync_api import Page, Error as PlaywrightError, expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
+from .collection_pacing import checkpoint_rate
 
 _ACTIVE = ContextVar("qianniu_verification_guard", default=None)
 
@@ -153,11 +154,13 @@ class VerificationGuard:
             raise self.failure
         if self._handling:
             return
+        checkpoint_rate()
         self._handling = True
         label = step or self.step
         first = True
         try:
             while True:
+                checkpoint_rate()
                 pages = [p for p in self.context.pages if not p.is_closed()]
                 if not pages:
                     raise NeedsAttention("千牛浏览器已关闭，无法继续当前任务")

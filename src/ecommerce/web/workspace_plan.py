@@ -45,6 +45,7 @@ GROUPS = (
         existing('searches', '搜索列表', 'pages.collection_searches'),
         existing('catalog', '商品库', 'pages.collection_details'),
         existing('analysis', '搜索词分析', 'analysis.index'),
+        existing('sycm-search', '生意参谋搜索排行', 'sycm_search.index'),
         existing('favorites', '我的关注', 'favorites.index'),
         planned('selection-projects', '选品项目',
                 '围绕一个经营方向集中研究和比较商品，让收藏能够推进到选品决定。',

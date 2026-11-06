@@ -7,6 +7,7 @@ from uuid import uuid4
 from ecommerce.infrastructure.storage import publish_categories as repository
 from ecommerce.infrastructure.tasks.runner import run_task
 from ecommerce.modules.account.service import authenticate
+from ecommerce.platforms.qianniu.collection_pacing import check_cooldown, collection_pacing, pause
 from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product
 from ecommerce.platforms.qianniu.publish_categories import collect_publish_categories
 from ecommerce.platforms.qianniu.session import browser_session
@@ -60,13 +61,17 @@ class CategoryWorkbench:
 
     def _run(self, identifier, scopes):
         def collect():
+            check_cooldown(self.settings)
             repository.begin_scan(self.settings, identifier, scopes)
             try:
                 self._update(phase='running', message='正在检查千牛登录')
-                with browser_session(self.settings, on_attention=self._attention) as (context, page):
+                with browser_session(self.settings, on_attention=self._attention) as (context, page), collection_pacing(self.settings, context):
                     page = authenticate(context, page, self.settings, on_login_wait=lambda _page, **_kwargs:
                         self._attention('请在千牛浏览器完成扫码，再点击「已处理，继续」'))
-                    page = click_publish_product(context, click_product_nav(context, page))
+                    page = click_product_nav(context, page)
+                    pause(page, 'page')
+                    page = click_publish_product(context, page)
+                    pause(page, 'page')
                     observed, complete, failed = collect_publish_categories(page, scopes,
                         on_progress=lambda path: self._update(message=f'正在采集 {path}'))
                 status = repository.apply_scan(self.settings, identifier, observed, complete, failed, INITIAL_PROFILES)

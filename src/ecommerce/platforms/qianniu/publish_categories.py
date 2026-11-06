@@ -3,6 +3,7 @@ from time import monotonic
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
+from .collection_pacing import pause
 from .product import SEARCH_INPUT_SELECTOR, click_start_button
 from .verification import checkpoint, expect, page_step, qianniu_operation
 
@@ -56,11 +57,14 @@ def _ready(page, column, predicate=lambda state: True):
 
 
 def _scroll(page, state, top=None):
-    return page_step(lambda: page.locator(state['scroller']).evaluate("""(element, top) => {
+    movement = page_step(lambda: page.locator(state['scroller']).evaluate("""(element, top) => {
         const before = element.scrollTop;
         element.scrollTop = top === null ? before + Math.max(element.clientHeight * .75, 1) : top;
         return {before, after:element.scrollTop, height:element.scrollHeight, size:element.clientHeight};
     }""", top))
+    if movement['after'] != movement['before']:
+        pause(page, 'scroll')
+    return movement
 
 
 def _read_all(page, column, *, expand_groups=False):
@@ -77,6 +81,7 @@ def _read_all(page, column, *, expand_groups=False):
                                                     for item in (_state(page, column) or {'rows': []})['rows']))
                     _ready(page, column, lambda state: any(item['name'] == row['name'] and item['expanded']
                                                            for item in state['rows']))
+                    pause(page, 'page')
                     groups.add(row['name'])
                     stable_bottom = None
                     break
@@ -124,12 +129,19 @@ def _pick(page, column, name, *, branch):
                         [(item['name'], item['platformId']) for item in children['rows']] !=
                         [(item['name'], item['platformId']) for item in previous['rows']])
                 _ready(page, column + 1, matches)
+                if not row['selected']:
+                    pause(page, 'page')
+                    _ready(page, column + 1, matches)
             else:
                 deadline = monotonic() + 10
                 while monotonic() < deadline:
                     checkpoint('核对末级类目')
                     if selected() and page.locator(SEARCH).count() == column + 1:
-                        return
+                        if not row['selected']:
+                            pause(page, 'page')
+                        if selected() and page.locator(SEARCH).count() == column + 1:
+                            return
+                        break
                     page.wait_for_timeout(120)
                 raise CategoryPageError('无法确认所选类目为末级')
             return
@@ -149,10 +161,12 @@ def collect_publish_categories(page, scopes, *, on_progress=None):
     if not search.is_visible():
         if not page.locator(SEARCH_INPUT_SELECTOR).is_visible():
             click_start_button(page)
+            pause(page, 'page')
         button = page.get_by_text('选择类目', exact=True)
         expect(button).to_be_visible(timeout=15_000)
         page_step(button.click, completed=search.is_visible)
         expect(search).to_be_visible(timeout=15_000)
+        pause(page, 'page')
     observed, complete, failed = {}, set(), []
     targets = [tuple(path.split(' > ')) for path in scopes]
 

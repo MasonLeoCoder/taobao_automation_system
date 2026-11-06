@@ -54,7 +54,7 @@ class WorkspacePlanTests(TestCase):
                     'searches': '/collections/searches', 'catalog': '/collections/details',
                     'analysis': '/analysis/searches', 'favorites': '/favorites',
                     'tools': '/tools', 'tasks': '/tasks', 'logs': '/logs', 'ai': '/settings/ai', 'ledger': '/plans/ledger',
-                    'publish-categories': '/publish-categories'}
+                    'publish-categories': '/publish-categories', 'sycm-search': '/sycm/search-rank'}
         with self.app.test_request_context('/'):
             actual = {item['key']: item['href'] for group in workspace_navigation('home')
                       for item in group['items'] if not item['planned']}
