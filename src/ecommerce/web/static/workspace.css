@@ -28,6 +28,7 @@
 .workspace-nav .workspace-nav-link{position:relative;gap:7px;padding:9px 9px 9px 12px;margin:3px 0;font-size:12px;min-width:0;min-height:40px}
 .workspace-nav-link.active::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px}
 .workspace-nav-link>span:first-child{min-width:0;overflow-wrap:anywhere}
+.workspace-nav .workspace-nav-link[href="/plans/listing"]>.ui-workspace-planned{display:none}
 .workspace-icon-wrap{display:flex;align-items:center;justify-content:center;width:30px;height:30px;flex-shrink:0}
 .workspace-icon{width:18px;height:18px;display:block}
 .workspace-chevron{display:block;width:14px;height:14px;flex-shrink:0;margin-left:auto}
