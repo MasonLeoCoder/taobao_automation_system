@@ -90,6 +90,29 @@ class ProductSubmitBrowserTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertEqual(self.page.evaluate("submitCount"), 0)
 
+    def test_web_rechecks_warehouse_after_review_before_recording_click_intent(self):
+        calls = []
+        def review(page):
+            self.assertEqual(page.evaluate('submitCount'), 0)
+            page.locator('input').evaluate('e => e.checked = false')
+        with VerificationGuard(self.context):
+            result = submit_product_to_warehouse(self.page, wait_ms=100, before_click=review,
+                                                  on_click_intent=lambda: calls.append('intent'))
+        self.assertFalse(result.submit_attempted)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.page.evaluate('submitCount'), 0)
+
+    def test_web_click_intent_persists_before_single_real_click(self):
+        steps = []
+        self.page.evaluate("action=()=>{document.querySelector('#sell-field-title').remove();document.body.insertAdjacentHTML('beforeend','<h1>已放入仓库</h1>')}")
+        with VerificationGuard(self.context):
+            result = submit_product_to_warehouse(self.page, wait_ms=500,
+                before_click=lambda page: steps.append(('review', page.evaluate('submitCount'))),
+                on_click_intent=lambda: steps.append(('intent', self.page.evaluate('submitCount'))),
+                on_click_finished=lambda: steps.append(('finished', self.page.evaluate('submitCount'))))
+        self.assertEqual(result.status, 'succeeded')
+        self.assertEqual(steps, [('review', 0), ('intent', 0), ('finished', 1)])
+
     def test_informational_message_does_not_interrupt_pending_submission(self):
         self.page.evaluate("""() => {
             document.body.insertAdjacentHTML('beforeend','<div class="sell-o-error-hoc"><div class="sell-o-message">详情图建议宽度≥1440像素</div></div>');

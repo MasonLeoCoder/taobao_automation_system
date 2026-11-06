@@ -1,0 +1,32 @@
+.listing-page { display:grid; gap:18px; max-width:1120px; }
+.listing-card { display:grid; gap:12px; min-width:0; padding:clamp(12px,2vw,24px); }
+.listing-card h2,.listing-card p { margin:0; }
+.listing-card fieldset { display:grid; gap:12px; border:0; padding:0; margin:0; min-width:0; }
+.listing-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.listing-fields .ui-control { width:100%; min-width:0; }
+.listing-summary-entry { display:grid; gap:4px; overflow-wrap:anywhere; }
+.listing-card .module-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.listing-choice { display:inline-flex; align-items:center; gap:8px; }
+.listing-issues { overflow-wrap:anywhere; }
+.listing-issues ul,.listing-card ul { margin:4px 0; }
+.listing-skus { overflow:auto; }
+.listing-skus table { width:100%; min-width:480px; }
+.listing-skus caption { text-align:left; font-weight:bold; }
+.listing-skus td,.listing-skus th { text-align:left; overflow-wrap:anywhere; }
+.listing-card [role=status] { white-space:pre-wrap; overflow-wrap:anywhere; }
+.listing-card dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 12px; }
+.listing-card dd { margin:0; overflow-wrap:anywhere; }
+.listing-page [hidden] { display:none !important; }
+.listing-log { display:grid; gap:8px; min-width:0; }
+.listing-log h3 { margin:0; }
+.listing-log-scroll { overflow:auto; max-height:360px; border:1px solid var(--control-border); border-radius:8px; }
+.listing-log-scroll ol { list-style:none; padding:0; margin:0; }
+.listing-log-scroll li { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:8px; padding:8px 12px; border-bottom:1px solid var(--control-border); }
+.listing-log-scroll li:last-child { border-bottom:0; }
+.listing-log-scroll time { font-variant-numeric:tabular-nums; }
+.listing-log-scroll .log-message { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.listing-manual-body { padding:18px clamp(14px,4vw,28px); overflow:auto; max-height:64vh; }
+.listing-manual-body p,.listing-manual-body li { white-space:pre-wrap; overflow-wrap:anywhere; }
+.listing-manual-body .module-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+@media (max-width:680px) { .listing-fields { grid-template-columns:minmax(0,1fr); } }
+@media (max-width:480px) { .listing-log-scroll li { grid-template-columns:minmax(0,1fr); gap:3px; } }

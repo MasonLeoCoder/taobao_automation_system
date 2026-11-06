@@ -20,16 +20,25 @@ from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
 
 
-def submit_with_review(settings: Settings, page, on_review: Callable[[str], None] | None = None) -> str:
+def submit_with_review(settings: Settings, page, on_review: Callable[[str], None] | None = None,
+                       *, before_click=None, on_click_intent=None, on_click_finished=None, on_result=None) -> str:
     """提交并等待人工检查；参数：配置、商品页、人工回调；返回：经平台页面确认的成功说明。"""
     baseline_pages = tuple(page.context.pages)
-    result = submit_product_to_warehouse(page)
+    def attempt():
+        """执行受审核的单次提交；参数：无；返回：平台结果。"""
+        result = (submit_product_to_warehouse(page, before_click=before_click, on_click_intent=on_click_intent,
+                                              on_click_finished=on_click_finished) if before_click
+                  else submit_product_to_warehouse(page))
+        if on_result:
+            on_result(result)
+        return result
+    result = attempt()
     while not result.submit_attempted and result.status != "succeeded":
         _request_submission_review(settings, result, "提交前检查未通过（尚未点击提交）", result.message,
                                    "请人工修正页面后反馈“继续”。未收到反馈前不会点击提交；反馈后先重新检查，检查通过才提交一次。",
                                    on_review)
-        result = submit_product_to_warehouse(page)
-    return review_submission_result(settings, page, result, on_review, baseline_pages)
+        result = attempt()
+    return review_submission_result(settings, page, result, on_review, baseline_pages, on_result=on_result)
 
 
 def _request_submission_review(settings: Settings, result: SubmissionResult, label: str,
@@ -54,7 +63,7 @@ def _request_submission_review(settings: Settings, result: SubmissionResult, lab
 
 def review_submission_result(settings: Settings, page, result: SubmissionResult,
                             on_review: Callable[[str], None] | None = None,
-                            baseline_pages: tuple | None = None) -> str:
+                            baseline_pages: tuple | None = None, *, on_result=None) -> str:
     """核对已有提交结果并提醒人工；参数：配置、原页、结果、回调、原页面集；返回：如实说明，不点击提交。"""
     baseline_pages = tuple(page.context.pages) if baseline_pages is None else baseline_pages
     while result.status != "succeeded":
@@ -63,6 +72,8 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
                                    "提交操作已经尝试，千牛可能仍在处理。请先核对结果页及仓库，避免重复提交。程序等待明确反馈，反馈后只复核结果。",
                                    on_review)
         result = inspect_submission_result(page, baseline_pages)
+        if on_result:
+            on_result(result)
     message = result.message + (f"；商品ID：{result.item_id}" if result.item_id else "")
     logger = getLogger(__name__)
     logger.info("商品提交成功已核对：%s", message)
@@ -82,7 +93,7 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
     return message
 
 
-def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None) -> str:
+def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None) -> str:
     """填写单商品；参数：配置、导航选项、素材、Excel、人工回调及提交开关；SKU目录默认Excel同级sku图；返回：如实填写及提交说明。"""
     if submit and (brand is None or product_info_file is None):
         raise ValueError("提交需要提供品牌和商品Excel，以完成填写并选择放入仓库")
@@ -157,8 +168,14 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         sku_images = load_sku_images(image_directory if image_directory.is_absolute() else settings.root / image_directory, sales_specifications)
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
-    with browser_session(settings, on_attention=on_attention) as (context, page):
-        page = authenticate(context, page, settings)
+    verification = {'verification_handler': web_review.verification} if web_review else {}
+    with browser_session(settings, on_attention=on_attention, **verification) as (context, page):
+        if web_review:
+            web_review.progress('正在检查千牛登录状态')
+            page = authenticate(context, page, settings, on_login_wait=web_review.login_wait)
+            web_review.progress('千牛已登录，正在进入商品发布')
+        else:
+            page = authenticate(context, page, settings)
         page = click_product_nav(context, page)
         page = click_publish_product(context, page)
         if start:
@@ -169,23 +186,35 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             select_publish_category(page, category)
         if brand is not None:
             page = select_brand_and_continue(page, brand)
+        if web_review:
+            web_review.progress('填写主图、详情图和视频')
         if images is not None:
             if on_attention is None:
                 upload_main_images(page, images)
             else:
                 upload_main_images(page, images, on_attention=on_attention)
+            if web_review:
+                web_review.record_media(page, 'main')
         if portrait_images is not None:
             if on_attention is None:
                 upload_portrait_images(page, portrait_images)
             else:
                 upload_portrait_images(page, portrait_images, on_attention=on_attention)
+            if web_review:
+                web_review.record_media(page, 'portrait')
         if detail_images is not None:
             upload_detail_images(page, detail_images)
+            if web_review:
+                web_review.record_media(page, 'detail')
         if shop_categories is not None:
             category_result = select_shop_categories(page, shop_categories)
         if video_path is not None:
             from ecommerce.platforms.qianniu.product_video import upload_product_video
             upload_product_video(page, video_path)
+            if web_review:
+                web_review.record_media(page, 'video')
+        if web_review:
+            web_review.progress('填写商品标题、属性、SKU 和价格')
         if product_title is not None:
             fill_product_title(page, product_title)
         if guide_title is not None:
@@ -203,12 +232,21 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             fill_merchant_code(page, merchant_code)
             enable_multi_item_discount(page)
             select_warehouse_listing(page)
-        if category is not None:
+        if web_review:
+            web_review.filled(page, category_result, sku_media_result, {
+                '适用场景': scene_result, '适用宠物类型': pet_type_result, '握柄形态': handle_shape_result,
+                '粘面材质': adhesive_material_result, '粘性强度': adhesion_strength_result})
+        if category is not None and not web_review:
             destination = settings.log_dir / "screenshots" / f"{'title' if product_title else 'video' if video_path else 'details' if detail_images else 'main-images' if images or portrait_images else 'category'}-{uuid4().hex}.png"
             destination.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(destination))
         if submit:
-            submission_message = submit_with_review(settings, page, on_submit_attention)
+            if web_review:
+                submission_message = submit_with_review(settings, page, on_submit_attention,
+                    before_click=web_review.before_click, on_click_intent=web_review.click_intent,
+                    on_click_finished=web_review.click_finished, on_result=web_review.result)
+            else:
+                submission_message = submit_with_review(settings, page, on_submit_attention)
         if on_ready is not None:
             on_ready()
     sku_media_message = (f"；SKU补充信息已核对{sum(len(fields) for fields in sku_media_result.filled.values())}项，跳过{sum(len(fields) for fields in sku_media_result.skipped.values())}项"

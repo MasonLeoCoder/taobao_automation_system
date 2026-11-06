@@ -93,8 +93,8 @@ def check_login(page: Page) -> bool:
 
 
 @qianniu_operation
-def login_with_qrcode(page: Page) -> Page:
-    """显示扫码页并等待一次扫码；参数：页面；返回：登录成功的页面。"""
+def login_with_qrcode(page: Page, *, on_wait=None) -> Page:
+    """显示扫码页；参数：页面、可选人工等待回调；返回：平台已确认登录的页面。"""
     page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
     # 某些情况下登录入口自动跳回工作台，无需再次寻找二维码按钮。
     if _is_authenticated(page):
@@ -103,15 +103,28 @@ def login_with_qrcode(page: Page) -> Page:
     checkpoint("切换扫码登录")
     page_step(qrcode_button.click, completed=lambda: _is_authenticated(page))
     get_logger(__name__).info("请扫码登录，等待识别千牛工作台；超时后不会自动刷新并重复扫码")
-    authenticated = _wait_for_login_success(page)
+    if on_wait is None:
+        authenticated = _wait_for_login_success(page)
+    else:
+        retry = False
+        while True:
+            # 网页明确反馈后才查询是否已登录；反馈过早时保留原扫码页重新提示。
+            on_wait(page, retry=retry)
+            try:
+                authenticated = _wait_for_login_success(page, wait_ms=3500)
+                break
+            except PlaywrightTimeoutError:
+                if not any(not candidate.is_closed() for candidate in page.context.pages):
+                    raise
+                retry = True
     get_logger(__name__).info("扫码登录成功：%s", _safe_location(authenticated))
     return authenticated
 
 
-def _wait_for_login_success(page: Page) -> Page:
-    """轮询当前上下文中的页面；参数：原扫码页面；返回：工作台页面，超时抛出异常。"""
+def _wait_for_login_success(page: Page, *, wait_ms=None) -> Page:
+    """轮询当前上下文；参数：原扫码页面、复核时限；返回：工作台页面，超时抛出异常。"""
     context = page.context
-    deadline = time.monotonic() + SCAN_TIMEOUT_MS / 1000
+    deadline = time.monotonic() + (SCAN_TIMEOUT_MS if wait_ms is None else wait_ms) / 1000
     while time.monotonic() < deadline:
         before_check = time.monotonic()
         checkpoint("等待扫码登录")

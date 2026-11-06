@@ -11,7 +11,7 @@
       <div class="workspace-group-panel">
       <div class="workspace-group-items">
         {% for item in group['items'] %}
-        <a class="workspace-nav-link{{ ' active' if item.current }}" href="{{ item.href }}"{% if item.current %} aria-current="page"{% endif %}><span>{{ item.label }}</span>{% if item.planned %}<span class="ui-workspace-planned">待建设</span>{% endif %}</a>
+        <a class="workspace-nav-link{{ ' active' if item.current }}" href="{{ item.href }}"{% if item.current %} aria-current="page"{% endif %}><span>{{ item.label }}</span>{% if item.partial %}<span class="ui-workspace-planned">可填写</span>{% elif item.planned %}<span class="ui-workspace-planned">待建设</span>{% endif %}</a>
         {% endfor %}
       </div>
       </div>

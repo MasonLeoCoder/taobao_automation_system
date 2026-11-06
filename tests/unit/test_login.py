@@ -66,6 +66,24 @@ class LoginTests(unittest.TestCase):
         page.goto.assert_called_once()
         page.reload.assert_not_called()
 
+    def test_scan_waits_for_feedback_and_reprompts_if_login_not_confirmed(self):
+        """扫码后先等待人工反馈；早反馈后不跳转或重新点击二维码。"""
+        page = page_with(login.LOGIN_URL)
+        home = page_with(login.HOME_URL, ('text="首页"', 'text="交易"'))
+        opened = []
+        button = MagicMock()
+        button.click.side_effect = lambda: opened.append('qr')
+        def poll(current, *, wait_ms):
+            self.assertIs(current, page)
+            if opened == ['qr', False]:
+                raise login.PlaywrightTimeoutError('尚未登录')
+            self.assertEqual(opened, ['qr', False, True])
+            return home
+        with patch.object(login, 'wait_for_selector_any_frame', return_value=button), patch.object(login, '_wait_for_login_success', side_effect=poll):
+            self.assertIs(login.login_with_qrcode(page, on_wait=lambda current, retry: opened.append(retry)), home)
+        button.click.assert_called_once()
+        page.goto.assert_called_once()
+
     def test_authenticate_verifies_new_tab_and_saves(self):
         """业务在扫码成功页复核并保存会话；参数：无；返回：无。"""
         original, home, context, settings = MagicMock(), MagicMock(), MagicMock(), MagicMock(headless=False)

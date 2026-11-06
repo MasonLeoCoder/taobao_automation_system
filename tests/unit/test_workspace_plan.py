@@ -30,7 +30,7 @@ class WorkspacePlanTests(TestCase):
             mocks.append(guard.start())
             self.addCleanup(guard.stop)
         for item in ITEMS.values():
-            if not item['planned']:
+            if not item['planned'] or item['key'] == 'listing':
                 continue
             response = self.client.get('/plans/' + item['key'])
             self.assertEqual(response.status_code, 200, item['key'])
@@ -82,5 +82,7 @@ class WorkspacePlanTests(TestCase):
         """账本与填写页明确实际用途、已有能力及尚未建设范围。"""
         self.assertEqual(self.client.get('/plans/ledger').status_code, 409)
         text = self.client.get('/plans/listing').get_data(as_text=True)
-        self.assertIn('现有命令行已具备', text)
-        self.assertIn('不提供上架或提交按钮', text)
+        self.assertIn('选择商品文件夹，自检通过后', text)
+        self.assertIn('填写完成后直接提交到仓库', text)
+        self.assertIn('webkitdirectory', text)
+        self.assertEqual(self.client.post('/plans/listing').status_code, 405)

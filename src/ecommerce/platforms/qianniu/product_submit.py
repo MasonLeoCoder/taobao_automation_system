@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from logging import getLogger
 from playwright.sync_api import Page, Error as PlaywrightError
-from .verification import checkpoint, qianniu_operation, expect
+from .verification import checkpoint, qianniu_operation, expect, page_step
 
 EDITOR = "#sell-field-title"
 WAREHOUSE_GROUP = "#sell-field-startTime"
@@ -109,7 +109,8 @@ def inspect_submission_result(page: Page, baseline_pages: tuple[Page, ...], wait
 
 
 @qianniu_operation
-def submit_product_to_warehouse(page: Page, wait_ms: int = WAIT_MS) -> SubmissionResult:
+def submit_product_to_warehouse(page: Page, wait_ms: int = WAIT_MS, *, before_click=None, on_click_intent=None,
+                                on_click_finished=None) -> SubmissionResult:
     """提交宝贝信息；参数：商品页、结果等待时长；返回：成功、失败或未确认，只点击一次。"""
     group = page.locator(WAREHOUSE_GROUP)
     warehouse = group.get_by_role("radio", name="放入仓库", exact=True)
@@ -126,9 +127,21 @@ def submit_product_to_warehouse(page: Page, wait_ms: int = WAIT_MS) -> Submissio
         expect(button).to_have_count(1, timeout=WAIT_MS)
     except (PlaywrightError, AssertionError) as error:
         return SubmissionResult("unknown", f"提交按钮尚未确认，未点击提交：{error}", page, submit_attempted=False)
+    if before_click is not None:
+        page_step(lambda: button.click(trial=True, timeout=WAIT_MS), description='确认提交按钮可操作，不点击提交')
+        before_click(page)
+        if warehouse.count() != 1 or not warehouse.is_checked() or group.get_by_role("radio").evaluate_all("els => els.filter(e => e.checked).length") != 1:
+            return SubmissionResult("failed", "人工核对期间上架时间发生变化，未点击提交", page, submit_attempted=False)
+        if error := _read_validation_error(page):
+            return SubmissionResult("failed", error, page, submit_attempted=False)
+    if on_click_intent is not None:
+        on_click_intent()
     getLogger(__name__).info("提交前检查通过，点击一次“提交宝贝信息”；等待平台结果")
     try:
         button.click(timeout=WAIT_MS)
     except (PlaywrightError, AssertionError) as error:
         return SubmissionResult("unknown", f"提交操作未确认：{error}；请核对页面结果，程序未重放提交", page)
+    finally:
+        if on_click_finished is not None:
+            on_click_finished()
     return _wait_result(page, baseline_pages, wait_ms)

@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% import 'form_controls.html' as ui %}
+{% block title %}商品策划与上架{% endblock %}
+{% block breadcrumb %}我的商品 / 商品策划与上架{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_listing.css') }}">{% endblock %}
+{% block content %}
+<section class="listing-page" id="listing" data-api="{{ url_for('product_listing.preflight') }}" data-tasks="{{ url_for('pages.tasks') }}">
+  <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">选择商品文件夹，自检通过后填写一个粘毛器类目的商品。</p></header>
+  <div class="ui-tool-card listing-card">
+    <h2>1. 导入商品资料</h2>
+    <form id="listing-import">
+      <fieldset id="listing-import-fields">
+        <div class="listing-fields">
+          {% call ui.field('商品文件夹') %}{{ ui.input_control({'id':'listing-folder','type':'file','webkitdirectory':true,'multiple':true}) }}{% endcall %}
+          {% call ui.field('发品搜索词') %}{{ ui.input_control({'id':'listing-keyword','name':'keyword','value':'粘毛器','required':true,'maxlength':120}) }}{% endcall %}
+          {% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}
+          {% call ui.field('完整品牌名') %}{{ ui.input_control({'id':'listing-brand','name':'brand','value':'无品牌/无注册商标','required':true,'maxlength':120}) }}{% endcall %}
+        </div>
+        <p class="ui-form-note">文件夹可位于电脑任意位置。商品 Excel 和 1:1 主图必需，其余素材按需提供。</p>
+        <div class="listing-fields" id="listing-mapping" hidden>
+          {% for key,label in groups.items() %}
+          <div data-material="{{ key }}" data-label="{{ label }}">
+            {% call ui.field(label) %}{% call ui.select_control({'data-listing-role':key},label) %}{% endcall %}{% endcall %}
+          </div>
+          {% endfor %}
+        </div>
+        {{ ui.control_button('导入并自检',{'id':'listing-preflight','type':'submit','disabled':true},'secondary') }}
+      </fieldset>
+    </form>
+    <p id="listing-import-note" class="ui-tool-feedback" role="status">等待选择文件夹。</p>
+  </div>
+  <div class="ui-tool-card listing-card" id="listing-review" hidden>
+    <h2>2. 核对资料</h2>
+    <div class="listing-fields" id="listing-summary"></div>
+    <div class="listing-issues" id="listing-issues"></div>
+    <details id="listing-files"><summary>查看识别到的文件</summary><dl></dl></details>
+    <div id="listing-skus" class="listing-skus" hidden>
+      <table><caption>销售规格</caption><thead><tr><th scope="col">规格</th><th scope="col">价格</th><th scope="col">库存</th><th scope="col">SKU 编码</th><th scope="col">SKU 图</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div id="listing-action" class="module-actions">
+      <label class="listing-choice">{{ ui.input_control({'id':'listing-submit','type':'checkbox','checked':can_submit,'disabled':not can_submit}) }} 填写完成后直接提交到仓库</label>
+      {{ ui.control_button('开始填写并提交到仓库' if can_submit else '仅填写',{'id':'listing-start','type':'button','disabled':true}) }}
+    </div>
+    <p class="ui-form-note">提交到仓库会创建真实商品，但不会立即上架销售。</p>
+  </div>
+  <div class="ui-tool-card listing-card" id="listing-task" hidden>
+    <h2>3. 千牛任务</h2>
+    <p id="listing-phase" class="ui-report-state"></p>
+    <p id="listing-message" role="status" aria-live="polite"></p>
+    <p id="listing-item" hidden></p>
+    <ul id="listing-differences" hidden></ul>
+    <a id="listing-evidence" class="ui-button ui-secondary" target="_blank" rel="noopener noreferrer" hidden>查看现场截图</a>
+    <div class="module-actions" id="listing-feedback">
+      {{ ui.control_button('查看人工处理提示',{'id':'listing-manual-open','type':'button','hidden':true},'secondary') }}
+      <a id="listing-log" hidden>查看任务详情</a>
+    </div>
+    <p id="listing-feedback-note" class="ui-tool-feedback" role="status"></p>
+    <div class="listing-log" aria-labelledby="listing-log-title">
+      <div class="module-actions"><h3 id="listing-log-title">本次任务日志</h3>
+        {{ ui.control_button('加载更早日志',{'id':'listing-log-older','type':'button','hidden':true},'secondary') }}
+      </div>
+      <p id="listing-log-note" class="ui-form-note" role="status">等待任务日志…</p>
+      <div class="listing-log-scroll" id="listing-log-scroll" tabindex="0" aria-label="本次任务日志记录"><ol id="listing-log-rows"></ol></div>
+    </div>
+  </div>
+  {% call ui.modal_shell('listing-manual-dialog','等待人工处理','按提示完成操作后，程序会先复查当前步骤。',eyebrow='千牛任务',close_attrs={'id':'listing-manual-close','aria-label':'关闭人工处理提示'}) %}
+    <div class="listing-manual-body">
+      <p id="listing-manual-message"></p>
+      <ul id="listing-manual-differences" hidden></ul>
+      <a id="listing-manual-evidence" class="ui-button ui-secondary" target="_blank" rel="noopener noreferrer" hidden>查看现场截图</a>
+      <div class="module-actions" id="listing-manual-actions"></div>
+      <p id="listing-manual-note" class="ui-tool-feedback" role="status"></p>
+    </div>
+  {% endcall %}
+  <noscript>请选择启用了脚本的本机浏览器使用上架工作台。</noscript>
+</section>
+{% endblock %}
+{% block extra_scripts %}<script src="{{ url_for('static',filename='product_listing.js') }}" defer></script>{% endblock %}

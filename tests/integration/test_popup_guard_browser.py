@@ -139,12 +139,12 @@ class PopupGuardBrowserTests(unittest.TestCase):
         calls = []
         def feedback(message):
             calls.append(message)
-            time.sleep(0.3)
+            time.sleep(1.2)
             self.page.evaluate('document.querySelector("[role=dialog]").remove()')
         @qianniu_operation
         def action():
             self.page.evaluate('(html)=>document.body.insertAdjacentHTML("beforeend",html)', UNKNOWN)
-            page_step(lambda: self.page.locator('#action').click(timeout=100), completed=lambda: self.page.evaluate('window.clicks||0') == 1)
+            page_step(lambda: self.page.locator('#action').click(timeout=1000), completed=lambda: self.page.evaluate('window.clicks||0') == 1)
             self.page.evaluate('window.nextStep=true')
         with self.guard(feedback):
             action()
@@ -329,12 +329,12 @@ class PopupGuardBrowserTests(unittest.TestCase):
         calls = []
         def feedback(message):
             calls.append(message)
-            time.sleep(0.3)
+            time.sleep(1.2)
             self.page.evaluate('document.querySelector("[role=dialog]").remove()')
         @qianniu_operation
         def action():
             self.page.evaluate('(html)=>document.body.insertAdjacentHTML("beforeend",html)', UNKNOWN)
-            chooser = choose_file_dialog(self.page, self.page.locator('input'), timeout=100)
+            chooser = choose_file_dialog(self.page, self.page.locator('input'), timeout=1000)
             chooser.set_files({'name': 'test.png', 'mimeType': 'image/png', 'buffer': b'local-only'})
         with self.guard(feedback):
             action()

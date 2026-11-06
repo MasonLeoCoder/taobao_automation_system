@@ -8,14 +8,14 @@ from ecommerce.shared.exceptions import NeedsAttention
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 
-def authenticate(context, page, settings: Settings, allow_login: bool = True) -> Page:
-    """确认登录并保存会话；参数：上下文、页面、配置、是否允许扫码；返回：已登录页面。"""
+def authenticate(context, page, settings: Settings, allow_login: bool = True, *, on_login_wait=None) -> Page:
+    """确认登录并保存会话；参数：上下文、页面、配置、扫码开关和可选人工等待回调；返回：已登录页面。"""
     if not check_login(page):
         if not allow_login or settings.headless:
             raise NeedsAttention("登录状态失效，请使用可见浏览器执行 account login 并扫码")
         print("请在浏览器中完成扫码登录。", flush=True)
         try:
-            page = login_with_qrcode(page)
+            page = login_with_qrcode(page, on_wait=on_login_wait) if on_login_wait else login_with_qrcode(page)
         except PlaywrightTimeoutError as error:
             raise NeedsAttention(str(error)) from error
         page.wait_for_timeout(3000)

@@ -15,7 +15,8 @@ DIRECT = {
 BLUEPRINTS = {'ledger': 'ledger', 'analysis': 'analysis', 'favorites': 'favorites', 'ai': 'ai',
               'review_analysis': 'catalog', 'question_analysis': 'catalog', 'composite_analysis': 'catalog',
               'image_analysis': 'catalog', 'image_modules': 'catalog',
-              'image_tools': 'tools', 'video_tools': 'tools', 'bilibili_tools': 'tools', 'youtube_tools': 'tools'}
+              'image_tools': 'tools', 'video_tools': 'tools', 'bilibili_tools': 'tools', 'youtube_tools': 'tools',
+              'product_listing': 'listing'}
 SAFE_STATUS = {'collection_jobs.job_status', 'collection_jobs.status', 'collection_jobs.active',
                'collection_jobs.recent', 'collection_jobs.history', 'collection_jobs.check_update_submission',
                'review_analysis.status'}

@@ -70,7 +70,7 @@ GROUPS = (
                 '把选品研究转成明确的商品方案、内容需求和上架准备。',
                 ('整理规格、组合和核心卖点', '策划标题、文案、主图和详情内容', '组织上架准备、检查与填写协助'),
                 '已确认的商品方案、真实规格、素材、供货及平台填写要求。', ('catalog', 'tools'),
-                '现有命令行已具备粘毛器类目单商品Excel与素材填写能力，使用方式保持不变。本页仅规划网页工作流；不提供上架或提交按钮。'),
+                '单商品填写与提交到仓库已接入，商品策划和批量流程仍在规划。'),
         planned('pricing', '定价与促销',
                 '让日常售价、优惠和活动方案与成本及经营目标衔接。',
                 ('整理价格与促销方案', '关联成本测算和商品目标', '记录方案变化及后续表现'),
@@ -176,7 +176,7 @@ def workspace_navigation(active=None):
                 continue
             item = ITEMS[row['menu_key']]
             items.append(dict(item, label=row['name'], href=url_for(item['endpoint'], **item['values']),
-                              current=item['key'] == selected))
+                              current=item['key'] == selected, partial=item['key'] == 'listing'))
         if items:
             result.append(dict(key=group['group_key'], label=group['name'], items=items,
                                current=any(item['current'] for item in items)))
