@@ -93,7 +93,7 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
     return message
 
 
-def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None) -> str:
+def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None) -> str:
     """填写单商品；参数：配置、导航选项、素材、Excel、人工回调及提交开关；SKU目录默认Excel同级sku图；返回：如实填写及提交说明。"""
     if submit and (brand is None or product_info_file is None):
         raise ValueError("提交需要提供品牌和商品Excel，以完成填写并选择放入仓库")
@@ -156,11 +156,11 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         path = Path(product_info_file)
         product_info = load_product_workbook(path if path.is_absolute() else settings.root / path)
         shop_categories = product_info.shop_categories()
-        product_title = product_info.text("宝贝标题")
-        raw_guide_title = product_info.fields.get("导购标题")
+        product_title = title_overrides['title'] if title_overrides is not None else product_info.text("宝贝标题")
+        raw_guide_title = title_overrides['guide'] if title_overrides is not None else product_info.fields.get("导购标题")
         if isinstance(raw_guide_title, str) and raw_guide_title.strip():
             guide_title = raw_guide_title.strip()
-        else:
+        elif title_overrides is None:
             getLogger(__name__).warning("Excel缺少有效导购标题，跳过基础导购标题及每个SKU的搜索标题；其他信息继续填写")
         sales_specifications = product_info.sales_specifications()
         sku_details = product_info.sku_details()
@@ -220,11 +220,14 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         if guide_title is not None:
             fill_guide_title(page, guide_title)
         if product_info is not None:
-            scene_result = select_applicable_scene(page, product_info.fields.get("适用场景"))
-            pet_type_result = select_pet_type(page, product_info.fields.get("适用宠物类型"))
-            handle_shape_result = select_handle_shape(page, product_info.fields.get("握柄形态"))
-            adhesive_material_result = select_adhesive_material(page, product_info.fields.get("粘面材质"))
-            adhesion_strength_result = select_adhesion_strength(page, product_info.fields.get("粘性强度"))
+            handlers = {'适用场景': select_applicable_scene, '适用宠物类型': select_pet_type,
+                        '握柄形态': select_handle_shape, '粘面材质': select_adhesive_material,
+                        '粘性强度': select_adhesion_strength}
+            profile = getattr(web_review, 'profile', None)
+            attributes = {label: handlers[label](page, product_info.fields.get(label))
+                          for label in (profile.attributes if profile else handlers)}
+            scene_result, pet_type_result, handle_shape_result, adhesive_material_result, adhesion_strength_result = (
+                attributes.get(label) for label in handlers)
             create_sales_specifications(page, sales_specifications)
             fill_sku_details(page, sku_details)
             sku_media_result = fill_sku_media(page, sales_specifications, sku_images, guide_title)
@@ -233,9 +236,7 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             enable_multi_item_discount(page)
             select_warehouse_listing(page)
         if web_review:
-            web_review.filled(page, category_result, sku_media_result, {
-                '适用场景': scene_result, '适用宠物类型': pet_type_result, '握柄形态': handle_shape_result,
-                '粘面材质': adhesive_material_result, '粘性强度': adhesion_strength_result})
+            web_review.filled(page, category_result, sku_media_result, attributes if product_info is not None else {})
         if category is not None and not web_review:
             destination = settings.log_dir / "screenshots" / f"{'title' if product_title else 'video' if video_path else 'details' if detail_images else 'main-images' if images or portrait_images else 'category'}-{uuid4().hex}.png"
             destination.parent.mkdir(parents=True, exist_ok=True)

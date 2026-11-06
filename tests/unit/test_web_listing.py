@@ -81,6 +81,43 @@ class WebListingTests(TestCase):
         self.assertIn('2.png', response.json['errors'][0])
         self.open_publish.assert_not_called()
 
+    def test_preflight_retries_windows_directory_lock_and_reports_persistent_failure(self):
+        rename = Path.rename
+        error = PermissionError('目录暂时占用')
+        error.winerror = 5
+        blocked = 1
+
+        def rename_bundle(source, destination):
+            nonlocal blocked
+            if blocked:
+                blocked -= 1
+                raise error
+            return rename(source, destination)
+
+        with patch.object(Path, 'rename', rename_bundle), patch('ecommerce.modules.product.web_materials.time.sleep'):
+            self.assertEqual(self.preflight().status_code, 201)
+            blocked = 3
+            response = self.preflight()
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('暂时无法保存导入资料', response.json['error'])
+        self.assertEqual(len(list(self.app.extensions['product_listing'].root.iterdir())), 1)
+        self.open_publish.assert_not_called()
+
+    def test_edited_titles_are_checked_and_frozen_for_the_worker(self):
+        identifier = self.preflight().json['id']
+        url = f'/api/listing/{identifier}/start'
+        titles = {'title': '猫' * 30, 'guide': '毛' * 15}
+        for invalid in ({**titles, 'title': '猫' * 31}, {**titles, 'guide': '毛' * 16}):
+            response = self.client.post(url, headers=self.headers, json={'submit': False, 'titles': invalid})
+            self.assertEqual(response.status_code, 422)
+        self.open_publish.assert_not_called()
+        self.open_publish.return_value = '填写完成'
+        response = self.client.post(url, headers=self.headers, json={'submit': False, 'titles': titles})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual({key: response.json['preview'][key] for key in titles}, titles)
+        self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        self.assertEqual(self.open_publish.call_args.kwargs['title_overrides'], titles)
+
     def test_read_only_preflight_and_submit_off_preserve_single_task(self):
         data = self.preflight().json
         self.assertEqual(data['preview']['skus'][0]['价格'], '17.5')

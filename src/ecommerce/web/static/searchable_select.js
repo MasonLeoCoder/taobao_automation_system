@@ -32,8 +32,9 @@
     const unit = select.dataset.optionUnit || '个选项';
     // 只有显式开启的非必填筛选才保留空值选项；必填表单仍排除“请选择”等占位项。
     const allowEmptyOption = select.dataset.allowEmptyOption === 'true' && !select.required;
-    const choices = Array.from(select.options).filter(option => !option.disabled && (option.value !== '' || allowEmptyOption))
-      .map(option => ({value:option.value, label:option.textContent.trim()}));
+    const searchDisabled = select.dataset.searchDisabled === 'true';
+    const choices = Array.from(select.options).filter(option => (!option.disabled || searchDisabled) && (option.value !== '' || allowEmptyOption))
+      .map(option => ({value:option.value, label:option.textContent.trim(), disabled:option.disabled}));
     const trigger = element('button', 'ui-control ss-trigger');
     trigger.type = 'button';
     trigger.setAttribute('aria-haspopup', 'dialog');
@@ -105,11 +106,12 @@
     }
     function render() {
       const query = normalize(input.value);
-      matches = choices.filter(choice => normalize(choice.label).includes(query));
+      matches = choices.filter(choice => (!choice.disabled || query) && normalize(choice.label).includes(query));
       const fragment = document.createDocumentFragment();
       matches.forEach((choice, index) => {
         const row = element('div', 'ss-option'); row.id = id + '-option-' + index; row.dataset.index = index;
         row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(choice.value === select.value));
+        if (choice.disabled) row.setAttribute('aria-disabled', 'true');
         const glyph = element('span', 'ss-option-glyph', '#'); glyph.setAttribute('aria-hidden', 'true');
         const check = element('span', 'ss-option-check'); check.append(icon('check'));
         row.append(glyph, highlight(choice.label), check); fragment.append(row);
@@ -117,7 +119,7 @@
       list.replaceChildren(fragment); list.scrollTop = 0;
       empty.hidden = matches.length > 0;
       if (!choices.length) { empty.querySelector('strong').textContent = select.dataset.emptyText || '暂无可选择的' + fieldLabel; empty.querySelector('span').textContent = select.dataset.emptyHint || '可调整筛选范围后再选择。'; }
-      resultStatus.textContent = query ? `匹配 ${matches.length} / ${choices.length} ${unit}` : `共 ${choices.length} ${unit}`;
+      resultStatus.textContent = query ? `匹配 ${matches.length} / ${choices.length} ${unit}` : `共 ${matches.length} ${unit}`;
       clear.hidden = !input.value;
       const selectedIndex = matches.findIndex(choice => choice.value === select.value);
       setActive(selectedIndex >= 0 ? selectedIndex : 0);
@@ -144,7 +146,7 @@
       render(); input.focus({preventScroll:true}); position();
     }
     function choose(index) {
-      const choice = matches[index]; if (!choice) return;
+      const choice = matches[index]; if (!choice || choice.disabled) return;
       const changed = select.value !== choice.value;
       select.value = choice.value; updateValue(); close(true);
       if (changed) select.dispatchEvent(new Event('change', {bubbles:true}));

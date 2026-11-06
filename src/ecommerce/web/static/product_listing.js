@@ -127,13 +127,39 @@
     }
   }
 
+  function checkTitles() {
+    if (!node('titles')) return true;
+    let valid = true;
+    for (const [key,limit] of [['title',60],['guide',30]]) {
+      const input = node(key);
+      const used = [...input.value.trim()].reduce((width,char) => width + (char.codePointAt(0) < 128 ? 1 : 2),0);
+      const issue = used > limit ? '超过上限' : key === 'title' && !used ? '必填' :
+        key === 'guide' && used && used < 20 ? '至少 20 个字符' : '';
+      const count = node(key+'-count');
+      count.textContent = `${used} / ${limit}${issue ? ' · '+issue : ''}`;
+      count.classList.toggle('is-invalid',Boolean(issue));
+      input.setAttribute('aria-invalid',String(Boolean(issue)));
+      valid = valid && !issue;
+    }
+    return valid;
+  }
+
   function render(data) {
     const task = data.task;
     const login = task?.prompt?.kind === 'login';
     renderPrompt(task);
     node('review').hidden = false;
     const {preview = {}, files = {}, errors = [], warnings = []} = data;
-    node('summary').replaceChildren(...[['宝贝标题',preview.title],['导购标题',preview.guide],['类目',preview.category],['品牌',preview.brand],['商家编码',preview.code],['一口价',preview.price],['店铺分类',preview.shop_categories?.join('、')]].filter(([, value]) => value).map(([label,value]) => {
+    const titles = node('titles');
+    if (titles) {
+      titles.hidden = !data.id && !preview.title;
+      titles.disabled = !data.id || !!task;
+      node('title').value = preview.title || '';
+      node('guide').value = preview.guide || '';
+    }
+    const summary = [['类目',preview.category],['品牌',preview.brand],['商家编码',preview.code],['一口价',preview.price],['店铺分类',preview.shop_categories?.join('、')]];
+    if (!titles) summary.unshift(['宝贝标题',preview.title],['导购标题',preview.guide]);
+    node('summary').replaceChildren(...summary.filter(([, value]) => value).map(([label,value]) => {
       const box = element('div'); box.className = 'listing-summary-entry'; box.append(element('strong',label),element('span',value)); return box;
     }));
     node('issues').replaceChildren();
@@ -149,7 +175,8 @@
       const tr = element('tr');
       tr.append(...['销售规格','价格','数量','商家编码'].map(key => element('td',row[key])),element('td',preview.sku_images?.[row['销售规格']] || '未匹配')); return tr;
     }));
-    node('start').disabled = !data.id || !!task || busy;
+    const validTitles = checkTitles();
+    node('start').disabled = !data.id || !!task || busy || !validTitles;
     node('action').hidden = !!task;
     node('task').hidden = !task;
     if (!task) return;
@@ -221,7 +248,17 @@
       if (!dirs.has(dir)) dirs.set(dir,[]);
       dirs.get(dir).push(file);
     }
-    node('preflight').disabled = !fileMap.size;
+    const folderName = node('folder-name');
+    if (folderName) {
+      const firstPath = fileMap.keys().next().value;
+      const selected = Boolean(firstPath);
+      folderName.textContent = selected ? firstPath.split('/')[0] : '选择商品文件夹';
+      folderName.title = selected ? folderName.textContent : '';
+      node('folder-description').textContent = selected ? `已读取 ${fileMap.size} 个文件` : '请选择包含产品信息表和素材的目录';
+      node('folder-change').hidden = !selected;
+      folderName.closest('.listing-folder-card').classList.toggle('is-selected',selected);
+    }
+    node('preflight').disabled = !fileMap.size || (node('category') && !node('category').value);
     node('mapping').hidden = !fileMap.size;
     const mapping = node('mapping');
     mapping.dispatchEvent(new Event('ui:controls-remove',{bubbles:true}));
@@ -241,10 +278,16 @@
     }
     mapping.dispatchEvent(new Event('ui:controls-added',{bubbles:true}));
     node('import-note').textContent = fileMap.size ? '已识别文件。目录名不同时，可以手动指定分组。' : '未读到文件，请重新选择商品文件夹。';
-    if (fileMap.size && [...mapping.querySelectorAll('select')].every(select => select.value !== '')) node('import').requestSubmit();
+    if (!node('preflight').disabled && [...mapping.querySelectorAll('select')].every(select => select.value !== '')) node('import').requestSubmit();
   }
 
   node('folder').addEventListener('change',chooseFolder);
+  node('category')?.addEventListener('change',() => {
+    const selected = node('category').selectedOptions[0];
+    node('keyword').value = selected?.dataset.categoryName || '';
+    node('preflight').disabled = !fileMap.size || !node('category').value;
+    node('import-note').textContent = '类目已更换，请确认素材并重新自检。';
+  });
   node('manual-close').addEventListener('click',() => node('manual-dialog').close());
   node('manual-open').addEventListener('click',() => { if (currentPrompt && !node('manual-dialog').open) node('manual-dialog').showModal(); });
   node('log-older').addEventListener('click',() => loadLogs(true));
@@ -278,13 +321,23 @@
   node('submit').addEventListener('change',() => {
     node('start').textContent = node('submit').checked ? '开始填写并提交到仓库' : '仅填写';
   });
+  node('titles')?.addEventListener('input',() => {
+    node('start').disabled = !checkTitles() || !id || busy;
+  });
   node('start').addEventListener('click',async () => {
-    if (!id || busy) return;
+    if (!id || busy || !checkTitles()) return;
+    const body = {submit:node('submit').checked};
+    if (node('titles')) {
+      body.titles = {title:node('title').value, guide:node('guide').value};
+      node('titles').disabled = true;
+    }
     busy = true; node('start').disabled = true; node('import-fields').disabled = true;
     try {
-      render(await api(`${base}/${id}/start`,{submit:node('submit').checked})); poll();
+      render(await api(`${base}/${id}/start`,body)); poll();
     } catch (error) {
-      node('import-note').textContent = error.message; node('import-fields').disabled = false; node('start').disabled = false;
+      node('import-note').textContent = error.message; node('import-fields').disabled = false;
+      if (node('titles')) node('titles').disabled = false;
+      node('start').disabled = !checkTitles();
     } finally { busy = false; }
   });
   const saved = new URL(location.href).searchParams.get('job');

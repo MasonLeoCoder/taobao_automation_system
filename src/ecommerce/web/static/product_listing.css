@@ -4,7 +4,33 @@
 .listing-card fieldset { display:grid; gap:12px; border:0; padding:0; margin:0; min-width:0; }
 .listing-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .listing-fields .ui-control { width:100%; min-width:0; }
+.listing-folder-picker { display:block; position:relative; min-width:0; }
+.listing-folder-input {
+  position:absolute; width:1px; height:1px; padding:0; border:0; overflow:hidden; clip-path:inset(50%);
+}
+.listing-folder-card {
+  display:flex; align-items:center; gap:10px; min-width:0; min-height:56px; padding:7px 11px;
+  border:1px solid var(--control-border); border-radius:var(--control-radius);
+  background:var(--control-surface); color:var(--control-text); cursor:pointer;
+}
+.listing-folder-card:hover,.listing-folder-card.is-selected {
+  background:var(--control-surface-soft); border-color:var(--control-selected-border);
+}
+.listing-folder-input:focus-visible + .listing-folder-card { box-shadow:var(--control-ring); border-color:var(--control-accent); }
+.listing-folder-input:disabled + .listing-folder-card { opacity:.65; cursor:not-allowed; }
+.listing-folder-icon {
+  display:grid; place-items:center; flex:0 0 32px; height:32px; border-radius:8px;
+  color:var(--control-accent); background:var(--control-selected);
+}
+.listing-folder-icon svg { width:20px; height:20px; }
+.listing-folder-text { display:grid; flex:1; min-width:0; line-height:1.4; }
+.listing-folder-text strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.listing-folder-text small { margin-top:3px; color:var(--control-label); font-size:11px; }
+.listing-folder-change { flex:none; color:var(--control-accent); font-size:12px; font-weight:600; white-space:nowrap; }
 .listing-summary-entry { display:grid; gap:4px; overflow-wrap:anywhere; }
+.listing-title-count { justify-self:end; color:var(--control-label); font-size:12px; font-variant-numeric:tabular-nums; }
+.listing-title-count.is-invalid { color:var(--control-error); font-weight:600; }
+.listing-title input[aria-invalid="true"] { border-color:var(--control-error); }
 .listing-card .module-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 .listing-choice { display:inline-flex; align-items:center; gap:8px; }
 .listing-issues { overflow-wrap:anywhere; }

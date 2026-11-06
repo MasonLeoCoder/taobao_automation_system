@@ -18,6 +18,7 @@ from ecommerce.infrastructure.storage.mysql import MySQLStorageError
 from ecommerce.infrastructure.storage.mysql_migrations.schema_v25 import build_metadata, NEW_TABLES
 
 MIGRATION = import_module('ecommerce.infrastructure.storage.mysql_migrations.versions.0025_web_menu')
+CATEGORY_MIGRATION = import_module('ecommerce.infrastructure.storage.mysql_migrations.versions.0027_publish_categories')
 
 
 class MenuDatabaseTests(TestCase):
@@ -46,6 +47,7 @@ class MenuDatabaseTests(TestCase):
         self.tables = metadata.tables
         with self.engine.begin() as connection:
             MIGRATION.seed_missing(connection)
+            CATEGORY_MIGRATION.seed_menu(connection, self.tables['web_menu_items'])
             connection.execute(self.tables['web_menu_items'].update().where(self.tables['web_menu_items'].c.menu_key == 'ledger').values(construction_status='available'))
         mocked = patch('ecommerce.infrastructure.storage.web_menus.task_store',
                        return_value=SimpleNamespace(engine=self.engine, tables=self.tables))

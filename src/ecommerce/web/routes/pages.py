@@ -21,7 +21,9 @@ def tasks():
         abort(400,description=str(error))
     except LookupError:
         abort(404,description='任务页不存在')
-    return render_template("tasks.html", active="tasks",pagination=data, **data)
+    listing_jobs = current_app.extensions['product_listing'].jobs_for_tasks(
+        task['id'] for task in data['tasks'] if task['name'] in {'product.open', 'product.submit'})
+    return render_template("tasks.html", active="tasks",pagination=data, listing_jobs=listing_jobs, **data)
 
 
 @pages.get("/modules/<key>")
@@ -425,8 +427,11 @@ def task_detail(task_id):
     """展示资料关联任务；参数：任务编号；返回：只读任务详情。"""
     data=browse_query('task',task_id=task_id)
     settings=current_app.config['SETTINGS']
+    listing_job = None
+    if data['task']['name'] in {'product.open', 'product.submit'}:
+        listing_job = current_app.extensions['product_listing'].jobs_for_tasks([task_id]).get(task_id)
     return render_template('task_detail.html',active='tasks',features=FEATURES,shop_name=settings.shop_name,
-        alerts=local_task_alerts(settings,task_id=task_id),**data)
+        alerts=local_task_alerts(settings,task_id=task_id),listing_job=listing_job,**data)
 
 
 @pages.get('/collections/files/<int:file_id>')

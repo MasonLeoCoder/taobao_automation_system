@@ -57,6 +57,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     from ecommerce.web.routes.product_listing import product_listing
     app.extensions['product_listing'] = ListingWorkbench(settings)
     app.register_blueprint(product_listing)
+    from ecommerce.modules.product.category_workbench import CategoryWorkbench
+    from ecommerce.web.routes.publish_categories import publish_categories
+    app.extensions['publish_categories'] = CategoryWorkbench(settings)
+    app.register_blueprint(publish_categories)
     from ecommerce.web.routes.ledger import ledger
     app.register_blueprint(ledger)
     from ecommerce.web.routes.favorites import favorites

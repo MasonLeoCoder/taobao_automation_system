@@ -14,12 +14,14 @@ from ecommerce.infrastructure.tasks.events import current_events, storage_checkp
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import atomic_json, owner_alive, process_started_at
 from ecommerce.infrastructure.tasks.runner import current_task, run_task
+from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.platforms.qianniu.product_review import read_listing_fields, read_listing_media
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from .service import open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
-from .web_materials import digest, import_materials
+from .web_materials import NO_GUIDE_WARNING, digest, import_materials, validate_titles
+from .listing_profiles import PROFILES, support
 
 _ID = re.compile('[0-9a-f]{32}')
 _ACTIVE = {'queued', 'running', 'waiting'}
@@ -27,6 +29,22 @@ _ACTIVE = {'queued', 'running', 'waiting'}
 
 class ListingConflict(ValueError):
     """请求与当前上架任务状态不符。"""
+
+
+def category_binding(settings, path):
+    if not isinstance(path, str) or not path or len(path) > 750:
+        raise ValueError('请先选择已支持上架的末级类目')
+    row = publish_categories.find(settings, path)
+    if not row or support(row) != '已支持':
+        raise ListingConflict('该类目当前不可用于上架，请在发布类目管理中核对')
+    return {'id': row['id'], 'platform_id': row['qianniu_category_id'], 'profile': row['listing_profile_key']}
+
+
+def check_binding(settings, manifest):
+    if settings.collection_backend == 'mysql':
+        previous = manifest.get('category_binding')
+        if not previous or previous != category_binding(settings, manifest['preview']['category']):
+            raise ListingConflict('类目或上架方案已变化，请保留文件选择并重新自检')
 
 
 class ListingWorkbench:
@@ -47,7 +65,11 @@ class ListingWorkbench:
 
     def preflight(self, uploads, **form):
         """执行离线预检；参数：文件和导航信息；返回：错误或已封存资料。"""
-        return import_materials(self.root, uploads, **form)
+        if self.settings.collection_backend != 'mysql':
+            return import_materials(self.root, uploads, **form)
+        binding = category_binding(self.settings, form.get('category'))
+        return import_materials(self.root, uploads, **form, binding=binding,
+                                profile=PROFILES[binding['profile']])
 
     def snapshot(self, identifier):
         """读当前资料和任务状态；参数：导入编号；返回：不含内部路径的网页结果。"""
@@ -60,10 +82,40 @@ class ListingWorkbench:
             task.update(phase='interrupted', prompt=None,
                         message='原执行进程已退出。未恢复浏览器操作；如已点击提交，请核对千牛仓库。')
         if task:
-            task = {key: value for key, value in task.items() if key not in {'pid', 'process_started'}}
+            if 'titles' in task:
+                manifest['preview'].update(task['titles'])
+                warnings = manifest['warnings']
+                warnings[:] = [warning for warning in warnings if warning != NO_GUIDE_WARNING]
+                if not task['titles']['guide']:
+                    warnings.append(NO_GUIDE_WARNING)
+            task = {key: value for key, value in task.items() if key not in {'pid', 'process_started', 'titles'}}
         return {**manifest, 'task': task}
 
-    def start(self, identifier, submit):
+    def jobs_for_tasks(self, task_ids):
+        """查找当前环境任务对应的网页导入单，也兼容此前启动的任务。"""
+        remaining = set(task_ids)
+        jobs = {}
+        if not remaining or not self.root.is_dir():
+            return jobs
+        for path in self.root.iterdir():
+            if not _ID.fullmatch(path.name) or path.resolve().parent != self.root.resolve():
+                continue
+            try:
+                state = json.loads((path / 'state.json').read_text(encoding='utf-8'))
+                task_id = state.get('task_id') if isinstance(state, dict) else None
+                if not isinstance(task_id, str) or task_id not in remaining:
+                    continue
+                task = self.snapshot(path.name)['task']
+            except (OSError, LookupError, ValueError, KeyError, TypeError):
+                continue
+            if task and task.get('task_id') == task_id:
+                jobs[task_id] = {'id': path.name, 'waiting': task['phase'] == 'waiting' and bool(task['prompt'])}
+                remaining.remove(task_id)
+                if not remaining:
+                    break
+        return jobs
+
+    def start(self, identifier, submit, *, titles=None):
         """领取一份已确认的预检快照；参数：编号和明确布尔值；返回：现有或新任务状态。"""
         if type(submit) is not bool:
             raise ValueError('请选择本次是否提交到仓库')
@@ -73,10 +125,16 @@ class ListingWorkbench:
         with shop_lock(path / 'launch'):
             if (path / 'state.json').exists():
                 return self.snapshot(identifier)
+            manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+            check_binding(self.settings, manifest)
             state = {'phase': 'queued', 'outcome': None, 'task_id': None, 'item_id': None,
                      'submit': submit, 'submit_attempted': False, 'prompt': None, 'evidence': None,
                      'message': '等待后台取得千牛会话', 'pid': os.getpid(),
                      'process_started': process_started_at(os.getpid())}
+            if titles is not None:
+                if not isinstance(titles, dict) or set(titles) != {'title', 'guide'}:
+                    raise ValueError('请提供宝贝标题和导购标题')
+                state['titles'] = validate_titles(titles['title'], titles['guide'])
             atomic_json(path / 'state.json', state)
             worker = _ListingRun(self.settings, path, state)
             try:
@@ -124,7 +182,9 @@ class _ListingRun:
     def __init__(self, settings, path, state):
         self.settings, self.path, self.state = settings, path, state
         self.manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
-        self.preview = self.manifest['preview']
+        self.preview = {**self.manifest['preview'], **state.get('titles', {})}
+        binding = self.manifest.get('category_binding')
+        self.profile = PROFILES[binding['profile']] if binding else None
         self.media, self.notes, self.attributes = {}, [], {}
         self.sku_media = None
         self.click_in_progress = False
@@ -286,6 +346,11 @@ class _ListingRun:
         """核对实际商品页并等待差异批准；参数：提交页；返回：仅已核对时放行。"""
         actual, differences = self._comparison(page)
         while True:
+            check_binding(self.settings, self.manifest)
+            if self.profile and (any(not actual['attributes'].get(label) for label in self.profile.attributes)
+                    or [row['销售规格'] for row in actual['skus']] !=
+                    [row['销售规格'] for row in self.preview['skus']]):
+                raise NeedsAttention('千牛属性或 SKU 结构与上架方案不符，已暂停入仓')
             if differences:
                 action = self._wait('填写结果存在差异。请在千牛核对下列内容，再决定是否提交到仓库。',
                                     ['approve', 'fill_only'], page=page, differences=differences, kind='review')
@@ -300,6 +365,7 @@ class _ListingRun:
 
     def click_intent(self):
         """持久标记一次不可重放的提交意图；参数：无；返回：写入成功后允许点击。"""
+        check_binding(self.settings, self.manifest)
         if self.state['submit_attempted']:
             raise NeedsAttention('已记录提交意图，只能核对结果，不会重复提交')
         self.update(submit_attempted=True, outcome='uncertain', message='正在提交到仓库并核对结果')
@@ -332,6 +398,7 @@ class _ListingRun:
         def work():
             """执行前验证文件摘要并沿用现有填写；返回：任务说明。"""
             self.update(task_id=current_task()[1])
+            check_binding(self.settings, self.manifest)
             self.progress('正在核对已确认的素材版本')
             files = self.manifest['files']
             for key, names in files.items():
@@ -351,7 +418,8 @@ class _ListingRun:
                 sku_images_dir=str(self.path / 'sku'), product_info_file=str(self.path / 'excel' / files['excel'][0]),
                 video_file=str(self.path / 'video' / files['video'][0]) if files['video'] else None,
                 submit=self.state['submit'], on_attention=self.attention,
-                on_submit_attention=self.submission_attention, web_review=self)
+                on_submit_attention=self.submission_attention, web_review=self,
+                **({'title_overrides': self.state['titles']} if 'titles' in self.state else {}))
         try:
             result = run_task(self.settings, 'product.submit' if self.state['submit'] else 'product.open', work)
             message = ('提交结果待核实；请检查千牛仓库，未重复提交' if self.state['outcome'] == 'uncertain'

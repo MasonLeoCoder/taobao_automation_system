@@ -8,6 +8,8 @@ from werkzeug.exceptions import HTTPException
 from ecommerce.modules.product.web_materials import CATEGORY, GROUPS, LIMIT, MAX_FILES
 from ecommerce.modules.product.web_listing import ListingConflict
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
+from ecommerce.infrastructure.storage import publish_categories
+from ecommerce.modules.product.listing_profiles import support
 from ecommerce.shared.exceptions import TaskBusy
 
 product_listing = Blueprint('product_listing', __name__)
@@ -62,9 +64,12 @@ def workbench():
 def index():
     """展示现有菜单下的上架工作台；参数：无；返回：页面。"""
     settings = current_app.config['SETTINGS']
+    use_catalog = settings.collection_backend == 'mysql'
+    rows = publish_categories.catalog(settings)[0] if use_catalog else []
+    choices = [dict(row, support=support(row)) for row in rows if row['is_visible'] and row['is_leaf']]
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
-        can_submit=settings.environment != 'verify')
+        use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify')
 
 
 @product_listing.post('/api/listing/preflight')
@@ -73,8 +78,12 @@ def preflight():
     if (set(request.files) - GROUPS.keys() or set(request.form) != {'keyword', 'category', 'brand'}
             or any(len(values) != 1 for _, values in request.form.lists())):
         abort(400, description='预检表单或素材分组不完整')
-    data = workbench().preflight({key: [(item.filename, item.stream) for item in values]
-                                  for key, values in request.files.lists()}, **request.form.to_dict())
+    try:
+        data = workbench().preflight({key: [(item.filename, item.stream) for item in values]
+                                      for key, values in request.files.lists()}, **request.form.to_dict())
+    except OSError:
+        current_app.logger.exception('上架自检资料写入失败')
+        abort(503, description='暂时无法保存导入资料，请稍后重新点击「导入并自检」。')
     return jsonify(data), 422 if data['errors'] else 201
 
 
@@ -104,9 +113,11 @@ def logs(identifier):
 def start(identifier):
     """在后台启动一次已预检导入；参数：编号及仓库开关；返回：当前状态。"""
     data = request.get_json()
-    if not isinstance(data, dict) or set(data) != {'submit'}:
+    if not isinstance(data, dict) or set(data) not in ({'submit'}, {'submit', 'titles'}):
         abort(400, description='请明确本次是否提交到仓库')
-    return jsonify(workbench().start(identifier, data['submit'])), 202
+    if 'titles' in data and not isinstance(data['titles'], dict):
+        abort(400, description='标题参数无效')
+    return jsonify(workbench().start(identifier, data['submit'], titles=data.get('titles'))), 202
 
 
 @product_listing.post('/api/listing/<identifier>/feedback')

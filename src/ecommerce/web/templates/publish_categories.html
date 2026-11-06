@@ -1,0 +1,189 @@
+{% extends 'base.html' %}
+{% import 'form_controls.html' as ui %}
+{% block title %}发布类目管理{% endblock %}
+{% block breadcrumb %}我的商品 / 发布类目管理{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='publish_categories.css') }}">{% endblock %}
+{% macro branches(parent) %}
+  {% for node in tree.get(parent, []) if not node.is_leaf %}
+    <details class="category-node" {% if branch == node.full_path or branch.startswith(node.full_path ~ ' > ') %}open{% endif %}>
+      <summary class="category-node-line{% if branch == node.full_path %} is-current{% endif %}">
+        <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg>
+        <a href="{{ url_for('publish_categories.index', branch=node.full_path) }}" {% if branch == node.full_path %}aria-current="location"{% endif %}>{{ node.name }}</a>
+      </summary>
+      <div class="category-children">{{ branches(node.id) }}</div>
+    </details>
+  {% endfor %}
+{% endmacro %}
+{% macro result_counts(result) %}
+  新增 {{ result.get('added',[])|length }} · 变更 {{ result.get('changed',[])|length }} ·
+  不可见 {{ result.get('hidden',[])|length }} · 待核对 {{ result.get('conflicts',[])|length }} ·
+  待重试 {{ result.get('failed',[])|length }}
+{% endmacro %}
+{% macro status_badges(row) %}
+  {% if row.is_leaf %}
+    <span class="category-badge {{ {'已支持':'is-supported','待复核':'is-review'}.get(row.support,'') }}">{{ row.support }}</span>
+  {% else %}<span class="category-muted">有下级</span>{% endif %}
+  {% if not row.is_visible %}<span class="category-badge is-hidden">不可见</span>{% endif %}
+{% endmacro %}
+{% block content %}
+<section id="publish-categories" data-scan="{{ url_for('publish_categories.scan') }}"
+  data-status="{{ url_for('publish_categories.status') }}" data-resume="{{ url_for('publish_categories.resume') }}">
+  <header class="category-header">
+    <div><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>发布类目管理</h1><p class="category-muted">浏览千牛发布类目，按需更新目录。</p></div>
+    <div class="category-header-actions">
+      <a class="ui-button ui-secondary" href="{{ url_for('publish_categories.export') }}">导出 CSV</a>
+      {% if full %}{{ ui.control_button('重采全部一级类目',{'type':'button','id':'category-full'},'secondary') }}{% endif %}
+    </div>
+  </header>
+  <nav class="category-tabs" aria-label="类目管理视图">
+    <a href="{{ url_for('publish_categories.index', branch=branch or none) }}" {% if not history %}aria-current="page"{% endif %}>类目目录</a>
+    <a href="{{ url_for('publish_categories.index', view='history', branch=branch or none) }}" {% if history %}aria-current="page"{% endif %}>采集记录</a>
+  </nav>
+  <div id="category-live" class="category-notice" hidden>
+    <p id="category-progress" role="status"></p>
+    {{ ui.control_button('已处理，继续',{'type':'button','id':'category-resume','hidden':true},'secondary') }}
+  </div>
+  {% if full %}
+  <dialog id="category-confirm" class="ui-modal category-confirm" aria-labelledby="category-confirm-title">
+    <form method="dialog">
+      <h2 id="category-confirm-title">重采全部一级类目</h2>
+      <p>将从一级列表开始，更新当前千牛账号可见的全部发布类目及下级。采集时间取决于目录大小。</p>
+      <div class="category-header-actions">
+        {{ ui.control_button('取消',{'value':'cancel','autofocus':true},'secondary') }}
+        {{ ui.control_button('开始全量采集',{'value':'confirm'},'primary') }}
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
+  {% if not history %}
+    {% if scans and scans[0].status != 'running' %}
+      <a class="category-notice category-summary" href="{{ url_for('publish_categories.index', view='history', branch=branch or none) }}">
+        <strong>最近一次采集</strong><span>{{ result_counts(scans[0].result) }}</span><span class="category-summary-link">查看记录 →</span>
+      </a>
+    {% endif %}
+    <div class="category-layout">
+      <nav class="ui-tool-card category-tree" aria-label="类目树">
+        <h2>类目树</h2>
+        <div class="category-tree-scroll">
+          <a class="category-tree-root{% if not branch %} is-current{% endif %}" href="{{ url_for('publish_categories.index') }}" {% if not branch %}aria-current="location"{% endif %}>全部类目</a>
+          {{ branches(none) }}
+        </div>
+      </nav>
+      <div class="ui-tool-card category-results">
+        <nav class="category-crumbs" aria-label="当前位置">
+          <a href="{{ url_for('publish_categories.index') }}">全部类目</a>
+          {% for crumb in crumbs %}
+            <span aria-hidden="true">›</span>
+            {% if loop.last %}<span aria-current="location">{{ crumb.name }}</span>
+            {% else %}<a href="{{ url_for('publish_categories.index', branch=crumb.full_path) }}">{{ crumb.name }}</a>{% endif %}
+          {% endfor %}
+        </nav>
+        <div class="category-section-heading">
+          <div><h2>{{ current.name if current else '一级类目' }}</h2>
+          <p class="category-muted">{{ '匹配结果' if query or selected_status or visibility else '直属类目' }} · {{ total }} 项</p></div>
+          {% if (current and not current.is_leaf) or not roots %}
+          <div class="category-branch-actions">
+            {{ ui.control_button('重采此分支' if current else '采集宠物分支',
+              {'type':'button','data-retry':branch or pilot},'primary') }}
+            {% if current and roots|length > 1 %}
+            <details class="category-pair">
+              <summary>同时采另一分支</summary>
+              <form id="category-pair" data-scope="{{ branch }}">
+                {% call ui.select_control({'id':'category-second','required':true},'另一一级类目') %}
+                <option value="">请选择一级类目</option>
+                {% for item in roots if item.full_path != branch %}
+                  <option value="{{ item.full_path }}">{{ item.name }}</option>
+                {% endfor %}
+                {% endcall %}
+                {{ ui.control_button('采集两处分支',{'type':'submit'},'secondary') }}
+              </form>
+            </details>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+        <form method="get" class="category-filter">
+          <input type="hidden" name="branch" value="{{ branch }}">
+          {{ ui.input_control({'name':'q','value':query,'placeholder':'在当前范围内搜索类目','aria-label':'搜索类目'}) }}
+          {% call ui.select_control({'name':'support'},'上架支持筛选') %}
+            <option value="">全部上架状态</option>
+            {% for label in ('末级类目','已支持','待扩充','待复核') %}
+              <option {% if label == selected_status %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          {% endcall %}
+          {% call ui.select_control({'name':'visibility'},'千牛可见性筛选') %}
+            <option value="">全部可见性</option>
+            <option value="visible" {% if visibility == 'visible' %}selected{% endif %}>千牛可见</option>
+            <option value="hidden" {% if visibility == 'hidden' %}selected{% endif %}>千牛不可见</option>
+          {% endcall %}
+          {{ ui.control_button('筛选',{'type':'submit'},'secondary') }}
+        </form>
+        {% if rows %}
+        <div class="category-table"><table>
+          <thead><tr><th scope="col">类目</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
+          <tbody>{% for row in rows %}
+            <tr><td>
+              {% if row.is_leaf %}<strong>{{ row.name }}</strong>
+              {% else %}<a class="category-name" href="{{ url_for('publish_categories.index', branch=row.full_path) }}">{{ row.name }}</a>{% endif %}
+              {% if query or selected_status or visibility %}<small class="category-path">{{ row.full_path }}</small>{% endif %}
+            </td><td>{{ status_badges(row) }}</td><td>
+              {% if not row.is_leaf %}<a href="{{ url_for('publish_categories.index', branch=row.full_path) }}">查看下级</a>{% endif %}
+              <details class="category-row-details"><summary>详情</summary>
+                <dl>
+                  <dt>完整路径</dt><dd>{{ row.full_path }}</dd>
+                  <dt>层级</dt><dd>{{ row.level }}</dd>
+                  <dt>千牛类目 ID</dt><dd>{{ row.qianniu_category_id or '页面未提供' }}</dd>
+                  {% if row.is_leaf %}<dt>上架方案</dt><dd>{{ row.profile_name or '待绑定' }}{% if row.listing_profile_key %} · {{ row.listing_profile_key }}{% endif %}</dd>{% endif %}
+                  <dt>最近确认</dt><dd>{{ row.last_seen_at.strftime('%Y-%m-%d %H:%M') }}</dd>
+                </dl>
+              </details>
+            </td></tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% if pages > 1 %}
+        <nav class="category-pages" aria-label="类目分页">
+          {% if page > 1 %}<a href="{{ pagination_url(page - 1) }}">上一页</a>{% endif %}
+          <span>第 {{ page }} / {{ pages }} 页</span>
+          {% if page < pages %}<a href="{{ pagination_url(page + 1) }}">下一页</a>{% endif %}
+        </nav>
+        {% endif %}
+        {% else %}<p class="category-empty">{{ '暂无符合条件的类目。' if roots else '暂无类目，先采集宠物分支。' }}</p>{% endif %}
+      </div>
+    </div>
+  {% else %}
+  <div class="ui-tool-card category-history">
+    <h2>最近采集记录</h2>
+    {% for scan in scans %}
+      {% set result = scan.result %}
+      <details class="category-run" {% if loop.first %}open{% endif %}>
+        <summary><time>{{ scan.started_at.strftime('%Y-%m-%d %H:%M') }}</time>
+          <strong>{{ scan.scopes|join('、') if scan.scopes else '全部一级类目' }}</strong>
+          <span class="category-badge {{ 'is-supported' if scan.status == 'complete' else 'is-review' }}">{{ {'complete':'完成','partial':'部分完成','failed':'失败','running':'等待结果'}[scan.status] }}</span></summary>
+        <div class="category-run-body">
+        <p class="category-muted">批次 {{ scan.id }}</p>
+        <p>{{ result_counts(result) }}</p>
+        {% for item in result.get('changed',[]) %}
+          <p>{{ item.before }}{% if item.before != item.after %} → {{ item.after }}{% endif %}
+          {% if item.fields and 'is_leaf' in item.fields %} · {{ '已变为末级' if item.fields.is_leaf[1] else '已有下级' }}{% endif %}
+          {% if item.fields and 'is_visible' in item.fields %} · 已重新可见{% endif %}</p>
+        {% endfor %}
+        {% for item in result.get('conflicts',[]) %}
+          <p>待核对 {{ item.path }}（原记录 {{ item.previous|join('、') if item.previous and item.previous is not string else item.previous or '未确认' }}）</p>
+        {% endfor %}
+        {% for item in result.get('failed',[]) %}
+          <p>{{ item.path or '采集任务' }} · {{ item.reason }}
+            {% if item.path %}
+              {{ ui.control_button('重试此分支',{'type':'button','data-retry':item.path},'secondary') }}
+            {% elif scan.scopes %}
+              <button type="button" class="ui-button ui-secondary" data-retry-scopes='{{ scan.scopes|tojson }}'>重试原范围</button>
+            {% endif %}
+          </p>
+        {% endfor %}
+        </div>
+      </details>
+    {% else %}<p class="category-empty">暂无采集记录。</p>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+<script src="{{ url_for('static',filename='publish_categories.js') }}" defer></script>
+{% endblock %}

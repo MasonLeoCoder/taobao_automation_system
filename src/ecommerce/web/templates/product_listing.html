@@ -5,17 +5,44 @@
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_listing.css') }}">{% endblock %}
 {% block content %}
 <section class="listing-page" id="listing" data-api="{{ url_for('product_listing.preflight') }}" data-tasks="{{ url_for('pages.tasks') }}">
-  <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">选择商品文件夹，自检通过后填写一个粘毛器类目的商品。</p></header>
+  <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">{% if use_catalog %}先选择已支持的千牛类目。{% endif %}选择商品文件夹，自检通过后填写商品。</p></header>
   <div class="ui-tool-card listing-card">
     <h2>1. 导入商品资料</h2>
     <form id="listing-import">
       <fieldset id="listing-import-fields">
         <div class="listing-fields">
-          {% call ui.field('商品文件夹') %}{{ ui.input_control({'id':'listing-folder','type':'file','webkitdirectory':true,'multiple':true}) }}{% endcall %}
-          {% call ui.field('发品搜索词') %}{{ ui.input_control({'id':'listing-keyword','name':'keyword','value':'粘毛器','required':true,'maxlength':120}) }}{% endcall %}
-          {% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}
+          {% if use_catalog %}
+            {% call ui.field('千牛类目') %}{% call ui.select_control({'id':'listing-category','name':'category','required':true,'data-searchable-select':'true','data-search-disabled':'true'}) %}
+              <option value="">选择已支持的末级类目</option>
+              {% for item in choices|sort(attribute='support') %}
+                <option value="{{ item.full_path }}" data-category-name="{{ item.name }}" {% if item.support != '已支持' %}disabled{% endif %}>{{ item.full_path }} · {{ item.support }}</option>
+              {% endfor %}
+            {% endcall %}{% endcall %}
+          {% endif %}
+          <div class="ui-field">
+            <span class="ui-label">商品文件夹</span>
+            <label class="listing-folder-picker">
+              <input id="listing-folder" class="listing-folder-input" type="file" webkitdirectory multiple
+                aria-label="选择商品文件夹" aria-describedby="listing-folder-description">
+              <span class="listing-folder-card">
+                <span class="listing-folder-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                </span>
+                <span class="listing-folder-text">
+                  <strong id="listing-folder-name">选择商品文件夹</strong>
+                  <small id="listing-folder-description" aria-live="polite">请选择包含产品信息表和素材的目录</small>
+                </span>
+                <span id="listing-folder-change" class="listing-folder-change" aria-hidden="true" hidden>更换文件夹</span>
+              </span>
+            </label>
+          </div>
+          {% call ui.field('发品搜索词') %}{{ ui.input_control({'id':'listing-keyword','name':'keyword','value':'' if use_catalog else '粘毛器','required':true,'maxlength':120}) }}{% endcall %}
+          {% if not use_catalog %}{% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}{% endif %}
           {% call ui.field('完整品牌名') %}{{ ui.input_control({'id':'listing-brand','name':'brand','value':'无品牌/无注册商标','required':true,'maxlength':120}) }}{% endcall %}
         </div>
+        {% if use_catalog and not choices|selectattr('support','equalto','已支持')|list %}
+          <p class="ui-form-note">当前没有可选的上架类目。请先在<a href="{{ url_for('publish_categories.index') }}">发布类目管理</a>采集并核对类目。</p>
+        {% endif %}
         <p class="ui-form-note">文件夹可位于电脑任意位置。商品 Excel 和 1:1 主图必需，其余素材按需提供。</p>
         <div class="listing-fields" id="listing-mapping" hidden>
           {% for key,label in groups.items() %}
@@ -31,6 +58,19 @@
   </div>
   <div class="ui-tool-card listing-card" id="listing-review" hidden>
     <h2>2. 核对资料</h2>
+    <fieldset id="listing-titles">
+      <div class="listing-fields">
+        {% for key,label,limit in [('title','宝贝标题',60),('guide','导购标题',30)] %}
+        <label class="ui-field listing-title">
+          <span class="ui-label">{{ label }}</span>
+          <input type="text" class="ui-control" id="listing-{{ key }}" aria-describedby="listing-{{ key }}-count"
+            {% if key == 'title' %}required{% endif %}>
+          <span class="listing-title-count" id="listing-{{ key }}-count">0 / {{ limit }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p class="ui-form-note">汉字按 2 个字符计算。导购标题可留空，填写时需达到 20 个字符。</p>
+    </fieldset>
     <div class="listing-fields" id="listing-summary"></div>
     <div class="listing-issues" id="listing-issues"></div>
     <details id="listing-files"><summary>查看识别到的文件</summary><dl></dl></details>
