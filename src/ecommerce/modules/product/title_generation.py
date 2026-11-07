@@ -196,7 +196,8 @@ def _sku_candidates(raw, specs, terms):
                     raise ValueError('标题未逐字命中排行词，或重复使用了排行词')
         except ValueError as error:
             value, issue = '', str(error)
-        result.append({'sku_key': key, 'title': value, 'issue': issue})
+        raw_title = values[0] if len(values) == 1 and isinstance(values[0], str) else value
+        result.append({'sku_key': key, 'title': value, 'raw_title': raw_title, 'issue': issue})
     return result
 
 
@@ -240,12 +241,21 @@ class TitleGeneration:
             payload = record['plan']['input']
             raw = [{key: group[key]['value'] for key in FIELDS} for group in groups]
             checked = _validate_groups(raw, payload['words'], payload['locked'])
-            return {**record, 'groups': checked, 'state': _candidate_state(checked)}
+            record = {**record, 'groups': checked, 'state': _candidate_state(checked)}
+        if record and record.get('response') and any('raw_title' not in row for row in record.get('sku_titles', ())):
+            payload = record['plan']['input']
+            raw = _response_data(record['response'])
+            record = {**record, 'sku_titles': _sku_candidates(raw.get('sku_titles'), payload['sku_specs'], payload['words'])}
         return record
 
-    def latest(self):
+    def latest(self, attempt=None):
         data = self._read()
-        return self._result(data['runs'][data['latest']][-1]) if data['latest'] else None
+        latest = data['runs'][data['latest']][-1] if data['latest'] else None
+        saved = {row['id']: row for records in data['runs'].values() for row in records if 'groups' in row}
+        if attempt and attempt not in saved:
+            raise LookupError('找不到这批已保存的候选标题')
+        result = self._result(saved[attempt] if attempt else latest)
+        return {**result, 'attempts': list(saved), 'latest_id': latest['id']} if result else None
 
     def source(self, period, batch_id):
         self._check()

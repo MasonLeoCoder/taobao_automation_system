@@ -139,6 +139,8 @@
       <label class="listing-choice">{{ ui.input_control({'id':'listing-submit','type':'checkbox','checked':can_submit,'disabled':not can_submit}) }} 填写完成后直接提交到仓库</label>
       {{ ui.control_button('开始填写并提交到仓库' if can_submit else '仅填写',{'id':'listing-start','type':'button','disabled':true}) }}
     </div>
+    <ul id="listing-title-errors" class="listing-title-errors" hidden aria-label="填写前需要修正的标题"></ul>
+    <p id="listing-start-error" class="listing-ai-issue" role="alert" hidden></p>
     <p class="ui-form-note">提交到仓库会创建真实商品，但不会立即上架销售。</p>
   </div>
   <div class="ui-tool-card listing-card" id="listing-task" hidden>

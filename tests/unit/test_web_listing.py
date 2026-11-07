@@ -107,7 +107,8 @@ class WebListingTests(TestCase):
         identifier = self.preflight().json['id']
         url = f'/api/listing/{identifier}/start'
         titles = {'title': '猫' * 30, 'guide': '毛' * 15}
-        for invalid in ({**titles, 'title': '猫' * 31}, {**titles, 'guide': '毛' * 16}):
+        for invalid in ({**titles, 'title': '猫' * 31}, {**titles, 'guide': '毛' * 16},
+                        {**titles, 'title': '猫\n毛'}, {**titles, 'guide': '太短'}):
             response = self.client.post(url, headers=self.headers, json={'submit': False, 'titles': invalid})
             self.assertEqual(response.status_code, 422)
         self.open_publish.assert_not_called()
@@ -201,11 +202,11 @@ class WebListingTests(TestCase):
         identifier = data['id']
         preview = data['preview']
         actual = {k: preview[k] for k in ('title', 'guide', 'code', 'skus', 'attributes')}
-        actual.update(price='18', sku_media=[])
+        actual.update(price='18', sku_media=[['白色', [preview['guide']], []]])
 
         def fake_open(*args, **kwargs):
             review = kwargs['web_review']
-            review.sku_media = []
+            review.sku_media = list(actual['sku_media'])
             page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000),
                                    screenshot=lambda **opts: Path(opts['path']).write_bytes(b'fixture'))
             review.before_click(page)
@@ -232,6 +233,38 @@ class WebListingTests(TestCase):
         self.assertTrue(final['submit_attempted'])
         self.assertEqual(final['outcome'], 'uncertain')
         self.open_publish.assert_called_once()
+
+    def test_title_differences_require_correction_before_warehouse_click(self):
+        data = self.preflight().json
+        identifier, preview = data['id'], data['preview']
+        actual = {k: preview[k] for k in ('title', 'guide', 'code', 'skus', 'attributes', 'price')}
+        actual.update(title='', guide='变更后的导购标题', sku_media=[['白色', ['去填写'], []]])
+
+        def fake_open(*args, **kwargs):
+            review = kwargs['web_review']
+            review.sku_media = list(actual['sku_media'])
+            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000),
+                                   screenshot=lambda **opts: Path(opts['path']).write_bytes(b'fixture'))
+            review.before_click(page)
+            review.click_intent()
+            return '模拟入仓'
+
+        self.open_publish.side_effect = fake_open
+        with patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=lambda page: dict(actual)):
+            response = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+            self.assertEqual(response.status_code, 202)
+            paused = self.state(identifier, lambda state: state['prompt'] and state['prompt']['kind'] == 'titles')
+            self.assertFalse(paused['submit_attempted'])
+            self.assertEqual(len(paused['prompt']['differences']), 3)
+            self.assertIn('SKU「白色」搜索标题', paused['prompt']['differences'][2])
+            self.assertEqual(self.send(identifier, paused, 'approve').status_code, 409)
+            self.send(identifier, paused, 'recheck_titles')
+            again = self.state(identifier, lambda state: state['prompt'] and state['prompt']['id'] != paused['prompt']['id'])
+            self.assertFalse(again['submit_attempted'])
+            actual.update(title=preview['title'], guide=preview['guide'], sku_media=[['白色', [preview['guide']], []]])
+            self.send(identifier, again, 'recheck_titles')
+            final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        self.assertTrue(final['submit_attempted'])
 
     def test_confirmed_receipt_keeps_platform_item_id(self):
         data = self.preflight().json

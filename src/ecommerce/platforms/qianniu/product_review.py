@@ -40,16 +40,18 @@ def read_listing_media(page, group):
 @qianniu_operation
 def read_listing_fields(page):
     """读取实际商品和SKU；参数：编辑页；返回：结构化当前值。"""
-    def value(locator, label, *, optional=False):
+    def value(locator, label, *, optional=False, strip=True):
         """读取唯一文本框；参数：定位器、名称及可空标志；返回：当前值。"""
         count = locator.count()
         if count == 0 and optional:
             return ''
         if count != 1:
             raise NeedsAttention(f'无法唯一核对{label}，不会自动提交')
-        return locator.input_value(timeout=3000).strip()
+        text = locator.input_value(timeout=3000)
+        return text.strip() if strip else text
 
-    result = {key: value(page.locator(group).get_by_role('textbox'), label, optional=key == 'guide')
+    result = {key: value(page.locator(group).get_by_role('textbox'), label, optional=key == 'guide',
+                         strip=key not in ('title', 'guide'))
               for key, group, label in (('title', TITLE_GROUP, '宝贝标题'), ('guide', GUIDE_TITLE_GROUP, '导购标题'),
               ('price', FIXED_PRICE_GROUP, '一口价'), ('code', MERCHANT_CODE_GROUP, '商家编码'))}
     result['price'] = _number(result['price'])
@@ -72,10 +74,10 @@ def read_listing_fields(page):
                 for label, selector in DETAIL_CELLS.items()}
         info.update({'销售规格': name, '价格': _number(info['价格']), '数量': _number(info['数量'])})
         result['skus'].append(info)
-        result['sku_media'].append([name, row.locator(TITLE).all_text_contents(),
+        result['sku_media'].append([name, row.locator(TITLE).all_inner_texts(),
             row.locator(f'{SEARCH_IMAGE} img, {SPEC_IMAGE} img').evaluate_all("els=>els.map(e=>e.getAttribute('src'))")])
-    if not result['title'] or not result['code'] or not result['skus']:
-        raise NeedsAttention('商品标题、商家编码或 SKU 无法核对，未自动提交')
+    if not result['code'] or not result['skus']:
+        raise NeedsAttention('商家编码或 SKU 无法核对，未自动提交')
     try:
         numeric_ok = (Decimal(result['price']) > 0 and all(
             Decimal(row['价格']) > 0 and row['数量'].isdigit() and row['商家编码'] and row['销售规格']

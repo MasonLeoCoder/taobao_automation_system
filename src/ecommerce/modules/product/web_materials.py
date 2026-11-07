@@ -72,8 +72,9 @@ def validate_sku_title(value):
     if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise ValueError('搜索标题必须为单行文本')
     value = compact_title(value)
-    if title_width(value) > 30:
-        raise ValueError('搜索标题超过 30 字符（汉字计 2 字符）')
+    width = title_width(value)
+    if width > 30:
+        raise ValueError(f'搜索标题超过 30 字符，当前 {width} / 30，超出 {width - 30} 字符')
     return value
 
 
@@ -83,11 +84,17 @@ def validate_titles(title, guide):
         raise ValueError('宝贝标题必须为非空文本')
     if not isinstance(guide, str):
         raise ValueError('导购标题必须为文本')
+    for label, value in (('宝贝标题', title), ('导购标题', guide)):
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError(f'{label}必须为单行文本')
     title, guide = title.strip(), guide.strip()
-    if title_width(title) > 60:
-        raise ValueError('宝贝标题超过 60 字符（汉字计 2 字符）')
-    if guide and not 20 <= title_width(guide) <= 30:
-        raise ValueError('导购标题需要 20～30 字符（汉字计 2 字符）')
+    width = title_width(title)
+    if width > 60:
+        raise ValueError(f'宝贝标题超过 60 字符，当前 {width} / 60，超出 {width - 60} 字符')
+    width = title_width(guide)
+    if guide and not 20 <= width <= 30:
+        detail = f'超出 {width - 30} 字符' if width > 30 else f'还差 {20 - width} 字符'
+        raise ValueError(f'导购标题需要 20～30 字符，当前 {width} / 30，{detail}')
     return {'title': title, 'guide': guide}
 
 

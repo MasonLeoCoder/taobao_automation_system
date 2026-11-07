@@ -146,6 +146,7 @@
 }
 .listing-ai-result-head h3 { margin: 0 0 .15rem; }
 .listing-ai-result-head p { color: var(--control-label); font-size: .875rem; }
+.listing-ai-result-head > select { width: auto; max-width: 100%; }
 .listing-ai-candidates {
   margin-top: .65rem;
   border: 1px solid #dbe7e0;
@@ -170,7 +171,7 @@
 }
 .listing-ai-candidate-bar { justify-content: space-between; font-size: .85rem; }
 .listing-ai-candidate-bar button { min-height: 36px; padding: .2rem .55rem; font-size: .8rem; }
-.listing-ai-title-text { color: var(--control-text); font-weight: 650; line-height: 1.5; }
+.listing-ai-title-text { color: var(--control-text); font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
 .listing-ai-title-length { color: var(--control-label); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .listing-ai-title-length.is-over, .listing-ai-issue { color: #a62132; }
 .listing-ai-ranks {
@@ -184,7 +185,7 @@
 .listing-ai-ranks li { padding: .08rem .42rem; border-radius: 6px; background: #edf4ef; color: #395d50; font-size: .76rem; }
 .listing-ai-advice { color: #80530d; }
 .listing-ai-issue { font-size: .85rem; }
-.listing-ai mark, .listing-title-evidence mark {
+.listing-ai mark, .listing-title-evidence mark, .listing-sku-candidate mark {
   color: #a62132;
   background: #fce9ec;
   border-radius: 3px;
@@ -197,6 +198,29 @@
 .listing-sku-title-label { display: block; color: var(--control-label); }
 .listing-sku-title .ui-control { display: block; min-width: 0; width: 100%; margin-top: .3rem; }
 .listing-sku-title .listing-title-count { display: block; margin-top: .2rem; }
+.listing-sku-fallback { display: block; color: var(--control-label); overflow-wrap: anywhere; }
+.listing-sku-candidate:not([hidden]) {
+  display: grid;
+  gap: .35rem;
+  margin-top: .55rem;
+  padding: .55rem;
+  border: 1px solid #dbe7e0;
+  border-radius: .6rem;
+  background: #f5f9f6;
+}
+.listing-ai-candidate textarea, .listing-sku-candidate textarea { width: 100%; resize: vertical; }
+.listing-sku-fallback[hidden], .listing-sku-candidate [hidden] { display: none; }
+.listing-title-errors { color: #a62132; padding-inline-start: 1.25rem; }
+.listing-title-errors button {
+  padding: .15rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 @media (max-width: 680px) {
   .listing-ai-filters, .listing-ai-candidate-grid { grid-template-columns: minmax(0, 1fr); }

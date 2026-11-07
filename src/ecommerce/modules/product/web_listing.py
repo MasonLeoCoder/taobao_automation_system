@@ -137,6 +137,8 @@ class ListingWorkbench:
                 if not isinstance(titles, dict) or set(titles) != {'title', 'guide'}:
                     raise ValueError('请提供宝贝标题和导购标题')
                 state['titles'] = validate_titles(titles['title'], titles['guide'])
+            else:
+                validate_titles(manifest['preview']['title'], manifest['preview']['guide'])
             if sku_titles is not None:
                 names = {row['sku_key']: row['name'] for row in sku_specs(manifest['preview'])}
                 if not isinstance(sku_titles, dict) or set(sku_titles) - names.keys():
@@ -311,6 +313,9 @@ class _ListingRun:
         """记录刚核对过的媒体；参数：商品页和分组；返回：无。"""
         self.media[group] = read_listing_media(page, group)
 
+    def _sku_title(self, name):
+        return (self.sku_titles or {}).get(name) or self.preview['guide']
+
     def filled(self, page, categories, sku, attributes):
         """汇总填写证据；参数：页面、分类、SKU媒体和属性结果；返回：等待或继续入仓。"""
         for label, result in attributes.items():
@@ -323,8 +328,7 @@ class _ListingRun:
         if sku:
             for name, skipped in sku.skipped.items():
                 for label, reason in skipped.items():
-                    planned = ((self.sku_titles or {}).get(name) or self.preview['guide']
-                               if label == 'SKU搜索标题' else self.preview['sku_images'].get(name))
+                    planned = self._sku_title(name) if label == 'SKU搜索标题' else self.preview['sku_images'].get(name)
                     if planned:
                         self.notes.append(f'SKU「{name}」{label}未按预检完成：{reason}')
         self.sku_media = read_listing_fields(page)['sku_media']
@@ -337,7 +341,7 @@ class _ListingRun:
         actual = read_listing_fields(page)
         actual['media'] = {key: read_listing_media(page, key) for key in self.media}
         lines = list(self.notes)
-        for key, label in (('title', '宝贝标题'), ('guide', '导购标题'), ('price', '一口价'), ('code', '商家编码')):
+        for key, label in (('price', '一口价'), ('code', '商家编码')):
             if actual[key] != self.preview[key]:
                 lines.append(f'{label}：确认值「{self.preview[key]}」，页面值「{actual[key]}」')
         if actual['skus'] != self.preview['skus']:
@@ -346,8 +350,11 @@ class _ListingRun:
                 observed = actual['skus'][index] if index < len(actual['skus']) else None
                 if expected != observed:
                     lines.append(f'SKU 第{index+1}行：确认值 {expected or "无"}；页面值 {observed or "无"}')
-        if actual['sku_media'] != self.sku_media:
-            lines.append('SKU 图片或搜索标题在填写完成后发生变化')
+        def other_sku_fields(rows):
+            return [(name, images, values if not self._sku_title(name) else None) for name, values, images in rows]
+
+        if other_sku_fields(actual['sku_media']) != other_sku_fields(self.sku_media):
+            lines.append('SKU 图片或留空规格的页面标题在填写完成后发生变化')
         for label, value in self.attributes.items():
             current = actual['attributes'][label]
             if value != current:
@@ -356,6 +363,21 @@ class _ListingRun:
             if key in self.media and actual['media'][key] != self.media[key]:
                 lines.append(f'{label}与填写时核对的素材或顺序不同')
         return actual, lines
+
+    def _title_differences(self, actual):
+        differences = []
+        for key, label in (('title', '宝贝标题'), ('guide', '导购标题')):
+            expected, observed = self.preview[key], actual[key]
+            if observed != expected:
+                differences.append(f'{label}：确认值「{expected or "空"}」，页面值「{observed or "空"}」')
+        page_titles = {name: values for name, values, _ in actual['sku_media']}
+        for row in self.preview['skus']:
+            name = row['销售规格']
+            expected = self._sku_title(name)
+            if expected and (values := page_titles.get(name, [])) != [expected]:
+                observed = ' / '.join(values)
+                differences.append(f'SKU「{name}」搜索标题：确认值「{expected}」，页面值「{observed or "空或未读到"}」')
+        return differences
 
     def before_click(self, page):
         """核对实际商品页并等待差异批准；参数：提交页；返回：仅已核对时放行。"""
@@ -366,15 +388,20 @@ class _ListingRun:
                     or [row['销售规格'] for row in actual['skus']] !=
                     [row['销售规格'] for row in self.preview['skus']]):
                 raise NeedsAttention('千牛属性或 SKU 结构与上架方案不符，已暂停入仓')
-            if differences:
+            title_differences = self._title_differences(actual)
+            action = None
+            if title_differences:
+                action = self._wait('千牛标题与确认值不同。请在千牛修正后点击「重新核对标题」。',
+                                    ['recheck_titles', 'fill_only'], page=page, differences=title_differences, kind='titles')
+            elif differences:
                 action = self._wait('填写结果存在差异。请在千牛核对下列内容，再决定是否提交到仓库。',
                                     ['approve', 'fill_only'], page=page, differences=differences, kind='review')
-                if action == 'fill_only':
-                    self._wait('已填写，未提交。检查完成后可关闭千牛窗口。', ['finish'], page=page, kind='finish')
-                    raise TaskStopped('已填写，用户选择不提交')
+            if action == 'fill_only':
+                self._wait('已填写，未提交。检查完成后可关闭千牛窗口。', ['finish'], page=page, kind='finish')
+                raise TaskStopped('已填写，用户选择不提交')
             storage_checkpoint('提交到仓库前核对任务状态')
             updated, new_differences = self._comparison(page)
-            if actual == updated and differences == new_differences:
+            if not title_differences and actual == updated and differences == new_differences:
                 return
             actual, differences = updated, new_differences
 

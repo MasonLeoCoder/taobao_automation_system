@@ -133,7 +133,7 @@ def title_source(identifier):
 
 @product_listing.get('/api/listing/<identifier>/titles/result')
 def title_result(identifier):
-    return jsonify(TitleGeneration(workbench(), identifier).latest())
+    return jsonify(TitleGeneration(workbench(), identifier).latest(request.args.get('attempt') or None))
 
 
 @product_listing.post('/api/listing/<identifier>/titles/preview')

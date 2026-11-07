@@ -6,7 +6,7 @@
   if (!panel) return;
   const settingsPanel = node('settings');
   const fields = {title:'宝贝标题', guide:'导购标题'};
-  const lengths = {title:[56, 60], guide:[28, 30]};
+  const targets = {title:56, guide:28, sku:0};
   const kinds = {search:'搜索词', trend:'趋势词', core:'核心词', modifier:'修饰词'};
   const input = key => document.getElementById('listing-' + key);
   const base = root.dataset.api.replace(/\/preflight$/, '');
@@ -16,6 +16,7 @@
   const paidEnabled = panel.dataset.paidEnabled === 'yes';
   let id, source, confirmed, result, applied = {}, selected = new Set(), locks;
   let version = 0, resultVersion = 0, busy = false, visible = pageSize, onlySelected = false, pollTimer;
+  let attempts = [], latestId, drafts = {};
 
   function element(tag, value) {
     const el = document.createElement(tag);
@@ -227,7 +228,7 @@
 
   function saveDraft() {
     try {
-      if (id && Object.keys(applied).length) {
+      if (id) {
         const values = Object.fromEntries(Object.keys(fields).map(key => [key, input(key).value]));
         sessionStorage.setItem('listing-title-draft:' + id, JSON.stringify({values, applied}));
       }
@@ -243,29 +244,147 @@
     input(key).focus();
   }
 
+  function candidateDraft(record, key, original) {
+    return drafts[record.id]?.[key] ?? original;
+  }
+
+  function saveCandidateDrafts() {
+    try { sessionStorage.setItem('listing-candidate-drafts:' + id, JSON.stringify(drafts)); }
+    catch { /* 当前页面仍可编辑 */ }
+  }
+
+  function checkCandidate(key, raw, plan) {
+    const {value, width, limit, issue} = root.checkListingTitle(key, raw, true);
+    const match = evidence(value, plan.input.words);
+    const words = new Set(match.used.map(item => item.keyword));
+    let problem = issue;
+    if (!problem && match.used.some(item => item.count > 1)) problem = '同一标题重复使用排行词';
+    if (!problem && !words.size) problem = '请使用至少一个本次已选排行词';
+    if (!problem && (plan.input.locked?.[key] || []).some(word => !words.has(word))) problem = '缺少指定的必用词';
+    return {value, width, limit, issue:problem, ...match};
+  }
+
+  function candidateEditor(container, record, key, draftKey, label, original, apply, refreshers, index) {
+    const bar = element('div'), caption = element('div'), count = element('span');
+    const edit = element('textarea'), fill = element('button', '填入' + label);
+    const line = element('p'), ranks = element('ul'), note = element('small');
+    bar.className = 'listing-ai-candidate-bar';
+    count.className = 'listing-ai-title-length';
+    caption.append(element('strong', label), count);
+    fill.type = 'button'; fill.className = 'ui-button ui-secondary';
+    bar.append(caption, fill);
+    edit.className = 'ui-control'; edit.rows = 2;
+    edit.setAttribute('aria-label', key === 'sku' ? `${container.closest('td').querySelector('strong').textContent}的 SKU 搜索标题候选` : `第 ${index + 1} 组${label}候选`);
+    edit.value = candidateDraft(record, draftKey, original);
+    line.className = 'listing-ai-title-text';
+    ranks.className = 'listing-ai-ranks';
+    note.id = `listing-candidate-${draftKey}-note`;
+    edit.setAttribute('aria-describedby', note.id);
+    container.append(bar, edit, line, ranks, note);
+
+    const target = targets[key];
+    const signature = value => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+    function check() {
+      const data = checkCandidate(key, edit.value, record.plan);
+      if (data.issue || !index) return data;
+      const identity = signature(data.value);
+      const repeated = record.groups.slice(0, index).some((group, prior) => {
+        const other = checkCandidate(key, candidateDraft(record, `${prior}-${key}`, group[key].value), record.plan);
+        return !other.issue && signature(other.value) === identity;
+      });
+      return repeated ? {...data, issue:'与上方候选标题重复'} : data;
+    }
+    function refresh() {
+      const {width, limit, issue, segments, used} = check();
+      count.textContent = `${width} / ${limit}`;
+      count.classList.toggle('is-over', width > limit);
+      edit.setAttribute('aria-invalid', String(Boolean(issue)));
+      fill.disabled = Boolean(issue);
+      marked(line, segments);
+      ranks.replaceChildren(...used.map(item => element('li', rankLabel(item))));
+      ranks.hidden = !used.length;
+      const words = used.map(item => item.keyword);
+      const similar = words.map((word, i) => {
+        const other = words.slice(i + 1).find(value => similarWords(word, value));
+        return other && `${word}／${other}`;
+      }).find(Boolean);
+      note.textContent = issue || (width < target ? `低于建议长度 ${target}～${limit} 字符` :
+        similar ? `用词相近 · ${similar}` : '');
+      note.className = issue ? 'listing-ai-issue' : 'listing-ai-advice';
+      note.hidden = !note.textContent;
+    }
+    edit.addEventListener('input', () => {
+      (drafts[record.id] ||= {})[draftKey] = edit.value;
+      saveCandidateDrafts();
+      if (refreshers) refreshers.forEach(update => update());
+      else refresh();
+    });
+    fill.addEventListener('click', () => {
+      const checked = check();
+      if (!checked.issue) apply(checked.value);
+    });
+    refreshers?.push(refresh);
+    refresh();
+  }
+
+  function showSkuCandidates(record) {
+    const rows = new Map((record?.sku_titles || []).map(row => [row.sku_key, row]));
+    for (const container of root.querySelectorAll('[data-sku-candidate]')) {
+      container.replaceChildren();
+      const key = container.dataset.skuCandidate, row = rows.get(key);
+      container.hidden = !row;
+      if (!row) continue;
+      candidateEditor(container, record, 'sku', key, 'SKU 搜索标题', row.raw_title ?? row.title, value => {
+        const field = container.parentElement.querySelector('[data-sku-key]');
+        if (field.disabled) return;
+        field.value = value;
+        field.dispatchEvent(new Event('input', {bubbles:true}));
+        field.focus();
+      });
+    }
+  }
+
   function showResult(record) {
     result = record;
-    if (record?.sku_titles) {
-      root.dispatchEvent(new CustomEvent('listing:sku-suggestions', {detail:{job:id, rows:record.sku_titles}}));
-    }
+    showSkuCandidates(record);
     const box = node('results');
     box.hidden = !record;
     box.replaceChildren();
     if (!record) return;
-    if (!record.groups) {
-      box.append(element('p', record.error || 'AI 正在生成标题。刷新页面后可以继续查看结果。'));
-      return;
+    if (record.attempts) attempts = record.attempts;
+    else if (record.groups && !attempts.includes(record.id)) attempts = [...attempts, record.id];
+    latestId = record.latest_id || latestId || record.id;
+    try {
+      if (record.groups) sessionStorage.setItem('listing-candidate-view:' + id, record.id);
+      else sessionStorage.removeItem('listing-candidate-view:' + id);
     }
+    catch { /* 当前页面仍可查看候选 */ }
     const header = element('div');
     header.className = 'listing-ai-result-head';
     const heading = element('div');
     const headingTitle = element('h3', record.simulated ? '候选标题（模拟演示）' : '候选标题');
     headingTitle.tabIndex = -1;
-    heading.append(headingTitle, element('p', `${record.groups.length} 组 · ${coverage(record.plan.types)}`));
+    heading.append(headingTitle);
+    if (record.groups) heading.append(element('p', `${record.groups.length} 组 · ${coverage(record.plan.types)}`));
     const settings = element('button', '调整生成设置');
     settings.type = 'button';
     settings.className = 'ui-button ui-secondary';
     header.append(heading);
+    if (attempts.length > (record.groups ? 1 : 0)) {
+      const choices = element('select');
+      choices.className = 'ui-control';
+      choices.setAttribute('aria-label', '查看已保存的候选');
+      if (!record.groups) choices.add(new Option('查看已保存的候选', ''));
+      for (const attempt of [latestId, ...attempts.filter(value => value !== latestId).reverse()]) {
+        if (!attempts.includes(attempt)) continue;
+        const position = attempts.indexOf(attempt) + 1;
+        const edited = Object.keys(drafts[attempt] || {}).length ? ' · 有手改草稿' : '';
+        choices.add(new Option(`候选 ${position}${attempt === latestId ? ' · 最新' : ''}${edited}`, attempt));
+      }
+      choices.value = record.groups ? record.id : '';
+      choices.addEventListener('change', () => { if (choices.value) void recover(id, choices.value); });
+      header.append(choices);
+    }
     if (settingsPanel) {
       settings.addEventListener('click', () => {
         settingsPanel.open = true;
@@ -273,13 +392,19 @@
       });
       header.append(settings);
     }
-    box.append(header, sourceDetails(record.plan.source, record.plan.types));
-    if (record.state === 'invalid') box.append(element('p', '本次候选均未通过校验。'));
+    box.append(header);
+    if (!record.groups) {
+      box.append(element('p', record.error || 'AI 正在生成标题。刷新页面后可以继续查看结果。'));
+      return;
+    }
+    box.append(sourceDetails(record.plan.source, record.plan.types));
+    if (record.state === 'invalid') box.append(element('p', 'AI 原稿未通过校验。可以修改候选，校验通过后再填入。'));
     if (record.groups.length < record.plan.groups) {
       box.append(element('p', `这次返回 ${record.groups.length} 组，少于请求的 ${record.plan.groups} 组。`));
     }
     const list = element('div');
     list.className = 'listing-ai-candidates';
+    const refreshers = [];
     record.groups.forEach((group, index) => {
       const card = element('article');
       card.className = 'listing-ai-group';
@@ -287,56 +412,10 @@
       const grid = element('div');
       grid.className = 'listing-ai-candidate-grid';
       for (const [key, label] of Object.entries(fields)) {
-        const title = group[key], cell = element('div'), line = element('p');
+        const cell = element('div');
         cell.className = 'listing-ai-candidate';
-        line.className = 'listing-ai-title-text';
-        marked(line, title.segments);
-        if (!title.value) line.textContent = '—';
-        const [target, limit] = lengths[key];
-        const {width, fill_value: fillValue} = title;
-        const count = element('span', `${width} / ${limit}`);
-        count.className = 'listing-ai-title-length';
-        count.title = `分隔空格不计，建议 ${target}～${limit} 字符`;
-        if (width > limit) count.classList.add('is-over');
-        const fill = element('button', '填入' + label);
-        fill.className = 'ui-button ui-secondary';
-        fill.type = 'button';
-        fill.disabled = Boolean(title.issue);
-        fill.addEventListener('click', () => applyTitle(key, fillValue, record.plan));
-        const bar = element('div');
-        bar.className = 'listing-ai-candidate-bar';
-        const labelAndCount = element('div');
-        labelAndCount.append(element('strong', label), count);
-        bar.append(labelAndCount, fill);
-        cell.append(bar, line);
-        if (title.used.length) {
-          const ranks = element('ul');
-          ranks.className = 'listing-ai-ranks';
-          ranks.append(...title.used.map(item => element('li', rankLabel(item))));
-          cell.append(ranks);
-        } else {
-          cell.append(element('small', '无排行词命中'));
-        }
-        if (title.issue) {
-          const issue = element('p', title.issue);
-          issue.className = 'listing-ai-issue';
-          cell.append(issue);
-        } else {
-          if (width < target) {
-            const note = element('small', `低于建议长度 ${target}～${limit} 字符`);
-            note.className = 'listing-ai-advice';
-            cell.append(note);
-          }
-          const used = title.used.map(item => item.keyword);
-          for (const [index, word] of used.entries()) {
-            const match = used.slice(index + 1).find(other => similarWords(word, other));
-            if (!match) continue;
-            const note = element('small', `用词相近 · ${word}／${match}`);
-            note.className = 'listing-ai-advice';
-            cell.append(note);
-            break;
-          }
-        }
+        candidateEditor(cell, record, key, `${index}-${key}`, label, group[key].value,
+          value => applyTitle(key, value, record.plan), refreshers, index);
         grid.append(cell);
       }
       card.append(grid);
@@ -345,16 +424,18 @@
     box.append(list);
   }
 
-  async function recover(job) {
+  async function recover(job, attempt) {
     const request = ++resultVersion;
     try {
-      const record = await api('result');
+      const record = await api(attempt ? `result?attempt=${encodeURIComponent(attempt)}` : 'result');
       if (id !== job || request !== resultVersion) return;
       if (record) showResult(record);
       if (settingsPanel && !record?.groups && !confirmed) settingsPanel.open = true;
       if (record?.state === 'running') pollTimer = setTimeout(() => recover(job), 2000);
     } catch {
-      if (id === job && request === resultVersion) message('暂时无法读取已保存的标题结果。可以刷新页面核对。');
+      if (id !== job || request !== resultVersion) return;
+      if (attempt && !result) void recover(job);
+      else message('暂时无法读取已保存的标题结果。可以刷新页面核对。');
     }
   }
 
@@ -400,14 +481,12 @@
     try {
       const record = await api('generate', {input:data, key:plan.key, allow_paid:true, retry:previous?.id ?? null});
       if (job !== id) return;
-      showResult(record);
+      showResult({...record, latest_id:record.id});
       if (record.state === 'complete') {
         if (settingsPanel) settingsPanel.open = false;
         node('results').querySelector('h3')?.focus();
       }
-      const count = record.sku_titles?.filter(row => row.title).length ?? 0;
-      message(record.state === 'complete' ?
-        `已保存 ${record.groups.length} 组候选，${count} 条合格 SKU 标题可在规格列核对。` : '请查看请求结果。');
+      message(record.groups ? `已保存 ${record.groups.length} 组候选，SKU 候选可在规格列编辑。` : '请查看请求结果。');
     } catch (error) {
       if (job !== id) return;
       message(error.message + ' 请先核对已保存的结果。');
@@ -442,6 +521,7 @@
     const job = event.detail || null;
     if (id === job) return;
     id = job; source = null; applied = {}; busy = false; version++; resultVersion++;
+    attempts = []; latestId = null; drafts = {};
     clearTimeout(pollTimer);
     panel.hidden = !id;
     panel.open = false;
@@ -453,14 +533,17 @@
     onlySelected = false; visible = pageSize;
     message(); showResult(null); restoreRecommended();
     if (id) {
+      let attempt;
       try {
         const draft = JSON.parse(sessionStorage.getItem('listing-title-draft:' + id));
         if (draft) {
           applied = draft.applied;
           for (const key of Object.keys(fields)) input(key).value = draft.values[key];
         }
+        drafts = JSON.parse(sessionStorage.getItem('listing-candidate-drafts:' + id)) || {};
+        attempt = sessionStorage.getItem('listing-candidate-view:' + id);
       } catch { /* 使用导入的标题 */ }
-      void recover(id);
+      void recover(id, attempt);
     }
     for (const key of Object.keys(fields)) updateEvidence(key);
   });

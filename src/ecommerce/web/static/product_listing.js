@@ -36,6 +36,19 @@
     return item;
   }
 
+  root.checkListingTitle = (key, raw, candidate = false) => {
+    const value = candidate || key === 'sku' ? raw.replace(/\p{White_Space}/gu, '') :
+      raw.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+    const width = [...value].reduce((sum, char) => sum + (char.codePointAt(0) < 128 ? 1 : 2), 0);
+    const limit = key === 'title' ? 60 : 30;
+    let issue = '';
+    if (/[\x00-\x1f\x7f]/u.test(raw)) issue = '请使用单行文本';
+    else if (width > limit) issue = `最多 ${limit} 字符，超出 ${width - limit} 字符`;
+    else if (!width && (key === 'title' || candidate)) issue = '请输入标题';
+    else if (key === 'guide' && width && width < 20) issue = `至少 20 字符，还差 ${20 - width} 字符`;
+    return {value, width, limit, issue};
+  };
+
   function renderPrompt(task) {
     const terminal = ['needs_attention','failed','interrupted'].includes(task?.phase);
     const prompt = task?.prompt || (terminal ? {id:`terminal-${id}`, kind:'terminal', actions:[], evidence:task.evidence} : null);
@@ -48,7 +61,7 @@
     }
     if (seenPrompt === prompt.id) return;
     seenPrompt = prompt.id;
-    const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异',
+    const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异', titles:'请修正千牛标题',
       receipt:'请核对提交结果', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对', manual:'需要人工处理'};
     node('manual-dialog-title').textContent = titles[prompt.kind] || titles.manual;
     node('manual-message').textContent = task.message + (terminal && !task.prompt ? '\n当前任务已结束，不能从该步骤自动继续。' : '');
@@ -61,9 +74,10 @@
     const buttons = node('manual-actions');
     buttons.replaceChildren();
     for (const action of prompt.actions) {
-      const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',approve:'确认差异并提交到仓库',fill_only:'保留填写，不提交',finish:task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
+      const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',approve:'确认差异并提交到仓库',
+        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',finish:task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
       const button = element('button',words[action]);
-      button.className = `ui-button ${['approve','continue','confirm'].includes(action) ? 'ui-primary' : 'ui-secondary'}`;
+      button.className = `ui-button ${['approve','continue','confirm','recheck_titles'].includes(action) ? 'ui-primary' : 'ui-secondary'}`;
       button.type = 'button'; button.disabled = sentPrompt === prompt.id;
       button.addEventListener('click',() => sendFeedback(prompt.id, action)); buttons.append(button);
     }
@@ -134,34 +148,44 @@
     catch { /* 当前页面仍可编辑 */ }
   }
 
-  function checkSkuTitle(field) {
-    const value = field.value.replace(/\p{White_Space}/gu, '');
-    const width = [...value].reduce((sum, char) => sum + (char.codePointAt(0) < 128 ? 1 : 2), 0);
-    const issue = width > 30 ? '超过上限' : /[\x00-\x1f\x7f]/u.test(field.value) ? '请使用单行文本' : '';
-    const note = skuDraft[field.dataset.skuKey]?.issue || '';
-    const count = document.getElementById(field.getAttribute('aria-describedby'));
-    count.textContent = `${width} / 30${issue ? ' · ' + issue : !value && note ? ' · ' + note : ''}`;
-    count.classList.toggle('is-invalid', Boolean(issue || (!value && note)));
-    field.setAttribute('aria-invalid', String(Boolean(issue)));
-    return !issue;
-  }
-
   function checkTitles() {
     if (!node('titles')) return true;
-    let valid = true;
-    for (const [key,limit] of [['title',60],['guide',30]]) {
-      const input = node(key);
-      const used = [...input.value.trim()].reduce((width,char) => width + (char.codePointAt(0) < 128 ? 1 : 2),0);
-      const issue = used > limit ? '超过上限' : key === 'title' && !used ? '必填' :
-        key === 'guide' && used && used < 20 ? '至少 20 个字符' : '';
-      const count = node(key+'-count');
-      count.textContent = `${used} / ${limit}${issue ? ' · '+issue : ''}`;
-      count.classList.toggle('is-invalid',Boolean(issue));
-      input.setAttribute('aria-invalid',String(Boolean(issue)));
-      valid = valid && !issue;
+    const errors = node('title-errors'), entries = [];
+    function check(field, key, label) {
+      const result = root.checkListingTitle(key, field.value);
+      const {width, limit, issue} = result;
+      const count = document.getElementById(field.dataset.count || field.getAttribute('aria-describedby'));
+      const meter = `${width} / ${limit}`;
+      count.textContent = meter + (issue ? ` · ${issue}` : '');
+      count.classList.toggle('is-invalid', Boolean(issue));
+      field.setAttribute('aria-invalid', String(Boolean(issue)));
+      if (issue) {
+        const link = element('button', `${label} · ${meter} · ${issue}`);
+        link.type = 'button';
+        link.addEventListener('click', () => field.focus());
+        const row = element('li');
+        row.append(link);
+        entries.push(row);
+      }
+      return result;
     }
-    const skuFields = [...node('skus').querySelectorAll('[data-sku-key]')];
-    return skuFields.map(checkSkuTitle).every(Boolean) && valid;
+    check(node('title'), 'title', '宝贝标题');
+    const guide = check(node('guide'), 'guide', '导购标题');
+    for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
+      const result = check(field, 'sku', field.getAttribute('aria-label'));
+      const fallback = node(field.dataset.skuKey + '-fallback');
+      fallback.hidden = Boolean(result.value);
+      fallback.textContent = guide.issue ? '请先修正正式导购标题' :
+        guide.value ? `将使用导购标题：${guide.value}` : '将跳过填写 SKU 搜索标题';
+    }
+    errors.replaceChildren(...entries);
+    errors.hidden = !id || node('titles').disabled || !entries.length;
+    return !entries.length;
+  }
+
+  function startError(message = '') {
+    node('start-error').textContent = message;
+    node('start-error').hidden = !message;
   }
 
   function renderSkus(data, preview) {
@@ -178,7 +202,7 @@
       spec.append(element('strong', name));
       if (data.id) {
         const key = `sku-${index + 1}`;
-        const field = element('input'), count = element('small');
+        const field = element('input'), count = element('small'), fallback = element('small');
         field.type = 'text';
         field.className = 'ui-control';
         field.dataset.skuKey = key;
@@ -187,12 +211,22 @@
         field.placeholder = '留空使用导购标题';
         field.setAttribute('aria-label', `${name}的 SKU 搜索标题`);
         count.id = `listing-${key}-count`;
-        field.setAttribute('aria-describedby', count.id);
+        fallback.id = `listing-${key}-fallback`;
+        fallback.className = 'listing-sku-fallback';
+        field.dataset.count = count.id;
+        field.setAttribute('aria-describedby', `${count.id} ${fallback.id}`);
         count.className = 'listing-title-count';
         spec.className = 'listing-sku-title';
-        const label = element('small', 'SKU 搜索标题');
+        const label = element('small', '正式 SKU 搜索标题');
         label.className = 'listing-sku-title-label';
-        spec.append(label, field, count);
+        spec.append(label, field, count, fallback);
+        if (!data.task) {
+          const candidate = element('div');
+          candidate.dataset.skuCandidate = key;
+          candidate.className = 'listing-sku-candidate';
+          candidate.hidden = true;
+          spec.append(candidate);
+        }
       }
       tr.append(spec, ...['价格','数量','商家编码'].map(key => element('td',row[key])),
         element('td',preview.sku_images?.[name] || '未匹配'));
@@ -288,6 +322,7 @@
     logOwner = oldest = null; latest = 0; logBusy = logAgain = logReady = hasOlder = false;
     node('log-rows').replaceChildren(); node('log-older').hidden = true;
     node('log-note').textContent = '等待任务日志…';
+    startError();
   }
 
   function chooseFolder() {
@@ -375,30 +410,20 @@
     node('start').textContent = node('submit').checked ? '开始填写并提交到仓库' : '仅填写';
   });
   node('titles')?.addEventListener('input',() => {
+    startError();
     node('start').disabled = !checkTitles() || !id || busy;
   });
   node('skus').addEventListener('input', event => {
     const field = event.target;
     if (!field.dataset.skuKey) return;
-    skuDraft[field.dataset.skuKey] = {title:field.value, manual:true};
+    skuDraft[field.dataset.skuKey] = {title:field.value};
     saveSkuDraft();
-    node('start').disabled = !checkTitles() || !id || busy;
-  });
-  root.addEventListener('listing:sku-suggestions', event => {
-    const {job, rows} = event.detail;
-    if (job !== id || job !== skuOwner || busy || node('titles').disabled) return;
-    const byKey = new Map(rows.map(row => [row.sku_key, row]));
-    for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
-      const key = field.dataset.skuKey, row = byKey.get(key);
-      if (!row || skuDraft[key]?.manual) continue;
-      field.value = row.title;
-      skuDraft[key] = {title:row.title, issue:row.issue};
-    }
-    saveSkuDraft();
+    startError();
     node('start').disabled = !checkTitles() || !id || busy;
   });
   node('start').addEventListener('click',async () => {
     if (!id || busy || !checkTitles()) return;
+    startError();
     const body = {submit:node('submit').checked};
     if (node('titles')) {
       body.titles = {title:node('title').value, guide:node('guide').value};
@@ -413,7 +438,7 @@
     try {
       render(await api(`${base}/${id}/start`,body)); poll();
     } catch (error) {
-      node('import-note').textContent = error.message; node('import-fields').disabled = false;
+      startError(error.message); node('import-fields').disabled = false;
       if (node('titles')) node('titles').disabled = false;
       skuFields.forEach(field => { field.disabled = false; });
       node('start').disabled = !checkTitles();

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from playwright.sync_api import sync_playwright
 from ecommerce.modules.product.assets import SkuImageInputs
+from ecommerce.platforms.qianniu.product_review import read_listing_fields
 from ecommerce.platforms.qianniu import product_sku_media as platform
 from ecommerce.platforms.qianniu.popups import PopupGuard
 from ecommerce.platforms.qianniu.verification import VerificationGuard
@@ -97,8 +98,22 @@ class SkuMediaBrowserTests(unittest.TestCase):
         with self.guard():
             result = platform.fill_sku_media(self.page, NAMES, inputs, TITLE,
                                              sku_titles={NAMES[0]:title, NAMES[1]:''})
+            self.page.evaluate('''() => {
+                for (const [id, value] of [['title','测试标题'], ['shopping_title','导购标题'],
+                                           ['price','17'], ['outerId','DEMO']]) {
+                    const group = document.createElement('div');
+                    group.id = 'sell-field-' + id;
+                    const field = document.createElement('input');
+                    field.value = value;
+                    group.append(field);
+                    document.body.append(group);
+                }
+            }''')
+            observed = read_listing_fields(self.page)
         self.assertEqual({row['name']: row['title'] for row in self.page.evaluate('records')},
                          {NAMES[0]:title, NAMES[1]:TITLE})
+        self.assertEqual({name: values for name, values, _ in observed['sku_media']},
+                         {NAMES[0]:[title], NAMES[1]:[TITLE]})
         self.assertTrue(all(fields == ['SKU搜索标题'] for fields in result.filled.values()))
 
     def test_extra_file_requests_after_upload_and_save_stay_intercepted_without_uploading_again(self):

@@ -89,7 +89,8 @@ class TitleGenerationTests(TestCase):
             start['allow_paid'] = True
             done = client.post(url + '/generate', headers=headers, json=start).json
             self.assertEqual(done['state'], 'complete')
-            self.assertEqual(done['sku_titles'], [{'sku_key':'sku-1', 'title':'白色猫毛清理器', 'issue':None}])
+            self.assertEqual(done['sku_titles'], [{'sku_key':'sku-1', 'title':'白色猫毛清理器',
+                                                   'raw_title':'白色 猫毛清理器', 'issue':None}])
             self.assertEqual(done['groups'][0]['title']['used'][0]['sources'][0]['rank'], 1)
             self.assertEqual(done['groups'][0]['title']['used'][1]['sources'][0]['rank'], 8)
             self.assertEqual(done['groups'][0]['title']['value'], '猫毛清理器 家用除毛刷')
@@ -107,9 +108,19 @@ class TitleGenerationTests(TestCase):
                 for title in group.values():
                     title.pop('fill_value')
                     title.pop('width')
+            prior['sku_titles'][0].pop('raw_title')
+            second = '1' * 32
+            history['runs'][history['latest']].append({**done, 'id':second})
             saved = json.dumps(history)
             record_file.write_text(saved, encoding='utf-8')
-            self.assertEqual(client.get(url + '/result').json['groups'], done['groups'])
+            latest = client.get(url + '/result').json
+            self.assertEqual(latest['id'], second)
+            self.assertEqual(latest['attempts'], [done['id'], second])
+            restored = client.get(url + '/result?attempt=' + done['id']).json
+            self.assertEqual(restored['groups'], done['groups'])
+            self.assertEqual(restored['sku_titles'], done['sku_titles'])
+            self.assertEqual(restored['latest_id'], second)
+            self.assertEqual(client.get(url + '/result?attempt=' + '2' * 32).status_code, 404)
             self.assertEqual(record_file.read_text(encoding='utf-8'), saved)
             generate.assert_called_once()
             self.assertFalse((manifest.parent / 'state.json').exists())
@@ -132,6 +143,7 @@ class TitleGenerationTests(TestCase):
         self.assertIn('重复', rows[2]['issue'])
         self.assertIn('未返回', rows[3]['issue'])
         self.assertIn('超过 30', rows[4]['issue'])
+        self.assertEqual(rows[4]['raw_title'], '猫毛清理器' + '甲' * 10 + 'A')
         self.assertIsNone(rows[5]['issue'])
         self.assertTrue(all(row['title'] == '' for row in rows[2:]))
 
