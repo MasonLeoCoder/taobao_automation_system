@@ -104,11 +104,19 @@
               </div>
               <p class="ui-form-note">勾选适合商品的词，也可以分别指定两个标题的必用词。</p>
               <div class="module-actions">
-                {{ ui.control_button('查看已选',{'id':'listing-ai-selected','type':'button','aria-pressed':'false'},'secondary') }}
+                {{ ui.control_button('查看已选',{'id':'listing-ai-selected','type':'button','aria-pressed':'false','aria-controls':'listing-ai-unpicked'},'secondary') }}
                 {{ ui.control_button('恢复推荐',{'id':'listing-ai-recommend','type':'button'},'secondary') }}
               </div>
-              <ul id="listing-ai-words" class="listing-ai-words"></ul>
-              {{ ui.control_button('显示更多词条',{'id':'listing-ai-more','type':'button','hidden':true},'secondary') }}
+              <p id="listing-ai-term-limit" class="ui-form-note" role="status" hidden>已选满 40 条，取消一条后可继续选择。</p>
+              <details id="listing-ai-picked" class="listing-ai-word-section" open>
+                <summary id="listing-ai-picked-count">已勾选</summary>
+                <ul id="listing-ai-picked-words" class="listing-ai-words" aria-label="已勾选的排行词" tabindex="0"></ul>
+              </details>
+              <section id="listing-ai-unpicked" class="listing-ai-word-section" aria-labelledby="listing-ai-unpicked-count">
+                <h4 id="listing-ai-unpicked-count">未勾选</h4>
+                <ul id="listing-ai-words" class="listing-ai-words" aria-label="未勾选的排行词" tabindex="0"></ul>
+                {{ ui.control_button('显示更多未勾选词条',{'id':'listing-ai-more','type':'button','hidden':true},'secondary') }}
+              </section>
             </details>
             {% call ui.field('补充已确认的商品事实（选填）') %}{{ ui.textarea_control(
               {'id':'listing-ai-facts','rows':2,'maxlength':600,'placeholder':'填写已确认的材质、用途或卖点'}) }}

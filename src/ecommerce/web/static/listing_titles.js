@@ -92,6 +92,11 @@
     renderWords();
   }
 
+  function resetWordPage() {
+    visible = pageSize;
+    node('words').scrollTop = node('picked-words').scrollTop = 0;
+  }
+
   async function loadSource() {
     const request = ++version;
     const period = node('period').value, batch = node('batch').value;
@@ -116,59 +121,98 @@
       }
       node('mismatch-label').hidden = !data.mismatch;
       node('terms').hidden = !data.words.length;
+      resetWordPage();
       restoreRecommended();
     } catch (error) {
       if (request === version) node('source').textContent = '排行批次读取失败。' + error.message;
     }
   }
 
+  function changeWord(term, checkbox) {
+    const list = checkbox.closest('ul');
+    const picks = [...list.querySelectorAll('[data-pick]')];
+    const index = picks.indexOf(checkbox), neighbor = picks[index + 1] || picks[index - 1];
+    const listTop = list.getBoundingClientRect().top;
+    const neighborOffset = neighbor ? neighbor.getBoundingClientRect().top - listTop : 0;
+    if (checkbox.checked) selected.add(term.id);
+    else {
+      selected.delete(term.id);
+      Object.values(locks).forEach(ids => ids.delete(term.id));
+    }
+    invalidate();
+    renderWords();
+    const next = neighbor && list.querySelector(`[data-pick="${neighbor.dataset.pick}"]`);
+    const top = list.getBoundingClientRect().top;
+    if (next) list.scrollTop += next.getBoundingClientRect().top - top - neighborOffset;
+    if (top !== listTop) window.scrollBy({top:top - listTop, behavior:'instant'});
+    (next && !next.disabled ? next : list).focus({preventScroll:true});
+  }
+
+  function wordRow(term) {
+    const row = element('li');
+    const pick = element('label'), checkbox = element('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selected.has(term.id);
+    checkbox.disabled = !checkbox.checked && selected.size >= maxTerms;
+    checkbox.addEventListener('change', () => changeWord(term, checkbox));
+    checkbox.dataset.pick = term.id;
+    pick.append(checkbox, element('strong', term.keyword));
+    const detail = element('small', `${term.type_label} 第 ${term.rank} 名${term.popularity_raw ? ' · 人气 ' + term.popularity_raw : ''}`);
+    row.append(pick, detail);
+    if (checkbox.checked) {
+      const required = element('div');
+      for (const [key, label] of Object.entries(fields)) {
+        const choice = element('label'), box = element('input');
+        box.type = 'checkbox';
+        box.checked = locks[key].has(term.id);
+        box.addEventListener('change', () => {
+          if (box.checked) locks[key].add(term.id);
+          else locks[key].delete(term.id);
+          invalidate();
+        });
+        choice.append(box, document.createTextNode(label + '必用'));
+        required.append(choice);
+      }
+      row.append(required);
+    }
+    return row;
+  }
+
+  function renderWordList(list, groups, limit) {
+    const items = [];
+    for (const [kind, terms] of groups) {
+      if (!terms.length) continue;
+      if (groups.length > 1) {
+        const heading = element('li', `${kinds[kind]} · ${terms.length} 条`);
+        heading.className = 'listing-ai-word-kind';
+        items.push(heading);
+      }
+      items.push(...terms.slice(0, limit).map(wordRow));
+    }
+    const previous = list.scrollTop;
+    list.replaceChildren(...(items.length ? items : [element('li', '没有符合筛选条件的词条。')]));
+    list.scrollTop = previous;
+  }
+
   function renderWords() {
     node('count').textContent = `已选 ${selected.size} / ${maxTerms}`;
+    node('term-limit').hidden = selected.size < maxTerms;
     node('selected').setAttribute('aria-pressed', String(onlySelected));
     node('selected').textContent = onlySelected ? '查看全部' : '查看已选';
+    node('unpicked').hidden = onlySelected;
     const query = node('search').value.trim().toLowerCase(), kind = node('kind').value;
-    const rows = (source?.words || []).filter(term => (!kind || term.type === kind) &&
-      (!onlySelected || selected.has(term.id)) && term.keyword.toLowerCase().includes(query));
-    node('words').replaceChildren(...rows.slice(0, visible).map(term => {
-      const row = element('li');
-      const pick = element('label'), checkbox = element('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = selected.has(term.id);
-      checkbox.disabled = !checkbox.checked && selected.size >= maxTerms;
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) selected.add(term.id);
-        else {
-          selected.delete(term.id);
-          Object.values(locks).forEach(ids => ids.delete(term.id));
-        }
-        invalidate();
-        renderWords();
-        node('words').querySelector(`[data-pick="${term.id}"]`)?.focus();
-      });
-      checkbox.dataset.pick = term.id;
-      pick.append(checkbox, element('strong', term.keyword));
-      const detail = element('small', `${term.type_label} 第 ${term.rank} 名${term.popularity_raw ? ' · 人气 ' + term.popularity_raw : ''}`);
-      row.append(pick, detail);
-      if (checkbox.checked) {
-        const required = element('div');
-        for (const [key, label] of Object.entries(fields)) {
-          const choice = element('label'), box = element('input');
-          box.type = 'checkbox';
-          box.checked = locks[key].has(term.id);
-          box.addEventListener('change', () => {
-            if (box.checked) locks[key].add(term.id);
-            else locks[key].delete(term.id);
-            invalidate();
-          });
-          choice.append(box, document.createTextNode(label + '必用'));
-          required.append(choice);
-        }
-        row.append(required);
-      }
-      return row;
-    }));
-    if (!rows.length) node('words').append(element('li', '没有符合筛选条件的词条。'));
-    node('more').hidden = rows.length <= visible;
+    const rows = (source?.words || []).filter(term => (!kind || term.type === kind) && term.keyword.toLowerCase().includes(query))
+      .sort((a, b) => a.rank - b.rank || a.page_no - b.page_no);
+    const types = kind ? [kind] : Object.keys(kinds);
+    const picked = types.map(type => [type, rows.filter(term => term.type === type && selected.has(term.id))]);
+    const unpicked = types.map(type => [type, rows.filter(term => term.type === type && !selected.has(term.id))]);
+    const count = groups => groups.reduce((total, [, terms]) => total + terms.length, 0);
+    node('picked-count').textContent = `已勾选 · ${count(picked)} 条`;
+    node('unpicked-count').textContent = `未勾选 · ${count(unpicked)} 条`;
+    const limit = visible / types.length;
+    renderWordList(node('picked-words'), picked, Infinity);
+    renderWordList(node('words'), unpicked, limit);
+    node('more').hidden = unpicked.every(([, terms]) => terms.length <= limit);
   }
 
   function evidence(value, terms) {
@@ -506,9 +550,14 @@
   node('mismatch').addEventListener('change', invalidate);
   node('facts').addEventListener('input', invalidate);
   node('paid').addEventListener('change', buttons);
-  node('kind').addEventListener('change', () => { visible = pageSize; renderWords(); });
-  node('search').addEventListener('input', () => { visible = pageSize; renderWords(); });
-  node('selected').addEventListener('click', () => { onlySelected = !onlySelected; visible = pageSize; renderWords(); });
+  for (const [key, event] of [['kind','change'], ['search','input']]) {
+    node(key).addEventListener(event, () => { resetWordPage(); renderWords(); });
+  }
+  node('selected').addEventListener('click', () => {
+    onlySelected = !onlySelected;
+    if (onlySelected) node('picked').open = true;
+    renderWords();
+  });
   node('recommend').addEventListener('click', restoreRecommended);
   node('more').addEventListener('click', () => { visible += pageSize; renderWords(); });
   for (const key of Object.keys(fields)) input(key).addEventListener('input', () => {
@@ -530,7 +579,9 @@
     node('batch').replaceChildren(new Option('最新有数据的批次', ''));
     node('facts').value = '';
     node('kind').value = node('search').value = '';
-    onlySelected = false; visible = pageSize;
+    onlySelected = false;
+    node('picked').open = true;
+    resetWordPage();
     message(); showResult(null); restoreRecommended();
     if (id) {
       let attempt;

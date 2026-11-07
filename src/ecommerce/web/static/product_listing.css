@@ -114,13 +114,27 @@
 }
 .listing-ai-source-details dd { margin: 0; }
 
+.listing-ai-word-section {
+  margin-top: .65rem;
+  padding: .6rem .75rem;
+  border: 1px solid #dbe7e0;
+  border-radius: 8px;
+}
+#listing-ai-picked { background: #f5f9f6; }
+.listing-ai-word-section > summary, .listing-ai-word-section > h4 {
+  margin: 0;
+  color: #145c52;
+  font-size: .9rem;
+  font-weight: 650;
+}
 .listing-ai-words {
-  margin: .75rem 0;
+  margin: .4rem 0 0;
   padding: 0;
   list-style: none;
   max-height: 24rem;
   overflow: auto;
 }
+#listing-ai-more { margin-top: .5rem; }
 
 .listing-ai-words li {
   display: flex;
@@ -129,6 +143,13 @@
   gap: .35rem .9rem;
   padding: .5rem .25rem;
   border-bottom: 1px solid #e6eee9;
+}
+.listing-ai-words .listing-ai-word-kind {
+  padding-block: .3rem;
+  background: #edf4ef;
+  color: #395d50;
+  font-size: .82rem;
+  font-weight: 650;
 }
 
 .listing-ai-words label { display: inline-flex; align-items: center; gap: .35rem; }
