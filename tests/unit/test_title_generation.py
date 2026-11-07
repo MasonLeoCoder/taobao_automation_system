@@ -104,6 +104,8 @@ class TitleGenerationTests(TestCase):
             record_file = manifest.parent / 'title-generation.json'
             history = json.loads(record_file.read_text(encoding='utf-8'))
             prior = history['runs'][history['latest']][0]
+            prior['state'] = 'invalid'
+            prior['groups'][0]['title']['issue'] = '旧规则判为重复'
             for group in prior['groups']:
                 for title in group.values():
                     title.pop('fill_value')
@@ -119,6 +121,7 @@ class TitleGenerationTests(TestCase):
             restored = client.get(url + '/result?attempt=' + done['id']).json
             self.assertEqual(restored['groups'], done['groups'])
             self.assertEqual(restored['sku_titles'], done['sku_titles'])
+            self.assertEqual(restored['state'], 'complete')
             self.assertEqual(restored['latest_id'], second)
             self.assertEqual(client.get(url + '/result?attempt=' + '2' * 32).status_code, 404)
             self.assertEqual(record_file.read_text(encoding='utf-8'), saved)
@@ -195,3 +198,21 @@ class TitleGenerationTests(TestCase):
         self.assertIn('去掉空格后未逐字', repeated['guide']['issue'])
         self.assertIsNone(compact['title']['issue'])
         self.assertIsNone(compact['guide']['issue'])
+
+    def test_single_character_matches_are_reference_only_for_repeat_checks(self):
+        words = [{'keyword': '毛'}, {'keyword': '去猫毛'}]
+        natural = '宠物去猫毛 长毛浮毛刮毛'
+        repeated = '去猫毛家用长毛 去猫毛'
+        response = {'text': json.dumps({'groups': [
+            {'title': natural, 'guide': natural}, {'title': repeated, 'guide': repeated},
+        ]})}
+        accepted, rejected = _candidates(response, words, {'title': [], 'guide': []})
+        for key in ('title', 'guide'):
+            self.assertIsNone(accepted[key]['issue'])
+            self.assertEqual(next(word['count'] for word in accepted[key]['used'] if word['keyword'] == '毛'), 3)
+            self.assertIn('「去猫毛」重复使用 2 次', rejected[key]['issue'])
+        rows = _sku_candidates([{'sku_key':'sku-1', 'title':natural}, {'sku_key':'sku-2', 'title':repeated}],
+                               [{'sku_key':'sku-1'}, {'sku_key':'sku-2'}], words)
+        self.assertIsNone(rows[0]['issue'])
+        self.assertIn('「去猫毛」重复使用 2 次', rows[1]['issue'])
+        self.assertEqual(rows[1]['raw_title'], repeated)

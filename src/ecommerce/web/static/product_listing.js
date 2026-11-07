@@ -174,7 +174,8 @@
     for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
       const result = check(field, 'sku', field.getAttribute('aria-label'));
       const fallback = node(field.dataset.skuKey + '-fallback');
-      fallback.hidden = Boolean(result.value);
+      const comparison = field.closest('td').querySelector('[data-sku-comparison]');
+      fallback.hidden = Boolean(result.value) || Boolean(comparison && !comparison.hidden);
       fallback.textContent = guide.issue ? '请先修正正式导购标题' :
         guide.value ? `将使用导购标题：${guide.value}` : '将跳过填写 SKU 搜索标题';
     }
@@ -221,11 +222,11 @@
         label.className = 'listing-sku-title-label';
         spec.append(label, field, count, fallback);
         if (!data.task) {
-          const candidate = element('div');
-          candidate.dataset.skuCandidate = key;
-          candidate.className = 'listing-sku-candidate';
-          candidate.hidden = true;
-          spec.append(candidate);
+          const comparison = element('div');
+          comparison.dataset.skuComparison = key;
+          comparison.className = 'listing-sku-comparison';
+          comparison.hidden = true;
+          spec.append(comparison);
         }
       }
       tr.append(spec, ...['价格','数量','商家编码'].map(key => element('td',row[key])),
@@ -416,10 +417,28 @@
   node('skus').addEventListener('input', event => {
     const field = event.target;
     if (!field.dataset.skuKey) return;
-    skuDraft[field.dataset.skuKey] = {title:field.value};
+    skuDraft[field.dataset.skuKey] = {title:field.value, manual:true};
     saveSkuDraft();
     startError();
     node('start').disabled = !checkTitles() || !id || busy;
+  });
+  root.addEventListener('listing:sku-result', ({detail}) => {
+    const {job, attempt, rows, autoFill, previousEdits} = detail;
+    if (!job || job !== id || job !== skuOwner || busy || node('titles').disabled) return;
+    if (autoFill) {
+      const byKey = new Map(rows.map(row => [row.sku_key, row.raw_title ?? row.title ?? '']));
+      for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
+        const key = field.dataset.skuKey, draft = skuDraft[key];
+        if (draft && (draft.manual !== false || draft.attempt === attempt)) continue;
+        const manual = typeof previousEdits?.[key] === 'string';
+        const raw = manual ? previousEdits[key] : byKey.get(key) ?? '';
+        const title = root.checkListingTitle('sku', raw).value;
+        field.value = title;
+        skuDraft[key] = {title, attempt, manual};
+      }
+      saveSkuDraft();
+    }
+    node('start').disabled = !checkTitles();
   });
   node('start').addEventListener('click',async () => {
     if (!id || busy || !checkTitles()) return;

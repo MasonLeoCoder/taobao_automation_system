@@ -135,6 +135,11 @@ def _response_data(response):
     return raw
 
 
+def _repeat_issue(used):
+    return '；'.join(f'排行词「{row["keyword"]}」重复使用 {row["count"]} 次'
+                    for row in used if len(row['keyword']) > 1 and row['count'] > 1)
+
+
 def _validate_groups(groups, terms, locked):
     if not isinstance(groups, list):
         return []
@@ -145,7 +150,7 @@ def _validate_groups(groups, terms, locked):
         candidate = {}
         for key in FIELDS:
             value = group.get(key)
-            value = value.strip() if isinstance(value, str) else ''
+            value = value if isinstance(value, str) else ''
             fill_value = compact_title(value)
             segments, used = evidence(value, terms)
             issue = None
@@ -154,8 +159,8 @@ def _validate_groups(groups, terms, locked):
                     raise ValueError('标题为空或含换行等控制字符')
                 validate_titles(fill_value, '') if key == 'title' else validate_titles('占位', fill_value)
                 final_used = used if value == fill_value else evidence(fill_value, terms)[1]
-                if any(row['count'] > 1 for row in final_used):
-                    raise ValueError('同一标题重复使用排行词')
+                if repeated := _repeat_issue(final_used):
+                    raise ValueError(repeated)
                 if not final_used:
                     raise ValueError('去掉空格后未逐字使用已选排行词')
                 if any(word not in {item['keyword'] for item in final_used} for word in locked[key]):
@@ -192,8 +197,10 @@ def _sku_candidates(raw, specs, terms):
             value = validate_sku_title(values[0])
             if value:
                 used = evidence(value, terms)[1]
-                if not used or any(item['count'] > 1 for item in used):
-                    raise ValueError('标题未逐字命中排行词，或重复使用了排行词')
+                if repeated := _repeat_issue(used):
+                    raise ValueError(repeated)
+                if not used:
+                    raise ValueError('标题未逐字命中排行词')
         except ValueError as error:
             value, issue = '', str(error)
         raw_title = values[0] if len(values) == 1 and isinstance(values[0], str) else value
@@ -204,6 +211,24 @@ def _sku_candidates(raw, specs, terms):
 def _candidate_state(groups, sku_titles=()):
     usable = any(title['issue'] is None for group in groups for title in group.values())
     return 'complete' if usable or any(row['title'] for row in sku_titles) else 'invalid'
+
+
+def _recheck_saved(record):
+    if not record or 'groups' not in record:
+        return record
+    payload = record['plan']['input']
+    if record.get('response'):
+        raw = _response_data(record['response'])
+        groups = raw.get('groups')
+        titles = _sku_candidates(raw.get('sku_titles'), payload['sku_specs'], payload['words']) if 'sku_specs' in payload else []
+    else:
+        groups = [{key: group[key]['value'] for key in FIELDS} for group in record['groups']]
+        titles = record.get('sku_titles', [])
+    groups = _validate_groups(groups, payload['words'], payload['locked'])
+    result = {**record, 'groups': groups, 'state': _candidate_state(groups, titles)}
+    if 'sku_titles' in record or titles:
+        result['sku_titles'] = titles
+    return result
 
 
 class TitleGeneration:
@@ -237,16 +262,7 @@ class TitleGeneration:
                         return {**record, 'state': 'interrupted', 'error': '上一次请求结果未保存，请先核对费用记录。'}
             except TaskBusy:
                 return record
-        if record and (groups := record.get('groups')) and 'fill_value' not in groups[0]['title']:
-            payload = record['plan']['input']
-            raw = [{key: group[key]['value'] for key in FIELDS} for group in groups]
-            checked = _validate_groups(raw, payload['words'], payload['locked'])
-            record = {**record, 'groups': checked, 'state': _candidate_state(checked)}
-        if record and record.get('response') and any('raw_title' not in row for row in record.get('sku_titles', ())):
-            payload = record['plan']['input']
-            raw = _response_data(record['response'])
-            record = {**record, 'sku_titles': _sku_candidates(raw.get('sku_titles'), payload['sku_specs'], payload['words'])}
-        return record
+        return _recheck_saved(record)
 
     def latest(self, attempt=None):
         data = self._read()
@@ -337,7 +353,9 @@ class TitleGeneration:
             raise ListingConflict('资料或费用预览已变化，请重新预览并确认')
         try:
             with shop_lock(self.lock):
-                return self._generate(config, plan, retry)
+                result = self._generate(config, plan, retry)
+                history = self._read()
+                return {**result, 'latest_id': history['runs'][history['latest']][-1]['id']}
         except TaskBusy:
             raise ListingConflict('这份资料已有标题生成请求正在处理，请稍后查看结果') from None
 
@@ -348,7 +366,7 @@ class TitleGeneration:
         history = self._read()
         records = history['runs'].setdefault(plan['key'], [])
         if records:
-            prior = records[-1]
+            prior = _recheck_saved(records[-1])
             if prior['state'] == 'complete' or prior['id'] != retry:
                 return ({**prior, 'state': 'interrupted', 'error': '上一次请求结果未保存，请先核对费用记录。'}
                         if prior['state'] == 'running' else prior)
