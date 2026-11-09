@@ -21,18 +21,19 @@
 {% endmacro %}
 {% macro status_badges(row) %}
   {% if row.is_leaf %}
+    {% if row.level == 1 %}<span class="category-muted">末级类目</span>{% endif %}
     <span class="category-badge {{ {'已支持':'is-supported','待复核':'is-review'}.get(row.support,'') }}">{{ row.support }}</span>
-  {% else %}<span class="category-muted">有下级</span>{% endif %}
+  {% else %}<span class="category-muted">{{ row.children_status }}</span>{% endif %}
   {% if not row.is_visible %}<span class="category-badge is-hidden">不可见</span>{% endif %}
 {% endmacro %}
 {% block content %}
 <section id="publish-categories" data-scan="{{ url_for('publish_categories.scan') }}"
   data-status="{{ url_for('publish_categories.status') }}" data-resume="{{ url_for('publish_categories.resume') }}">
   <header class="category-header">
-    <div><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>发布类目管理</h1><p class="category-muted">浏览千牛发布类目，按需更新目录。</p></div>
+    <div><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>发布类目管理</h1><p class="category-muted">一级类目最近确认 · {{ roots_checked.strftime('%Y-%m-%d %H:%M') if roots_checked else '尚未确认' }}</p></div>
     <div class="category-header-actions">
       <a class="ui-button ui-secondary" href="{{ url_for('publish_categories.export') }}">导出 CSV</a>
-      {% if full %}{{ ui.control_button('重采全部一级类目',{'type':'button','id':'category-full'},'secondary') }}{% endif %}
+      {{ ui.control_button('刷新一级类目',{'type':'button','id':'category-full'},'secondary') }}
     </div>
   </header>
   <nav class="category-tabs" aria-label="类目管理视图">
@@ -43,18 +44,16 @@
     <p id="category-progress" role="status"></p>
     {{ ui.control_button('已处理，继续',{'type':'button','id':'category-resume','hidden':true},'secondary') }}
   </div>
-  {% if full %}
   <dialog id="category-confirm" class="ui-modal category-confirm" aria-labelledby="category-confirm-title">
     <form method="dialog">
-      <h2 id="category-confirm-title">重采全部一级类目</h2>
-      <p>将从一级列表开始，更新当前千牛账号可见的全部发布类目及下级。采集时间取决于目录大小。</p>
+      <h2 id="category-confirm-title">刷新一级类目</h2>
+      <p>读取当前千牛账号在发品页可见的一级类目。要更新下级，请进入对应类目后点击「重采此分支」。</p>
       <div class="category-header-actions">
         {{ ui.control_button('取消',{'value':'cancel','autofocus':true},'secondary') }}
-        {{ ui.control_button('开始全量采集',{'value':'confirm'},'primary') }}
+        {{ ui.control_button('开始刷新一级类目',{'value':'confirm'},'primary') }}
       </div>
     </form>
   </dialog>
-  {% endif %}
   {% if not history %}
     {% if scans and scans[0].status != 'running' %}
       <a class="category-notice category-summary" href="{{ url_for('publish_categories.index', view='history', branch=branch or none) }}">
@@ -80,18 +79,21 @@
         </nav>
         <div class="category-section-heading">
           <div><h2>{{ current.name if current else '一级类目' }}</h2>
-          <p class="category-muted">{{ '匹配结果' if query or selected_status or visibility else '直属类目' }} · {{ total }} 项</p></div>
-          {% if (current and not current.is_leaf) or not roots %}
+          <p class="category-muted">{{ '匹配结果' if query or selected_status or visibility else '直属类目' }} · {{ total }} 项</p>
+          {% if current and not current.is_leaf %}
+          <p class="category-muted">下级最近确认 · {{ branch_checked.strftime('%Y-%m-%d %H:%M') if branch_checked else '尚未确认' }}{% if current.children_status != '有下级' %} · {{ current.children_status }}{% endif %}</p>
+          {% endif %}</div>
+          {% if current and not current.is_leaf %}
           <div class="category-branch-actions">
-            {{ ui.control_button('重采此分支' if current else '采集宠物分支',
-              {'type':'button','data-retry':branch or pilot},'primary') }}
-            {% if current and roots|length > 1 %}
+            {{ ui.control_button('重采此分支',{'type':'button','data-retry':branch},'primary') }}
+            {% set other_roots = roots|selectattr('is_visible')|rejectattr('is_leaf')|rejectattr('full_path', 'equalto', branch)|list %}
+            {% if other_roots %}
             <details class="category-pair">
               <summary>同时采另一分支</summary>
               <form id="category-pair" data-scope="{{ branch }}">
                 {% call ui.select_control({'id':'category-second','required':true},'另一一级类目') %}
                 <option value="">请选择一级类目</option>
-                {% for item in roots if item.full_path != branch %}
+                {% for item in other_roots %}
                   <option value="{{ item.full_path }}">{{ item.name }}</option>
                 {% endfor %}
                 {% endcall %}
@@ -147,7 +149,7 @@
           {% if page < pages %}<a href="{{ pagination_url(page + 1) }}">下一页</a>{% endif %}
         </nav>
         {% endif %}
-        {% else %}<p class="category-empty">{{ '暂无符合条件的类目。' if roots else '暂无类目，先采集宠物分支。' }}</p>{% endif %}
+        {% else %}<p class="category-empty">{% if not roots %}暂无类目，请先点击「刷新一级类目」。{% elif current and not current.is_leaf and current.children_status == '下级未采集' and not (query or selected_status or visibility) %}下级尚未采集。点击「重采此分支」加载。{% else %}暂无符合条件的类目。{% endif %}</p>{% endif %}
       </div>
     </div>
   {% else %}
@@ -157,7 +159,7 @@
       {% set result = scan.result %}
       <details class="category-run" {% if loop.first %}open{% endif %}>
         <summary><time>{{ scan.started_at.strftime('%Y-%m-%d %H:%M') }}</time>
-          <strong>{{ scan.scopes|join('、') if scan.scopes else '全部一级类目' }}</strong>
+          <strong>{{ scan.scopes|join('、') if scan.scopes else '一级目录' if result.get('mode') == 'roots' else '历史全量（含各级下级）' }}</strong>
           <span class="category-badge {{ 'is-supported' if scan.status == 'complete' else 'is-review' }}">{{ {'complete':'完成','partial':'部分完成','failed':'失败','running':'等待结果'}[scan.status] }}</span></summary>
         <div class="category-run-body">
         <p class="category-muted">批次 {{ scan.id }}</p>
@@ -176,6 +178,8 @@
               {{ ui.control_button('重试此分支',{'type':'button','data-retry':item.path},'secondary') }}
             {% elif scan.scopes %}
               <button type="button" class="ui-button ui-secondary" data-retry-scopes='{{ scan.scopes|tojson }}'>重试原范围</button>
+            {% else %}
+              <button type="button" class="ui-button ui-secondary" data-retry-scopes='[]'>重试一级目录</button>
             {% endif %}
           </p>
         {% endfor %}

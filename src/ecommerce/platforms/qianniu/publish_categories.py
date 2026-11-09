@@ -156,7 +156,7 @@ def _pick(page, column, name, *, branch):
 
 @qianniu_operation
 def collect_publish_categories(page, scopes, *, on_progress=None):
-    """返回已观察节点、完整父列和失败分支。空范围表示全量。"""
+    """返回已观察节点、完整父列和失败分支。空范围仅读取一级。"""
     search = page.locator(SEARCH).first
     if not search.is_visible():
         if not page.locator(SEARCH_INPUT_SELECTOR).is_visible():
@@ -168,6 +168,15 @@ def collect_publish_categories(page, scopes, *, on_progress=None):
         expect(search).to_be_visible(timeout=15_000)
         pause(page, 'page')
     observed, complete, failed = {}, set(), []
+    if not scopes:
+        if on_progress:
+            on_progress('一级类目列表')
+        try:
+            rows = _read_all(page, 0, expand_groups=True)
+        except (CategoryPageError, PlaywrightTimeout) as error:
+            return observed, complete, [{'path': '', 'reason': str(error).splitlines()[0]}]
+        return {(name,): (row['platformId'], not row['branch']) for name, row in rows.items()}, {()}, failed
+
     targets = [tuple(path.split(' > ')) for path in scopes]
 
     def visit(column, parent):
@@ -176,7 +185,7 @@ def collect_publish_categories(page, scopes, *, on_progress=None):
         except (CategoryPageError, PlaywrightTimeout) as error:
             failed.append({'path': ' > '.join(parent), 'reason': str(error).splitlines()[0]})
             return
-        all_children = not targets or any(parent[:len(target)] == target for target in targets)
+        all_children = any(parent[:len(target)] == target for target in targets)
         if not all_children:
             wanted = {target[column] for target in targets if target[:column] == parent and len(target) > column}
             for missing in sorted(wanted - rows.keys()):

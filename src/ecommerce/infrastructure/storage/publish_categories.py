@@ -37,26 +37,33 @@ def find(settings, path):
         return conn.execute(sa.select(table).where(table.c.full_path == path)).mappings().one_or_none()
 
 
-def has_complete_branch(settings, path):
+def last_confirmed_columns(settings, branch):
+    """完整的一级列表和所选分支直属下级各自的最近确认时间。"""
     with connection(settings) as (conn, _, scans):
-        return bool(conn.scalar(sa.select(scans.c.id).where(scans.c.status == 'complete',
-            sa.func.json_contains(scans.c.result, json.dumps(path, ensure_ascii=False), '$.completed')).limit(1)))
+        def last(path):
+            return conn.scalar(sa.select(sa.func.max(scans.c.finished_at)).where(
+                sa.func.json_contains(scans.c.result, json.dumps(path, ensure_ascii=False), '$.completed')))
+
+        return last(''), last(branch) if branch else None
 
 
 def begin_scan(settings, identifier, scopes):
     with connection(settings, write=True) as (conn, _, scans):
         # 浏览器任务已持有会话锁，前序运行记录只能来自已退出的采集。
-        conn.execute(scans.update().where(scans.c.status == 'running').values(
-            status='failed', finished_at=database_now(),
-            result={'failed': [{'path': '', 'reason': '前次采集已中断，请按原范围重试'}]}))
+        interrupted = conn.execute(sa.select(scans.c.id, scans.c.result).where(scans.c.status == 'running')).mappings().all()
+        for scan in interrupted:
+            conn.execute(scans.update().where(scans.c.id == scan['id']).values(
+                status='failed', finished_at=database_now(), result={**scan['result'],
+                    'failed': [{'path': '', 'reason': '前次采集已中断，请按页面所示范围重试'}]}))
         conn.execute(scans.insert().values(id=identifier, scopes=scopes, status='running',
-            result={}, started_at=database_now()))
+            result={'mode': 'branches' if scopes else 'roots'}, started_at=database_now()))
 
 
 def fail_scan(settings, identifier, reason):
     with connection(settings, write=True) as (conn, _, scans):
+        result = conn.scalar(sa.select(scans.c.result).where(scans.c.id == identifier)) or {}
         conn.execute(scans.update().where(scans.c.id == identifier).values(
-            status='failed', result={'failed': [{'path': '', 'reason': reason}]},
+            status='failed', result={**result, 'failed': [{'path': '', 'reason': reason}]},
             finished_at=database_now()))
 
 
@@ -67,9 +74,11 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
         by_path = {row['full_path']: row for row in old}
         by_id = {row['qianniu_category_id']: row for row in old if row['qianniu_category_id']}
         id_counts = Counter(platform_id for platform_id, _ in observed.values() if platform_id)
-        result = dict(added=[], changed=[], hidden=[], conflicts=[], completed=[], failed=failed)
+        started = conn.scalar(sa.select(scans.c.result).where(scans.c.id == identifier)) or {}
+        result = {**started, **dict(added=[], changed=[], hidden=[], conflicts=[], completed=[], failed=failed)}
         seen = set()
         leaves = set()
+        renamed_roots = set()
         blocked = set()
         original = {row['id']: dict(row) for row in old}
         now = database_now()
@@ -107,6 +116,8 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
                         data['profile_status'] = 'review'
                 conn.execute(table.update().where(table.c.id == row['id']).values(**data))
                 if old_path != path:
+                    if len(parts) == 1:
+                        renamed_roots.add(old_path + SEPARATOR)
                     affected = [item['id'] for item in original.values()
                                 if item['listing_profile_key'] and item['full_path'].startswith(old_path + SEPARATOR)]
                     if affected:
@@ -140,7 +151,8 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
         # 按旧父子关系处理缺失分支；迁移后已确认可见的条目优先。
         missing = set()
         for row in sorted(original.values(), key=lambda item: item['level']):
-            if row['id'] not in seen and (row['parent_id'] in complete_ids or row['parent_id'] in missing):
+            if row['id'] not in seen and (row['parent_id'] in complete_ids or row['parent_id'] in missing
+                                         or any(row['full_path'].startswith(path) for path in renamed_roots)):
                 missing.add(row['id'])
                 if row['is_visible']:
                     changes = {'is_visible': False}

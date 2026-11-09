@@ -6,7 +6,6 @@ from urllib.parse import urlsplit
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request
 from ecommerce.infrastructure.storage import publish_categories as repository
-from ecommerce.modules.product.category_workbench import PILOT
 from ecommerce.modules.product.listing_profiles import PROFILES, support
 from ecommerce.shared.exceptions import TaskBusy
 
@@ -65,16 +64,22 @@ def index():
     tree = {}
     for row in rows:
         tree.setdefault(row['parent_id'], []).append(row)
+    for row in rows:
+        if not row['is_leaf']:
+            children = tree.get(row['id'], [])
+            row['children_status'] = ('有下级' if any(child['is_visible'] for child in children) else
+                                      '下级待重采' if children else '下级未采集')
     crumbs = []
     parts = branch.split(repository.SEPARATOR) if branch else []
     for length in range(1, len(parts) + 1):
         path = repository.SEPARATOR.join(parts[:length])
         if path in by_path:
             crumbs.append(by_path[path])
+    roots_checked, branch_checked = repository.last_confirmed_columns(current_app.config['SETTINGS'], branch)
     return render_template('publish_categories.html', active='publish-categories', roots=roots, tree=tree,
-        rows=selected[(page - 1) * 50:page * 50], scans=scans, branch=branch, pilot=PILOT,
+        rows=selected[(page - 1) * 50:page * 50], scans=scans, branch=branch,
         page=page, pages=pages, total=len(selected), current=current, crumbs=crumbs, history=history,
-        full=repository.has_complete_branch(current_app.config['SETTINGS'], PILOT),
+        roots_checked=roots_checked, branch_checked=branch_checked,
         query=query, selected_status=status, visibility=visibility,
         shop_name=current_app.config['SETTINGS'].shop_name)
 
@@ -86,13 +91,13 @@ def scan():
     if (not isinstance(scopes, list) or len(scopes) > 2 or
             any(not isinstance(path, str) or not path for path in scopes) or len(set(scopes)) != len(scopes)):
         raise ValueError('请选择有效采集范围')
-    rows, scans = _data()
-    known = {row['full_path'] for row in rows if not row['is_leaf']}
-    known.add(PILOT)
-    for entry in scans:
-        known.update(item['path'] for item in entry['result'].get('failed', []) if item['path'])
-    if (not scopes and not repository.has_complete_branch(current_app.config['SETTINGS'], PILOT)) or set(scopes) - known:
-        raise ValueError('请先完成宠物分支采集，再扩大采集范围')
+    if scopes:
+        rows, scans = _data()
+        known = {row['full_path'] for row in rows if not row['is_leaf']}
+        for entry in scans:
+            known.update(item['path'] for item in entry['result'].get('failed', []) if item['path'])
+        if set(scopes) - known:
+            raise ValueError('请先刷新一级类目，再选择要采集的分支')
     return jsonify(current_app.extensions['publish_categories'].start(scopes)), 202
 
 

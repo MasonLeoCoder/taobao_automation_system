@@ -14,9 +14,6 @@ from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
 from .listing_profiles import INITIAL_PROFILES
 
-PILOT = '宠物/宠物食品及用品'
-
-
 class CategoryWorkbench:
     def __init__(self, settings):
         self.settings = replace(settings.for_platform('qianniu'), headless=False)
@@ -80,6 +77,8 @@ class CategoryWorkbench:
                 raise
             if status == 'failed':
                 raise NeedsAttention('类目未能确认，请在采集记录查看原因')
+            if not scopes:
+                return '已刷新一级类目' if status == 'complete' else '一级类目已部分更新，请查看待核对项'
             return '已更新发布类目目录' if status == 'complete' else '部分分支已更新，请查看待重试或待核对项'
 
         try:
