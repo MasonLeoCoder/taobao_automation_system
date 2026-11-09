@@ -7,23 +7,30 @@
 <section class="listing-page" id="listing" data-api="{{ url_for('product_listing.preflight') }}" data-tasks="{{ url_for('pages.tasks') }}">
   <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">{% if use_catalog %}先选择已支持的千牛类目。{% endif %}选择商品文件夹，自检通过后填写商品。</p></header>
   <div class="ui-tool-card listing-card">
-    <h2>1. 导入商品资料</h2>
+    <div class="listing-import-heading">
+      <h2>1. 导入商品资料</h2>
+      <div class="listing-template-action">
+        <a id="listing-template-download" class="ui-button listing-template-button"{% if use_catalog %}
+          role="link" aria-disabled="true" aria-describedby="listing-template-note"{% else %}
+          href="{{ url_for('product_listing.download_template', category=category) }}"{% endif %}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>
+          </svg>
+          <span id="listing-template-label">{{ '下载 Excel 模板' if use_catalog else '下载粘毛器模板' }}</span>
+        </a>
+        {% if use_catalog %}<p id="listing-template-note" class="ui-form-note" aria-live="polite">先选择千牛类目</p>{% endif %}
+      </div>
+    </div>
     <form id="listing-import">
       <fieldset id="listing-import-fields">
         <div class="listing-fields">
           {% if use_catalog %}
-            <div>
             {% call ui.field('千牛类目') %}{% call ui.select_control({'id':'listing-category','name':'category','required':true,'data-searchable-select':'true','data-search-disabled':'true'}) %}
               <option value="">选择已支持的末级类目</option>
               {% for item in choices|sort(attribute='support') %}
                 <option value="{{ item.full_path }}" data-category-name="{{ item.name }}"{% if item.has_template %} data-template-url="{{ url_for('product_listing.download_template', category=item.full_path) }}"{% endif %} {% if item.support != '已支持' %}disabled{% endif %}>{{ item.full_path }} · {{ item.support }}</option>
               {% endfor %}
             {% endcall %}{% endcall %}
-            <p class="ui-form-note" aria-live="polite">
-              <span id="listing-template-note">选择已适配的类目后可下载产品信息模板。</span>
-              <a id="listing-template-download" hidden>下载产品信息模板</a>
-            </p>
-            </div>
           {% endif %}
           <div class="ui-field">
             <span class="ui-label">商品文件夹</span>
@@ -44,10 +51,7 @@
           </div>
           {% call ui.field('发品搜索词') %}{{ ui.input_control({'id':'listing-keyword','name':'keyword','value':'' if use_catalog else '粘毛器','required':true,'maxlength':120}) }}{% endcall %}
           {% if not use_catalog %}
-            <div>
-              {% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}
-              <p class="ui-form-note"><a href="{{ url_for('product_listing.download_template', category=category) }}">下载产品信息模板</a></p>
-            </div>
+            {% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}
           {% endif %}
           {% call ui.field('完整品牌名') %}{{ ui.input_control({'id':'listing-brand','name':'brand','value':'无品牌/无注册商标','required':true,'maxlength':120}) }}{% endcall %}
         </div>

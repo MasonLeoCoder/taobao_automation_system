@@ -376,12 +376,17 @@
     const link = node('template-download');
     const note = node('template-note');
     const url = selected?.dataset.templateUrl;
-    link.hidden = !url;
+    node('template-label').textContent = url ? `下载${selected.dataset.categoryName}模板` : '下载 Excel 模板';
     note.hidden = Boolean(url);
-    if (url) link.href = url;
-    else {
+    if (url) {
+      link.href = url;
+      link.removeAttribute('aria-disabled');
+      link.removeAttribute('aria-describedby');
+    } else {
       link.removeAttribute('href');
-      note.textContent = selected?.value ? '该类目的产品信息模板待适配。' : '选择已适配的类目后可下载产品信息模板。';
+      link.setAttribute('aria-disabled', 'true');
+      link.setAttribute('aria-describedby', note.id);
+      note.textContent = selected?.value ? '该类目的模板待适配' : '先选择千牛类目';
     }
   }
   if (node('category')) updateTemplateLink();
