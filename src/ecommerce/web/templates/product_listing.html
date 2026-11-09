@@ -16,7 +16,7 @@
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>
           </svg>
-          <span id="listing-template-label">{{ '下载 Excel 模板' if use_catalog else '下载粘毛器模板' }}</span>
+          <span id="listing-template-label">{{ '下载完整商品资料包' if use_catalog else '下载粘毛器资料包' }}</span>
         </a>
         {% if use_catalog %}<p id="listing-template-note" class="ui-form-note" aria-live="polite">先选择千牛类目</p>{% endif %}
       </div>
@@ -43,7 +43,7 @@
                 </span>
                 <span class="listing-folder-text">
                   <strong id="listing-folder-name">选择商品文件夹</strong>
-                  <small id="listing-folder-description" aria-live="polite">请选择包含产品信息表和素材的目录</small>
+                  <small id="listing-folder-description" aria-live="polite">请选择解压后包含产品信息表和素材的整个文件夹</small>
                 </span>
                 <span id="listing-folder-change" class="listing-folder-change" aria-hidden="true" hidden>更换文件夹</span>
               </span>
@@ -58,7 +58,8 @@
         {% if use_catalog and not choices|selectattr('support','equalto','已支持')|list %}
           <p class="ui-form-note">当前没有可选的上架类目。请先在<a href="{{ url_for('publish_categories.index') }}">发布类目管理</a>采集并核对类目。</p>
         {% endif %}
-        <p class="ui-form-note">文件夹可位于电脑任意位置。商品 Excel 和 1:1 主图必需，其余素材按需提供。</p>
+        <p class="ui-form-note">资料包解压后，填写 Excel、放入素材，再选择整个商品文件夹。商品 Excel 和 1:1 主图必需。</p>
+        <dl id="listing-recognized" class="listing-fields listing-recognized" aria-label="识别到的商品资料" hidden></dl>
         <div class="listing-fields" id="listing-mapping" hidden>
           {% for key,label in groups.items() %}
           <div data-material="{{ key }}" data-label="{{ label }}">

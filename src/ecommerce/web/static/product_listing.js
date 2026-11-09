@@ -7,6 +7,11 @@
   const token = document.querySelector('meta[name="workbench-token"]').content;
   const labels = Object.fromEntries([...node('mapping').querySelectorAll('[data-material]')].map(e => [e.dataset.material, e.dataset.label]));
   const aliases = {main:['1-1主图','1:1主图','1比1主图'], portrait:['3-4主图','3:4主图','3比4主图'], detail:['详情图'], sku:['sku图','sku图片']};
+  const knownFolders = new Set(Object.values(aliases).flat());
+  const folderAlias = path => path.split('/').at(-1).toLowerCase().replace(/\s/g,'');
+  const singleFile = role => role === 'excel' || role === 'video';
+  const isImage = file => /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name);
+  const groupFiles = path => dirs.get(path).filter(file => !/\.(xlsx|mp4)$/i.test(file.name));
   const active = ['queued','running','waiting'];
   const phases = {queued:'等待启动', running:'执行中', waiting:'等待人工处理', succeeded:'已完成', failed:'执行失败', cancelled:'已结束', interrupted:'执行中断', needs_attention:'需要人工核对'};
   let fileMap = new Map(), dirs = new Map(), id = null, timer, busy = false, sentPrompt, seenPrompt, currentPrompt;
@@ -326,12 +331,26 @@
     startError();
   }
 
+  function showRecognized() {
+    const summary = node('recognized');
+    summary.hidden = !fileMap.size;
+    summary.replaceChildren(...[...node('mapping').querySelectorAll('select')].map(select => {
+      const role = select.dataset.listingRole;
+      const path = select.value;
+      const value = !path ? '有多个候选，请选择' : path === '-' ? '未提供' :
+        singleFile(role) ? fileMap.get(path).name : `${groupFiles(path).filter(isImage).length} 张 · ${path.split('/').at(-1)}`;
+      const item = element('div');
+      item.append(element('dt',labels[role]), element('dd',value));
+      return item;
+    }));
+  }
+
   function chooseFolder() {
     resetReview();
     fileMap = new Map(); dirs = new Map();
     for (const file of node('folder').files) {
       const path = file.webkitRelativePath;
-      if (!path || /^(~\$|\.DS_Store$|Thumbs\.db$|desktop\.ini$)/i.test(file.name)) continue;
+      if (!path || /^(~\$|\.DS_Store$|Thumbs\.db$|desktop\.ini$|填写说明\.txt$)/i.test(file.name)) continue;
       fileMap.set(path,file);
       const dir = path.slice(0,path.lastIndexOf('/'));
       if (!dirs.has(dir)) dirs.set(dir,[]);
@@ -343,31 +362,39 @@
       const selected = Boolean(firstPath);
       folderName.textContent = selected ? firstPath.split('/')[0] : '选择商品文件夹';
       folderName.title = selected ? folderName.textContent : '';
-      node('folder-description').textContent = selected ? `已读取 ${fileMap.size} 个文件` : '请选择包含产品信息表和素材的目录';
+      node('folder-description').textContent = selected ? `已读取 ${fileMap.size} 个文件` : '请选择解压后包含产品信息表和素材的整个文件夹';
       node('folder-change').hidden = !selected;
       folderName.closest('.listing-folder-card').classList.toggle('is-selected',selected);
     }
     node('preflight').disabled = !fileMap.size || (node('category') && !node('category').value);
-    node('mapping').hidden = !fileMap.size;
     const mapping = node('mapping');
     mapping.dispatchEvent(new Event('ui:controls-remove',{bubbles:true}));
+    const customFolders = [...dirs.keys()].filter(path => !knownFolders.has(folderAlias(path)) &&
+      groupFiles(path).some(isImage));
     for (const box of mapping.querySelectorAll('[data-material]')) {
       const {material:role,label} = box.dataset;
       const previous = box.querySelector('select');
       const select = previous.cloneNode(false);
       select.classList.remove('ui-searchable-native');
       select.setAttribute('data-searchable-select','true'); select.setAttribute('aria-label',label);
-      const isFile = role === 'excel' || role === 'video';
-      const options = isFile ? [...fileMap.keys()].filter(path => path.toLowerCase().endsWith(role === 'excel' ? '.xlsx' : '.mp4')) : [...dirs.keys()];
+      const exact = singleFile(role)
+        ? [...fileMap.keys()].filter(path => path.toLowerCase().endsWith(role === 'excel' ? '.xlsx' : '.mp4'))
+        : [...dirs.keys()].filter(path => aliases[role].includes(folderAlias(path)) && groupFiles(path).length);
+      const options = !singleFile(role) && !exact.length ? customFolders : exact;
       select.add(new Option('请选择对应文件或子目录','')); select.add(new Option('未提供','-'));
       for (const value of options) select.add(new Option(value,value));
-      const exact = isFile ? options : options.filter(dir => aliases[role].includes(dir.split('/').at(-1).toLowerCase().replace(/\s/g,'')));
       select.value = exact.length === 1 ? exact[0] : exact.length > 1 ? '' : '-';
+      box.hidden = exact.length === 1 || !options.length;
       previous.replaceWith(select);
     }
+    mapping.hidden = !fileMap.size || !mapping.querySelector('[data-material]:not([hidden])');
     mapping.dispatchEvent(new Event('ui:controls-added',{bubbles:true}));
-    node('import-note').textContent = fileMap.size ? '已识别文件。目录名不同时，可以手动指定分组。' : '未读到文件，请重新选择商品文件夹。';
-    if (!node('preflight').disabled && [...mapping.querySelectorAll('select')].every(select => select.value !== '')) node('import').requestSubmit();
+    showRecognized();
+    const ambiguous = [...mapping.querySelectorAll('select')].some(select => !select.value);
+    node('import-note').textContent = !fileMap.size ? '未读到文件，请重新选择商品文件夹。' :
+      ambiguous ? '存在多个候选项，请先选择对应的文件或目录。' :
+        mapping.hidden ? '已识别商品资料。' : '目录名不同时，可以手动指定分组。';
+    if (!node('preflight').disabled && !ambiguous) node('import').requestSubmit();
   }
 
   node('folder').addEventListener('change',chooseFolder);
@@ -376,7 +403,7 @@
     const link = node('template-download');
     const note = node('template-note');
     const url = selected?.dataset.templateUrl;
-    node('template-label').textContent = url ? `下载${selected.dataset.categoryName}模板` : '下载 Excel 模板';
+    node('template-label').textContent = url ? `下载${selected.dataset.categoryName}资料包` : '下载完整商品资料包';
     note.hidden = Boolean(url);
     if (url) {
       link.href = url;
@@ -386,7 +413,7 @@
       link.removeAttribute('href');
       link.setAttribute('aria-disabled', 'true');
       link.setAttribute('aria-describedby', note.id);
-      note.textContent = selected?.value ? '该类目的模板待适配' : '先选择千牛类目';
+      note.textContent = selected?.value ? '该类目的资料包待适配' : '先选择千牛类目';
     }
   }
   if (node('category')) updateTemplateLink();
@@ -401,6 +428,7 @@
   node('manual-open').addEventListener('click',() => { if (currentPrompt && !node('manual-dialog').open) node('manual-dialog').showModal(); });
   node('log-older').addEventListener('click',() => loadLogs(true));
   node('import').addEventListener('change',event => {
+    if (event.target.matches('select[data-listing-role]')) showRecognized();
     if (event.target !== node('folder') && id && !busy) resetReview();
   });
   node('import').addEventListener('submit',async event => {
@@ -414,8 +442,8 @@
     for (const select of selections) {
       const role = select.dataset.listingRole, selection = select.value;
       if (selection === '-') continue;
-      if (role === 'excel' || role === 'video') form.append(role,fileMap.get(selection),fileMap.get(selection).name);
-      else for (const file of dirs.get(selection).filter(file => !/\.(xlsx|mp4)$/i.test(file.name))) form.append(role,file,file.name);
+      if (singleFile(role)) form.append(role,fileMap.get(selection),fileMap.get(selection).name);
+      else for (const file of groupFiles(selection)) form.append(role,file,file.name);
     }
     busy = true; resetReview(); node('import-fields').disabled = true;
     node('import-note').textContent = '正在导入资料并自检，尚未打开千牛…';

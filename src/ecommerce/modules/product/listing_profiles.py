@@ -4,6 +4,7 @@ from dataclasses import dataclass
 CATEGORY = '宠物/宠物食品及用品 > 猫/狗美容护理工具 > 粘毛器'
 GROUPS = {'excel': '商品 Excel', 'main': '1:1 主图', 'portrait': '3:4 主图',
           'detail': '详情图', 'sku': 'SKU 图', 'video': '视频'}
+MATERIAL_FOLDERS = {'main': '1-1主图', 'portrait': '3-4主图', 'sku': 'sku图', 'detail': '详情图'}
 ATTRIBUTES = ('适用场景', '适用宠物类型', '握柄形态', '粘面材质', '粘性强度')
 
 

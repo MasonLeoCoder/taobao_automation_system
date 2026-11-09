@@ -10,7 +10,7 @@ from ecommerce.modules.product.web_listing import ListingConflict, category_bind
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.modules.product.listing_profiles import LINT_ROLLER, support
-from ecommerce.modules.product.listing_templates import template_for
+from ecommerce.modules.product.listing_templates import build_material_bundle, template_for
 from ecommerce.modules.product.title_generation import TitleGeneration
 from ecommerce.shared.exceptions import TaskBusy
 
@@ -83,7 +83,7 @@ def index():
 
 @product_listing.get('/api/listing/template')
 def download_template():
-    """根据当前可用类目下载正式填写模板。"""
+    """根据当前可用类目下载商品资料包。"""
     settings = current_app.config['SETTINGS']
     categories = request.args.getlist('category')
     if len(categories) != 1 or not categories[0]:
@@ -95,9 +95,10 @@ def download_template():
         profile = LINT_ROLLER.key if category == CATEGORY else None
     template = template_for(profile, category)
     if not template:
-        abort(404, description='该类目的产品信息模板待适配')
-    return send_file(template, as_attachment=True, download_name=template.name,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', max_age=0)
+        abort(404, description='该类目的商品资料包待适配')
+    name = f'{category.rsplit(" > ", 1)[-1]}-商品资料包'
+    return send_file(build_material_bundle(template, name), as_attachment=True,
+                     download_name=f'{name}.zip', mimetype='application/zip', max_age=0)
 
 
 @product_listing.post('/api/listing/preflight')

@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 from PIL import Image
@@ -61,11 +62,17 @@ class WebListingTests(TestCase):
             'keyword': '粘毛器', 'brand': '无品牌/无注册商标', 'category': CATEGORY,
             'excel': (excel, '任意表名.xlsx'), 'main': images})
 
-    def test_download_template_examples_are_separate_and_filled_input_is_validated(self):
+    def test_download_bundle_and_validate_filled_template(self):
         response = self.client.get('/api/listing/template', query_string={'category': CATEGORY})
         self.assertEqual(response.status_code, 200)
         self.assertIn('attachment', response.headers['Content-Disposition'])
-        data = response.data
+        self.assertEqual(response.mimetype, 'application/zip')
+        with ZipFile(BytesIO(response.data)) as archive:
+            prefix = '粘毛器-商品资料包/'
+            self.assertEqual(set(archive.namelist()), {prefix, *(prefix + path for path in
+                ('1-1主图/', '3-4主图/', 'sku图/', '详情图/', '产品信息.xlsx', '填写说明.txt'))})
+            self.assertIn('商品视频.mp4', archive.read(prefix + '填写说明.txt').decode())
+            data = archive.read(prefix + '产品信息.xlsx')
         response.close()
         workbook = load_workbook(BytesIO(data))
         self.addCleanup(workbook.close)
@@ -99,6 +106,14 @@ class WebListingTests(TestCase):
         self.assertIn('模板与当前类目或版本不一致', submit_workbook().json['errors'][0])
         self.assertEqual(self.client.get('/api/listing/template', query_string={'category': '其他类目'}).status_code, 404)
         self.open_publish.assert_not_called()
+
+    def test_preflight_reports_missing_main_image_number(self):
+        (self.folder / '1-1主图' / '5.png').unlink()
+        result = self.preflight()
+        self.assertEqual(result.status_code, 422)
+        self.assertIn('1-1主图：需要 5 张，已找到 4 张', result.json['errors'][0])
+        self.assertIn('缺少编号 5', result.json['errors'][0])
+        self.assertTrue(any('视频：未提供，将跳过' in warning for warning in result.json['warnings']))
 
     def state(self, identifier, condition):
         """等待本机后台状态；参数：导入编号、判定；返回：对应任务快照。"""

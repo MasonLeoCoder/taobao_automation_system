@@ -60,6 +60,14 @@
 .listing-card [role=status] { white-space:pre-wrap; overflow-wrap:anywhere; }
 .listing-card dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 12px; }
 .listing-card dd { margin:0; overflow-wrap:anywhere; }
+.listing-card .listing-recognized {
+  grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr));
+  gap:8px 14px; margin:0; padding:10px 12px;
+  border:1px solid var(--control-border); border-radius:var(--control-radius);
+  background:var(--control-surface-soft);
+}
+.listing-recognized dt { font-weight:600; }
+.listing-recognized dd { color:var(--control-label); }
 .listing-page [hidden] { display:none !important; }
 .listing-log { display:grid; gap:8px; min-width:0; }
 .listing-log h3 { margin:0; }

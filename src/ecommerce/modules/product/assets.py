@@ -11,8 +11,12 @@ def load_main_images(directory: Path) -> list[Path]:
         raise ValueError(f"主图目录不存在：{directory}")
     files = [path for path in directory.iterdir() if path.is_file()
              and path.suffix.lower() in {".png", ".jpg", ".jpeg"}]
-    if len(files) != 5 or {path.stem for path in files} != {"1", "2", "3", "4", "5"}:
-        raise ValueError("1:1 主图必须恰好有五张，文件名为 1～5，支持 png/jpg/jpeg，不能重号")
+    expected = {"1", "2", "3", "4", "5"}
+    stems = {path.stem for path in files}
+    if len(files) != 5 or stems != expected:
+        missing = "、".join(sorted(expected - stems))
+        message = f"需要 5 张，已找到 {len(files)} 张。文件名须为 1～5，支持 PNG、JPG 和 JPEG，不能重号"
+        raise ValueError(f"{message}。缺少编号 {missing}" if missing else message)
     for path in files:
         if not 0 < path.stat().st_size <= 20 * 1024 * 1024:
             raise ValueError(f"主图为空或超过 20MB：{path.name}")
@@ -34,7 +38,7 @@ def load_portrait_images(directory: Path) -> list[Path]:
         or (len(numbered) == 4 and stems == {"1", "2", "3", "4"}
             and len(other) == 1 and not other[0].stem.isdecimal())
     ):
-        raise ValueError("3:4 主图必须为编号1～5，或编号1～4加唯一一张未编号图片")
+        raise ValueError(f"需要 5 张，已找到 {len(files)} 张。请使用编号 1～5，或编号 1～4 加一张未编号图片")
     for path in files:
         if not 0 < path.stat().st_size <= 20 * 1024 * 1024:
             raise ValueError(f"3:4 主图为空或超过20MB：{path.name}")

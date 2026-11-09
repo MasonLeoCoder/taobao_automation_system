@@ -2,13 +2,19 @@
 import os
 import logging
 from pathlib import Path
+import shutil
+import subprocess
 from tempfile import TemporaryDirectory
 import threading
 import time
 from types import SimpleNamespace
 from unittest import TestCase, skipUnless
 from unittest.mock import patch
+from zipfile import ZipFile
 
+from imageio_ffmpeg import get_ffmpeg_exe
+from openpyxl import load_workbook
+from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 from ecommerce.web.app import create_app
@@ -17,6 +23,71 @@ from tests.unit.test_web_listing import fixture_materials, fixture_settings
 
 @skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器验证')
 class WebListingBrowserTests(TestCase):
+    def test_download_bundle_and_recognize_complete_folder_before_preflight(self):
+        with TemporaryDirectory() as root, sync_playwright() as pw:
+            root = Path(root)
+            app = create_app(fixture_settings(root))
+            server = make_server('127.0.0.1', 0, app, threaded=True)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                browser = pw.chromium.launch()
+                page = browser.new_page(viewport={'width': 390, 'height': 840})
+                page.goto(f'http://127.0.0.1:{server.server_port}/plans/listing')
+                with page.expect_download() as downloaded:
+                    page.get_by_role('link', name='下载粘毛器资料包').click()
+                self.assertEqual(downloaded.value.suggested_filename, '粘毛器-商品资料包.zip')
+                with ZipFile(downloaded.value.path()) as archive:
+                    archive.extractall(root)
+                folder = root / '粘毛器-商品资料包'
+                book_path = folder / '产品信息.xlsx'
+                book = load_workbook(book_path)
+                try:
+                    for row in (2, 5, 6):
+                        for cell in book['填写示例'][row]:
+                            book['Sheet1'][cell.coordinate] = cell.value
+                    book.save(book_path)
+                finally:
+                    book.close()
+                image = Image.new('RGB', (24, 24), 'white')
+                for group, names in {
+                    '1-1主图': ('1','2','3','4','5'), '3-4主图': ('1','2','3','4','5'),
+                    '详情图': ('2','10'), 'sku图': ('短柄款',),
+                }.items():
+                    for name in names:
+                        image.save(folder / group / f'{name}.png')
+                video = folder / '商品视频.mp4'
+                subprocess.run([get_ffmpeg_exe(), '-nostdin', '-v', 'error', '-f', 'lavfi',
+                    '-i', 'color=c=white:s=32x32', '-frames:v', '1', '-c:v', 'mpeg4', str(video)],
+                    check=True, capture_output=True, timeout=15)
+
+                picker = page.locator('#listing-folder')
+                with patch('ecommerce.modules.product.web_listing.open_publish') as publish:
+                    picker.set_input_files(str(folder))
+                    summary = page.locator('#listing-recognized')
+                    for text in ('产品信息.xlsx', '5 张 · 1-1主图', '5 张 · 3-4主图',
+                                 '2 张 · 详情图', '1 张 · sku图', '商品视频.mp4'):
+                        expect(summary).to_contain_text(text)
+                    expect(page.locator('#listing-mapping')).to_be_hidden()
+                    expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
+                    expect(page.locator('#listing-issues')).to_contain_text('SKU 图 / 长柄款')
+
+                    shutil.copyfile(video, folder / '备选视频.mp4')
+                    picker.set_input_files(str(folder))
+                    expect(summary).to_contain_text('有多个候选，请选择')
+                    expect(page.locator('#listing-import-note')).to_contain_text('存在多个候选项')
+                    page.locator('[data-material="video"] .ss-trigger').click()
+                    page.get_by_role('option', name='粘毛器-商品资料包/商品视频.mp4', exact=True).click()
+                    expect(summary).to_contain_text('商品视频.mp4')
+                    page.get_by_role('button', name='导入并自检').click()
+                    expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
+                    publish.assert_not_called()
+                self.assertEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+                browser.close()
+            finally:
+                server.shutdown()
+                thread.join(5)
+
     def test_folder_preflight_only_fill_and_reload_during_wait(self):
         with TemporaryDirectory() as root, sync_playwright() as pw:
             folder = fixture_materials(Path(root))

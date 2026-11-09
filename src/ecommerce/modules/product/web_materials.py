@@ -14,7 +14,7 @@ from PIL import Image
 from ecommerce.infrastructure.tasks.ownership import atomic_json
 from .assets import load_detail_images, load_main_images, load_portrait_images, load_sku_images
 from .workbook import load_product_workbook
-from .listing_profiles import ATTRIBUTES, CATEGORY, GROUPS, LINT_ROLLER
+from .listing_profiles import ATTRIBUTES, CATEGORY, GROUPS, LINT_ROLLER, MATERIAL_FOLDERS
 from .listing_templates import validate_template
 from ecommerce.platforms.qianniu.product_shop_category import MAX_CATEGORIES
 
@@ -141,8 +141,12 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
             items = uploads.get(group, [])
             files[group] = []
             if not items:
-                (errors if group in profile.required_files else warnings).append(f'{label}：未提供')
-                if group not in profile.required_files:
+                if group in profile.required_files:
+                    location = MATERIAL_FOLDERS.get(group, '商品文件夹根目录')
+                    expected = '产品信息.xlsx' if group == 'excel' else '编号 1～5 的 5 张主图'
+                    errors.append(f'{label}：未提供，请在「{location}」放入{expected}')
+                else:
+                    warnings.append(f'{label}：未提供，将跳过')
                     skipped.append(group)
                 continue
             if group in {'excel', 'video'} and len(items) != 1:
@@ -196,7 +200,7 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                 try:
                     files[group] = [path.name for path in loader(directory)]
                 except ValueError as error:
-                    errors.append(f'{label}：{error}')
+                    errors.append(f'{label} / {MATERIAL_FOLDERS[group]}：{error}')
         if 'skus' in preview:
             names = [row['销售规格'] for row in preview['skus']]
             matched = load_sku_images(bundle / 'sku', names) if files['sku'] else None
