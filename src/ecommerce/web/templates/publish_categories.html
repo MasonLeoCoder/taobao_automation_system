@@ -8,7 +8,7 @@
     <details class="category-node" {% if branch == node.full_path or branch.startswith(node.full_path ~ ' > ') %}open{% endif %}>
       <summary class="category-node-line{% if branch == node.full_path %} is-current{% endif %}">
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg>
-        <a href="{{ url_for('publish_categories.index', branch=node.full_path) }}" {% if branch == node.full_path %}aria-current="location"{% endif %}>{{ node.name }}</a>
+        <a href="{{ url_for('publish_categories.index', branch=node.full_path) }}" data-category-path="{{ node.full_path }}" {% if branch == node.full_path %}aria-current="location"{% endif %}>{{ node.name }}</a>
       </summary>
       <div class="category-children">{{ branches(node.id) }}</div>
     </details>
@@ -63,10 +63,22 @@
     <div class="category-layout">
       <nav class="ui-tool-card category-tree" aria-label="类目树">
         <h2>类目树</h2>
-        <div class="category-tree-scroll">
+        <div id="category-tree-search" class="category-tree-search" hidden>
+          <div class="category-search-box">
+            <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="4.5"/><path d="m12 12 4 4"/></svg>
+            <input id="category-tree-query" type="search" placeholder="搜索类目" autocomplete="off"
+              aria-label="搜索类目树" aria-controls="category-tree-matches">
+            <button id="category-tree-clear" type="button" aria-label="清空类目搜索" title="清空搜索" hidden>
+              <svg aria-hidden="true" viewBox="0 0 20 20"><path d="m6 6 8 8m0-8-8 8"/></svg>
+            </button>
+          </div>
+          <p id="category-tree-search-status" role="status" hidden></p>
+        </div>
+        <div id="category-tree-branches" class="category-tree-scroll">
           <a class="category-tree-root{% if not branch %} is-current{% endif %}" href="{{ url_for('publish_categories.index') }}" {% if not branch %}aria-current="location"{% endif %}>全部类目</a>
           {{ branches(none) }}
         </div>
+        <ul id="category-tree-matches" class="category-tree-scroll category-tree-matches" aria-label="匹配的类目分支" hidden></ul>
       </nav>
       <div class="ui-tool-card category-results">
         <nav class="category-crumbs" aria-label="当前位置">

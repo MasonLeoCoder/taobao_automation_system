@@ -1,6 +1,79 @@
 (() => {
   const root = document.getElementById('publish-categories');
   if (!root) return;
+
+  const treeSearch = document.getElementById('category-tree-search');
+  if (treeSearch) {
+    const query = document.getElementById('category-tree-query');
+    const clear = document.getElementById('category-tree-clear');
+    const tree = document.getElementById('category-tree-branches');
+    const matches = document.getElementById('category-tree-matches');
+    const status = document.getElementById('category-tree-search-status');
+    const normalize = text => text.normalize('NFKC').toLowerCase().trim().replace(/\s*[>›]\s*/gu, ' > ');
+    const branches = [...tree.querySelectorAll('[data-category-path]')].map(link => {
+      const path = link.dataset.categoryPath;
+      const parts = path.split(' > ');
+      const name = parts.pop();
+      return {link, name, parents:parts.join(' › '), nameKey:normalize(name), pathKey:normalize(path)};
+    });
+
+    function filterTree() {
+      const keyword = normalize(query.value);
+      clear.hidden = !query.value;
+      tree.hidden = Boolean(keyword);
+      status.hidden = !keyword;
+      matches.replaceChildren();
+      if (!keyword) {
+        matches.hidden = true;
+        status.textContent = '';
+        return;
+      }
+      const byName = [], byPath = [];
+      for (const branch of branches) {
+        if (branch.nameKey.includes(keyword)) byName.push(branch);
+        else if (branch.pathKey.includes(keyword)) byPath.push(branch);
+      }
+      const results = [...byName, ...byPath];
+      const fragment = document.createDocumentFragment();
+      for (const {link, name, parents} of results) {
+        const item = document.createElement('li');
+        const result = link.cloneNode(false);
+        result.removeAttribute('data-category-path');
+        result.classList.add('category-tree-match');
+        const title = document.createElement('strong');
+        title.textContent = name;
+        result.append(title);
+        if (parents) {
+          const path = document.createElement('small');
+          path.textContent = parents;
+          result.append(path);
+        }
+        item.append(result);
+        fragment.append(item);
+      }
+      matches.append(fragment);
+      matches.hidden = !results.length;
+      matches.scrollTop = 0;
+      status.textContent = results.length ? `找到 ${results.length} 个类目` : '未找到匹配的类目';
+    }
+
+    function clearTreeSearch() {
+      query.value = '';
+      filterTree();
+      query.focus();
+    }
+    query.addEventListener('input', filterTree);
+    query.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && query.value && !event.isComposing) {
+        event.preventDefault();
+        clearTreeSearch();
+      }
+    });
+    clear.addEventListener('click', clearTreeSearch);
+    filterTree();
+    treeSearch.hidden = false;
+  }
+
   const token = document.querySelector('meta[name="workbench-token"]').content;
   const progress = document.getElementById('category-progress');
   const notice = document.getElementById('category-live');
