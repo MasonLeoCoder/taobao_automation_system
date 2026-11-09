@@ -19,7 +19,7 @@ class AttributeSelectionResult:
     fallback_reason: str | None
 
 
-def _select_attribute(page: Page, field_name: str, value: Any, *, require_match=False) -> AttributeSelectionResult:
+def _select_attribute(page: Page, field_name: str, value: Any, *, require_match=False, search_exact=False) -> AttributeSelectionResult:
     """共用属性选择；参数：页面、字段名称、Excel原值；返回：选择及回退原因。"""
     logger = getLogger(__name__)
     group = page.locator(ATTRIBUTE_GROUP).filter(has=page.get_by_title(field_name, exact=True))
@@ -31,7 +31,12 @@ def _select_attribute(page: Page, field_name: str, value: Any, *, require_match=
     popup = page.locator(OPTIONS_POPUP)
     expect(popup).to_have_count(1, timeout=WAIT_MS)
     search = popup.get_by_role("textbox")
-    if search.count() == 1 and search.input_value():
+    requested = value.strip() if isinstance(value, str) else ""
+    if search_exact:
+        expect(search).to_have_count(1, timeout=WAIT_MS)
+        page_step(lambda: search.fill(requested), description=f"搜索完整{field_name}名称")
+        expect(popup.get_by_text(requested, exact=True)).to_be_visible(timeout=WAIT_MS)
+    elif search.count() == 1 and search.input_value():
         page_step(lambda: search.fill(""))
     options = popup.locator(".options-item")
     # 该控件用自定义列表而不是role=option，读取实际显示名称，不自行拼接属性值。
@@ -39,7 +44,6 @@ def _select_attribute(page: Page, field_name: str, value: Any, *, require_match=
     names = [name.strip() for name in options.locator(".info-content").all_text_contents()]
     if not names or any(not name for name in names) or len(names) != options.count():
         raise NeedsAttention(f"{field_name}没有可核对的下拉选项，无法默认第一项")
-    requested = value.strip() if isinstance(value, str) else ""
     matches = [i for i, name in enumerate(names) if requested and name == requested]
     if require_match and requested and len(matches) != 1:
         raise NeedsAttention(f'「{field_name}」的模板值「{requested}」无法在当前千牛列表唯一匹配，请核对平台选项')
@@ -85,6 +89,34 @@ ApplicableSceneResult = AttributeSelectionResult
 def select_template_attribute(page: Page, field_name: str, value: Any) -> AttributeSelectionResult:
     """按模板值精确选择，留空沿用第一项规则。"""
     return _select_attribute(page, field_name, value, require_match=True)
+
+
+@qianniu_operation
+def select_editor_brand(page: Page, value: str) -> AttributeSelectionResult:
+    """在商品属性区的浮层搜索并选择完整品牌名称。"""
+    return _select_attribute(page, "品牌", value, require_match=True, search_exact=True)
+
+
+@qianniu_operation
+def fill_text_attribute(page: Page, field_name: str, value: str) -> AttributeSelectionResult:
+    """填写自由文本属性，核对平台保存到表单的值。"""
+    expected = value.strip()
+    group = page.locator(ATTRIBUTE_GROUP).filter(has=page.get_by_title(field_name, exact=True))
+    field = group.get_by_role("combobox")
+    expect(field).to_have_count(1, timeout=WAIT_MS)
+    if field.get_attribute("readonly") is not None:
+        raise NeedsAttention(f"「{field_name}」已不是可填写的文本框")
+    current = field.input_value()
+    if current and current != expected:
+        raise NeedsAttention(f"「{field_name}」已有不同内容，请在千牛核对")
+    if current != expected:
+        page_step(lambda: field.fill(expected, timeout=WAIT_MS))
+    page_step(lambda: field.press("Tab", timeout=WAIT_MS))
+    expect(field).to_have_value(expected, timeout=WAIT_MS)
+    errors = group.locator(".sell-component-info-wrapper-msg-content.error:visible")
+    if errors.count():
+        raise NeedsAttention(f"「{field_name}」未通过平台校验：" + "、".join(errors.all_text_contents()))
+    return AttributeSelectionResult(value, expected, None)
 
 
 @qianniu_operation

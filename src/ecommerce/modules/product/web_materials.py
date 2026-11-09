@@ -133,6 +133,8 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
     errors, warnings, skipped = [], [], []
     files, hashes, total = {}, {}, 0
     preview = {'keyword': keyword.strip(), 'category': category if binding else CATEGORY, 'brand': brand.strip()}
+    if not profile.allow_submit:
+        preview['allow_submit'] = False
     identifier = uuid4().hex
     with tempfile.TemporaryDirectory(dir=root, prefix='.import-') as temporary:
         bundle = Path(temporary) / 'bundle'
@@ -212,7 +214,7 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     warnings.append('SKU 图中未匹配的文件：' + '、'.join(sorted(unmatched)))
             preview['sku_images'] = {name: matched.files[name].name if matched and name in matched.files else None for name in names}
             for label, value in preview['attributes'].items():
-                if not value:
+                if not value and not profile.required_attributes:
                     warnings.append(f'Excel 未指定{label}；如果千牛使用默认项，入仓前需要人工核对')
             if not preview['guide']:
                 warnings.append(NO_GUIDE_WARNING)

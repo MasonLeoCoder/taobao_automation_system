@@ -267,6 +267,12 @@
     node('files').querySelector('dl').replaceChildren(...Object.entries(files).flatMap(([group,names]) => [element('dt',labels[group]),element('dd',names.join('、') || '未提供')]));
     renderSkus(data, preview);
     root.dispatchEvent(new CustomEvent('listing:review', {detail:task ? null : data.id}));
+    const submit = node('submit');
+    const canSubmit = submit.dataset.allowed === 'true' && preview.allow_submit !== false;
+    if (!canSubmit || submit.disabled) submit.checked = canSubmit;
+    submit.disabled = !canSubmit;
+    node('submit-note').hidden = preview.allow_submit !== false;
+    updateStartLabel();
     const validTitles = checkTitles();
     node('start').disabled = !data.id || !!task || busy || !validTitles;
     node('action').hidden = !!task;
@@ -420,7 +426,7 @@
   node('category')?.addEventListener('change',() => {
     const selected = node('category').selectedOptions[0];
     updateTemplateLink();
-    node('keyword').value = selected?.dataset.categoryName || '';
+    node('keyword').value = selected?.dataset.searchKeyword || '';
     node('preflight').disabled = !fileMap.size || !node('category').value;
     node('import-note').textContent = '类目已更换，请确认素材并重新自检。';
   });
@@ -455,9 +461,10 @@
     } catch (error) { node('import-note').textContent = error.message; }
     finally { busy = false; node('import-fields').disabled = false; }
   });
-  node('submit').addEventListener('change',() => {
+  function updateStartLabel() {
     node('start').textContent = node('submit').checked ? '开始填写并提交到仓库' : '仅填写';
-  });
+  }
+  node('submit').addEventListener('change',updateStartLabel);
   node('titles')?.addEventListener('input',() => {
     startError();
     node('start').disabled = !checkTitles() || !id || busy;

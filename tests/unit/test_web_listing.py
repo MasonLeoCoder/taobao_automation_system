@@ -12,7 +12,9 @@ from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 from PIL import Image
-from ecommerce.modules.product.web_materials import CATEGORY
+from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGORY
+from ecommerce.modules.product.listing_templates import template_for
+from ecommerce.modules.product.web_materials import CATEGORY, import_materials
 from ecommerce.shared.config import load_settings
 from ecommerce.web.app import create_app
 
@@ -114,6 +116,41 @@ class WebListingTests(TestCase):
         self.assertIn('1-1主图：需要 5 张，已找到 4 张', result.json['errors'][0])
         self.assertIn('缺少编号 5', result.json['errors'][0])
         self.assertTrue(any('视频：未提供，将跳过' in warning for warning in result.json['warnings']))
+
+    def test_backpack_combined_skus_and_required_text_are_fill_only(self):
+        workbench = self.app.extensions['product_listing']
+        binding = {'id': 12, 'platform_id': None, 'profile': BACKPACK.key}
+        book = load_workbook(template_for(BACKPACK.key, BACKPACK_CATEGORY))
+        self.addCleanup(book.close)
+        entry = book['Sheet1']
+        self.assertEqual(len(entry.data_validations.dataValidation), 4)
+        for row in (2, 5, 6):
+            for cell in book['填写示例'][row]:
+                entry[cell.coordinate] = cell.value
+
+        def check():
+            stream = BytesIO()
+            book.save(stream)
+            stream.seek(0)
+            images = [(path.name, BytesIO(path.read_bytes())) for path in (self.folder / '1-1主图').iterdir()]
+            return import_materials(workbench.root, {'excel': [('产品信息.xlsx', stream)], 'main': images},
+                                    keyword='宠物背包', category=BACKPACK_CATEGORY, brand='无品牌/无注册商标',
+                                    profile=BACKPACK, binding=binding)
+
+        entry['I2'] = None
+        self.assertIn('「适用品种」为必填', check()['errors'][0])
+        entry['I2'] = '猫' * 101
+        self.assertIn('最多 100 个字符', check()['errors'][0])
+        entry['I2'] = '英国短毛猫'
+        entry['J2'] = None
+        result = check()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual([row['销售规格'] for row in result['preview']['skus']], ['黑色 M 码', '灰色 L 码'])
+        self.assertFalse(result['preview']['allow_submit'])
+        response = self.client.post(f'/api/listing/{result["id"]}/start', headers=self.headers, json={'submit': True})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('只开放填写验收', response.json['error'])
+        self.open_publish.assert_not_called()
 
     def state(self, identifier, condition):
         """等待本机后台状态；参数：导入编号、判定；返回：对应任务快照。"""

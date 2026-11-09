@@ -129,6 +129,9 @@ class ListingWorkbench:
                 return self.snapshot(identifier)
             manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
             check_binding(self.settings, manifest)
+            binding = manifest.get('category_binding')
+            if submit and binding and not PROFILES[binding['profile']].allow_submit:
+                raise ValueError('该类目当前只开放填写验收')
             state = {'phase': 'queued', 'outcome': None, 'task_id': None, 'item_id': None,
                      'submit': submit, 'submit_attempted': False, 'prompt': None, 'evidence': None,
                      'message': '等待后台取得千牛会话', 'pid': os.getpid(),
@@ -331,7 +334,23 @@ class _ListingRun:
                     planned = self._sku_title(name) if label == 'SKU搜索标题' else self.preview['sku_images'].get(name)
                     if planned:
                         self.notes.append(f'SKU「{name}」{label}未按预检完成：{reason}')
-        self.sku_media = read_listing_fields(page)['sku_media']
+        if self.profile and self.profile.brand_in_editor:
+            actual = read_listing_fields(page, attribute_labels=(*self.profile.attributes, '品牌'))
+            expected_attributes = {**self.attributes, '品牌': self.preview['brand']}
+            for name, expected in expected_attributes.items():
+                if actual['attributes'].get(name) != expected:
+                    raise NeedsAttention(f'「{name}」回读与确认值不同，请核对千牛页面')
+            if any(actual[field] != self.preview[field] for field in ('price', 'code', 'skus')):
+                raise NeedsAttention('一口价、商家编码或 SKU 回读与确认资料不一致')
+            actual_images = {name: sources for name, _, sources in actual['sku_media']}
+            for name, image in self.preview['sku_images'].items():
+                if image and len([source for source in actual_images.get(name, []) if source]) < 2:
+                    raise NeedsAttention(f'SKU「{name}」的搜索主图或规格图片未核实')
+            getLogger(__name__).info('已回读核对品牌、商品属性、价格和商家编码，以及 %d 条 SKU 和匹配图片',
+                                     len(actual['skus']))
+        else:
+            actual = read_listing_fields(page)
+        self.sku_media = actual['sku_media']
         self.update(outcome='filled', notes=self.notes, message='已填写，尚未提交')
         if not self.state['submit']:
             self._wait('已填写，未提交。可在千牛检查，检查完点击「结束检查」。', ['finish'], page=page, kind='finish')

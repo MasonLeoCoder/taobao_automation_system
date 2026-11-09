@@ -62,7 +62,7 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
     if not drawer.count():
         page_step(lambda: group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS), completed=lambda: drawer.count() == 1)
     expect(drawer).to_have_count(1, timeout=WAIT_MS)
-    custom = drawer.get_by_role("radio", name="自定义填写规格", exact=True)
+    custom = drawer.get_by_role("radio", name=re.compile(r"^(?:单层展示\s*[·・]\s*)?自定义填写规格$"))
     if not custom.is_checked():
         # 防止切换模式时丢弃用户已填写的标准属性规格。
         standard_values = drawer.locator(".sale-props-value input").evaluate_all("els => els.map(e => e.value).filter(Boolean)")

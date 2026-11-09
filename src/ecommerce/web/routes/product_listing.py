@@ -9,7 +9,7 @@ from ecommerce.modules.product.web_materials import CATEGORY, GROUPS, LIMIT, MAX
 from ecommerce.modules.product.web_listing import ListingConflict, category_binding
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
-from ecommerce.modules.product.listing_profiles import LINT_ROLLER, support
+from ecommerce.modules.product.listing_profiles import LINT_ROLLER, PROFILES, support
 from ecommerce.modules.product.listing_templates import build_material_bundle, template_for
 from ecommerce.modules.product.title_generation import TitleGeneration
 from ecommerce.shared.exceptions import TaskBusy
@@ -74,7 +74,9 @@ def index():
             continue
         state = support(row)
         template = template_for(row['listing_profile_key'], row['full_path']) if state == '已支持' else None
-        choices.append(dict(row, support=state, has_template=bool(template)))
+        profile = PROFILES.get(row['listing_profile_key'])
+        choices.append(dict(row, support=state, has_template=bool(template),
+                            keyword=(profile.search_keyword if profile else None) or row['name']))
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
         use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify',
@@ -96,7 +98,7 @@ def download_template():
     template = template_for(profile, category)
     if not template:
         abort(404, description='该类目的商品资料包待适配')
-    name = f'{category.rsplit(" > ", 1)[-1]}-商品资料包'
+    name = f'{template.stem.removesuffix("-产品信息模板")}-商品资料包'
     return send_file(build_material_bundle(template, name), as_attachment=True,
                      download_name=f'{name}.zip', mimetype='application/zip', max_age=0)
 

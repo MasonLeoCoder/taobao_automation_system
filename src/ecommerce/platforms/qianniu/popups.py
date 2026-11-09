@@ -104,6 +104,7 @@ class PopupGuard:
     """由验证守卫统一调度，覆盖DOM弹窗、新标签页及原生确认框。"""
     NAVIGATION_OPERATIONS = {
         "product.click_product_nav", "product.click_publish_product", "product.select_brand_and_continue",
+        "product.continue_to_editor",
         "product_submit.submit_product_to_warehouse", "login.check_login", "login.login_with_qrcode",
     }
     NAVIGATION_HOSTS = {"myseller.taobao.com", "item.upload.taobao.com", "upload.taobao.com", "loginmyseller.taobao.com", "login.taobao.com"}

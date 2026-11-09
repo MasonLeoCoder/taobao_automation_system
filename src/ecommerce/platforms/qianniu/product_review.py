@@ -38,7 +38,7 @@ def read_listing_media(page, group):
 
 
 @qianniu_operation
-def read_listing_fields(page):
+def read_listing_fields(page, *, attribute_labels=ATTRIBUTES):
     """读取实际商品和SKU；参数：编辑页；返回：结构化当前值。"""
     def value(locator, label, *, optional=False, strip=True):
         """读取唯一文本框；参数：定位器、名称及可空标志；返回：当前值。"""
@@ -56,7 +56,7 @@ def read_listing_fields(page):
               ('price', FIXED_PRICE_GROUP, '一口价'), ('code', MERCHANT_CODE_GROUP, '商家编码'))}
     result['price'] = _number(result['price'])
     result['attributes'] = {}
-    for label in ATTRIBUTES:
+    for label in attribute_labels:
         group = page.locator(ATTRIBUTE_GROUP).filter(has=page.get_by_title(label, exact=True))
         field = group.get_by_role('combobox')
         if field.count() != 1:

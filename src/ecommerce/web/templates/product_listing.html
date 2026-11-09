@@ -28,7 +28,7 @@
             {% call ui.field('千牛类目') %}{% call ui.select_control({'id':'listing-category','name':'category','required':true,'data-searchable-select':'true','data-search-disabled':'true'}) %}
               <option value="">选择已支持的末级类目</option>
               {% for item in choices|sort(attribute='support') %}
-                <option value="{{ item.full_path }}" data-category-name="{{ item.name }}"{% if item.has_template %} data-template-url="{{ url_for('product_listing.download_template', category=item.full_path) }}"{% endif %} {% if item.support != '已支持' %}disabled{% endif %}>{{ item.full_path }} · {{ item.support }}</option>
+                <option value="{{ item.full_path }}" data-category-name="{{ item.name }}" data-search-keyword="{{ item.keyword }}"{% if item.has_template %} data-template-url="{{ url_for('product_listing.download_template', category=item.full_path) }}"{% endif %} {% if item.support != '已支持' %}disabled{% endif %}>{{ item.full_path }} · {{ item.support }}</option>
               {% endfor %}
             {% endcall %}{% endcall %}
           {% endif %}
@@ -160,7 +160,8 @@
       <table><caption>销售规格</caption><thead><tr><th scope="col">规格</th><th scope="col">价格</th><th scope="col">库存</th><th scope="col">SKU 编码</th><th scope="col">SKU 图</th></tr></thead><tbody></tbody></table>
     </div>
     <div id="listing-action" class="module-actions">
-      <label class="listing-choice">{{ ui.input_control({'id':'listing-submit','type':'checkbox','checked':can_submit,'disabled':not can_submit}) }} 填写完成后直接提交到仓库</label>
+      <label class="listing-choice">{{ ui.input_control({'id':'listing-submit','type':'checkbox','checked':can_submit,'disabled':not can_submit,'data-allowed':can_submit|lower}) }} 填写完成后直接提交到仓库</label>
+      <p id="listing-submit-note" class="ui-form-note" hidden>该类目当前只开放填写验收。</p>
       {{ ui.control_button('开始填写并提交到仓库' if can_submit else '仅填写',{'id':'listing-start','type':'button','disabled':true}) }}
     </div>
     <ul id="listing-title-errors" class="listing-title-errors" hidden aria-label="填写前需要修正的标题"></ul>

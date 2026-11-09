@@ -7,7 +7,7 @@ from ecommerce.modules.product.assets import load_main_images, load_portrait_ima
 from ecommerce.platforms.qianniu.product_images import upload_main_images, upload_portrait_images
 from ecommerce.modules.product.workbook import load_product_workbook
 from ecommerce.platforms.qianniu.product_attributes import select_applicable_scene, select_pet_type, select_handle_shape, select_adhesive_material, select_adhesion_strength
-from ecommerce.platforms.qianniu.product_attributes import select_template_attribute
+from ecommerce.platforms.qianniu.product_attributes import fill_text_attribute, select_editor_brand, select_template_attribute
 from ecommerce.platforms.qianniu.product_basic import fill_product_title, fill_guide_title, fill_fixed_price, fill_merchant_code, enable_multi_item_discount, select_warehouse_listing
 from ecommerce.platforms.qianniu.product_shop_category import select_shop_categories
 from ecommerce.platforms.qianniu.product_sku import create_sales_specifications, fill_sku_details
@@ -16,7 +16,7 @@ from ecommerce.platforms.qianniu.product_details import upload_detail_images
 from ecommerce.platforms.qianniu.product_submit import SubmissionResult, submit_product_to_warehouse, inspect_submission_result
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.modules.account.service import authenticate
-from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, click_start_button, search_publish_products, select_publish_category, select_brand_and_continue
+from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, click_start_button, continue_to_editor, search_publish_products, select_publish_category, select_brand_and_continue
 from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -170,6 +170,8 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
     verification = {'verification_handler': web_review.verification} if web_review else {}
+    profile = getattr(web_review, 'profile', None)
+    brand_in_editor = bool(profile and profile.brand_in_editor)
     with browser_session(settings, on_attention=on_attention, **verification) as (context, page):
         if web_review:
             web_review.progress('正在检查千牛登录状态')
@@ -182,11 +184,18 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         if start:
             click_start_button(page)
         if keyword is not None:
-            search_publish_products(page, keyword)
+            if brand_in_editor:
+                search_publish_products(page, keyword, expected_category=category)
+            else:
+                search_publish_products(page, keyword)
         if category is not None:
             select_publish_category(page, category)
         if brand is not None:
-            page = select_brand_and_continue(page, brand)
+            if brand_in_editor:
+                page = continue_to_editor(page)
+                select_editor_brand(page, brand)
+            else:
+                page = select_brand_and_continue(page, brand)
         if web_review:
             web_review.progress('填写主图、详情图和视频')
         if images is not None:
@@ -224,9 +233,15 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             handlers = {'适用场景': select_applicable_scene, '适用宠物类型': select_pet_type,
                         '握柄形态': select_handle_shape, '粘面材质': select_adhesive_material,
                         '粘性强度': select_adhesion_strength}
-            profile = getattr(web_review, 'profile', None)
             labels = profile.attributes if profile else handlers
-            if web_review and product_info.template is not None:
+            if brand_in_editor:
+                attributes = {}
+                for label in labels:
+                    value = product_info.fields.get(label)
+                    if isinstance(value, str) and value.strip():
+                        fill = fill_text_attribute if label in profile.text_limits else select_template_attribute
+                        attributes[label] = fill(page, label, value)
+            elif web_review and product_info.template is not None:
                 attributes = {label: select_template_attribute(page, label, product_info.fields.get(label))
                               for label in labels}
             else:

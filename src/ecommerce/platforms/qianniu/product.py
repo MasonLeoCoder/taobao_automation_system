@@ -30,6 +30,7 @@ START_BUTTON_SELECTORS = (
 SEARCH_INPUT_SELECTOR = "input[placeholder*='可输入产品名称']"
 BRAND_POPUP = ":is(.sell-o-select-popup-overlay, .next-select-popup)"
 BRAND_WAIT_MS = 30_000
+NEXT_BUTTON = re.compile(r"确认\s*[,，]\s*下一步")
 
 
 def _safe_location(page: Page) -> str:
@@ -89,29 +90,40 @@ def select_brand_and_continue(page: Page, brand: str) -> Page:
     expect(popup, "核对品牌下拉已收起").to_have_count(0, timeout=BRAND_WAIT_MS)
     expect(field, "核对已选品牌").to_have_value(brand, timeout=BRAND_WAIT_MS)
     get_logger(__name__).info("已选择品牌：%s", brand)
-    next_button = page.get_by_role("button", name=re.compile(r"确认\s*[,，]\s*下一步"))
+    return continue_to_editor(page)
+
+
+@qianniu_operation
+def continue_to_editor(page: Page) -> Page:
+    """确认当前已选的类目并进入商品编辑。"""
+    next_button = page.get_by_role("button", name=NEXT_BUTTON)
     next_page = _navigate(page.context, page, next_button)
     page_step(lambda: wait_for_page_ready(next_page))
     get_logger(__name__).info("已点击确认下一步，等待检查后续页面")
     return next_page
 
 
-@qianniu_operation
-def select_publish_category(page: Page, category: str) -> None:
-    """点击完整类目路径；参数：结果页、以 > 分隔的路径；返回：无。"""
+def _category_result(page, category):
     parts = [part.strip() for part in category.split(">")]
     if len(parts) < 2 or not all(parts):
         raise ValueError("请提供以 > 分隔的完整类目路径")
     # 按完整路径唯一匹配，避免同名末级类目或搜索排序变化导致误选。
     pattern = re.compile(r"^\s*" + r"\s*>?\s*".join(re.escape(part) for part in parts) + r"\s*$")
-    original_url = page.url
-    page_step(lambda: page.get_by_text(pattern).click(), completed=lambda: page.url != original_url)
-    page_step(lambda: wait_for_page_ready(page))
-    get_logger(__name__).info("已点击类目：%s", " > ".join(parts))
+    return page.get_by_text(pattern)
 
 
 @qianniu_operation
-def search_publish_products(page: Page, keyword: str) -> None:
+def select_publish_category(page: Page, category: str) -> None:
+    """点击完整类目路径；参数：结果页、以 > 分隔的路径；返回：无。"""
+    result = _category_result(page, category)
+    original_url = page.url
+    page_step(lambda: result.click(), completed=lambda: page.url != original_url)
+    page_step(lambda: wait_for_page_ready(page))
+    get_logger(__name__).info("已点击类目：%s", category)
+
+
+@qianniu_operation
+def search_publish_products(page: Page, keyword: str, *, expected_category=None) -> None:
     """搜索发品；参数：发布页面、非空关键词；返回：无，等待结果页出现。"""
     keyword = keyword.strip()
     if not keyword:
@@ -132,7 +144,8 @@ def search_publish_products(page: Page, keyword: str) -> None:
     page_step(lambda: page.get_by_role("button", name="搜索", exact=True).click(), completed=lambda: page.get_by_text("全部", exact=True).is_visible())
     # 初始类目选择页没有“全部”结果标签，等待搜索结果视图出现。
     page_step(lambda: page.get_by_text("全部", exact=True).wait_for(state="visible"))
-    page_step(lambda: page.get_by_text("我的商品", exact=True).first.wait_for(state="visible"))
+    result = _category_result(page, expected_category) if expected_category else page.get_by_text("我的商品", exact=True).first
+    page_step(lambda: result.wait_for(state="visible"))
     logger.info("发品搜索结果页已显示，等待下一步操作")
 
 
