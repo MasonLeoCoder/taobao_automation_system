@@ -88,14 +88,16 @@ def index():
 def scan():
     data = request.get_json()
     scopes = data.get('scopes') if isinstance(data, dict) else None
-    if (not isinstance(scopes, list) or len(scopes) > 2 or
-            any(not isinstance(path, str) or not path for path in scopes) or len(set(scopes)) != len(scopes)):
+    if not isinstance(scopes, list) or any(not isinstance(path, str) or not path for path in scopes):
         raise ValueError('请选择有效采集范围')
+    if len(scopes) > 1:
+        raise ValueError('一次只能采集一个分支，请分别启动采集')
     if scopes:
         rows, scans = _data()
         known = {row['full_path'] for row in rows if not row['is_leaf']}
         for entry in scans:
-            known.update(item['path'] for item in entry['result'].get('failed', []) if item['path'])
+            for item in entry['result'].get('failed', []):
+                known.update([item['path']] if item['path'] else entry['scopes'])
         if set(scopes) - known:
             raise ValueError('请先刷新一级类目，再选择要采集的分支')
     return jsonify(current_app.extensions['publish_categories'].start(scopes)), 202

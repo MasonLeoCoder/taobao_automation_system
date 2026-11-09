@@ -79,7 +79,7 @@
   const progress = document.getElementById('category-progress');
   const notice = document.getElementById('category-live');
   const resume = document.getElementById('category-resume');
-  const controls = root.querySelectorAll('#category-pair button,#category-full,[data-retry],[data-retry-scopes]');
+  const controls = root.querySelectorAll('#category-full,[data-retry],[data-retry-scopes]');
   let activeId = null;
   let prompt = null;
   let timer;
@@ -129,10 +129,6 @@
     }
   }
 
-  document.getElementById('category-pair')?.addEventListener('submit',event => {
-    event.preventDefault();
-    start([event.currentTarget.dataset.scope,document.getElementById('category-second').value]);
-  });
   const confirmation = document.getElementById('category-confirm');
   document.getElementById('category-full')?.addEventListener('click',() => {
     confirmation.returnValue = '';

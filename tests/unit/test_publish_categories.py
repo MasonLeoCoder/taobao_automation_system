@@ -6,10 +6,37 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import sqlalchemy as sa
+from flask import Flask
 
 from ecommerce.infrastructure.storage import publish_categories as repo
 from ecommerce.infrastructure.storage.mysql_migrations.schema_v27 import build_metadata, NEW_TABLES
 from ecommerce.platforms.qianniu import publish_categories as platform
+from ecommerce.web.routes.publish_categories import publish_categories
+
+
+class PublishCategoryRouteTests(TestCase):
+    def test_new_scans_allow_only_one_branch_and_legacy_failed_scopes_can_retry(self):
+        app = Flask(__name__)
+        app.config.update(SETTINGS=SimpleNamespace(collection_backend='mysql'), COLLECTION_TOKEN='token')
+        app.register_blueprint(publish_categories)
+        start = Mock(return_value={'phase': 'queued'})
+        app.extensions['publish_categories'] = SimpleNamespace(start=start)
+        client = app.test_client()
+        headers = {'X-Collection-Token': 'token'}
+
+        def submit(scopes):
+            return client.post('/api/publish-categories/scan', json={'scopes': scopes}, headers=headers)
+
+        rows = [{'full_path': '宠物', 'is_leaf': False}]
+        history = [{'scopes': ['宠物', '图书'], 'result': {'failed': [{'path': '', 'reason': '中断'}]}}]
+        with patch.object(repo, 'catalog', return_value=(rows, history)):
+            self.assertEqual(submit(['宠物', '图书']).status_code, 409)
+            start.assert_not_called()
+            self.assertEqual(submit([]).status_code, 202)
+            self.assertEqual(submit(['宠物']).status_code, 202)
+            self.assertEqual(submit(['图书']).status_code, 202)
+            self.assertEqual(submit(['未确认分支']).status_code, 409)
+        self.assertEqual([call.args[0] for call in start.call_args_list], [[], ['宠物'], ['图书']])
 
 
 class PublishCategoryScopeTests(TestCase):

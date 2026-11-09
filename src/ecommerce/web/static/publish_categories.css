@@ -98,10 +98,6 @@
 #publish-categories :is(.category-crumbs,.category-pages) a { padding: 0; margin: 0; }
 .category-section-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 #publish-categories .category-section-heading p { margin-top: 4px; }
-.category-pair { font-size: 13px; color: var(--category-accent); }
-.category-pair summary { cursor: pointer; }
-#category-pair { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
-#category-pair select { width: auto; max-width: 100%; }
 #publish-categories .category-filter {
   display: grid; grid-template-columns: minmax(120px,1fr) minmax(118px,auto) minmax(110px,auto) auto;
   align-items: center; gap: 8px; margin: 15px 0 12px; padding: 10px;

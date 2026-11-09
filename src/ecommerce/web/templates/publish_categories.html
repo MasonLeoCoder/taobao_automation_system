@@ -105,21 +105,6 @@
           {% if current and not current.is_leaf %}
           <div class="category-branch-actions">
             {{ ui.control_button('重采此分支',{'type':'button','data-retry':branch},'primary') }}
-            {% set other_roots = roots|selectattr('is_visible')|rejectattr('is_leaf')|rejectattr('full_path', 'equalto', branch)|list %}
-            {% if other_roots %}
-            <details class="category-pair">
-              <summary>同时采另一分支</summary>
-              <form id="category-pair" data-scope="{{ branch }}">
-                {% call ui.select_control({'id':'category-second','required':true},'另一一级类目') %}
-                <option value="">请选择一级类目</option>
-                {% for item in other_roots %}
-                  <option value="{{ item.full_path }}">{{ item.name }}</option>
-                {% endfor %}
-                {% endcall %}
-                {{ ui.control_button('采集两处分支',{'type':'submit'},'secondary') }}
-              </form>
-            </details>
-            {% endif %}
           </div>
           {% endif %}
         </div>
@@ -196,7 +181,9 @@
             {% if item.path %}
               {{ ui.control_button('重试此分支',{'type':'button','data-retry':item.path},'secondary') }}
             {% elif scan.scopes %}
-              <button type="button" class="ui-button ui-secondary" data-retry-scopes='{{ scan.scopes|tojson }}'>重试原范围</button>
+              {% for scope in scan.scopes %}
+                {{ ui.control_button('重试「' ~ scope ~ '」',{'type':'button','data-retry':scope},'secondary') }}
+              {% endfor %}
             {% else %}
               <button type="button" class="ui-button ui-secondary" data-retry-scopes='[]'>重试一级目录</button>
             {% endif %}
