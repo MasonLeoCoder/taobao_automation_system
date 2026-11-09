@@ -6,10 +6,11 @@ from urllib.parse import urlsplit
 from flask import Blueprint, abort, current_app, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 from ecommerce.modules.product.web_materials import CATEGORY, GROUPS, LIMIT, MAX_FILES
-from ecommerce.modules.product.web_listing import ListingConflict
+from ecommerce.modules.product.web_listing import ListingConflict, category_binding
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
-from ecommerce.modules.product.listing_profiles import support
+from ecommerce.modules.product.listing_profiles import LINT_ROLLER, support
+from ecommerce.modules.product.listing_templates import template_for
 from ecommerce.modules.product.title_generation import TitleGeneration
 from ecommerce.shared.exceptions import TaskBusy
 
@@ -67,11 +68,36 @@ def index():
     settings = current_app.config['SETTINGS']
     use_catalog = settings.collection_backend == 'mysql'
     rows = publish_categories.catalog(settings)[0] if use_catalog else []
-    choices = [dict(row, support=support(row)) for row in rows if row['is_visible'] and row['is_leaf']]
+    choices = []
+    for row in rows:
+        if not row['is_visible'] or not row['is_leaf']:
+            continue
+        state = support(row)
+        template = template_for(row['listing_profile_key'], row['full_path']) if state == '已支持' else None
+        choices.append(dict(row, support=state, has_template=bool(template)))
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
         use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify',
         title_generation_enabled=use_catalog)
+
+
+@product_listing.get('/api/listing/template')
+def download_template():
+    """根据当前可用类目下载正式填写模板。"""
+    settings = current_app.config['SETTINGS']
+    categories = request.args.getlist('category')
+    if len(categories) != 1 or not categories[0]:
+        abort(400, description='请选择千牛类目')
+    category = categories[0]
+    if settings.collection_backend == 'mysql':
+        profile = category_binding(settings, category)['profile']
+    else:
+        profile = LINT_ROLLER.key if category == CATEGORY else None
+    template = template_for(profile, category)
+    if not template:
+        abort(404, description='该类目的产品信息模板待适配')
+    return send_file(template, as_attachment=True, download_name=template.name,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', max_age=0)
 
 
 @product_listing.post('/api/listing/preflight')

@@ -371,8 +371,23 @@
   }
 
   node('folder').addEventListener('change',chooseFolder);
+  function updateTemplateLink() {
+    const selected = node('category').selectedOptions[0];
+    const link = node('template-download');
+    const note = node('template-note');
+    const url = selected?.dataset.templateUrl;
+    link.hidden = !url;
+    note.hidden = Boolean(url);
+    if (url) link.href = url;
+    else {
+      link.removeAttribute('href');
+      note.textContent = selected?.value ? '该类目的产品信息模板待适配。' : '选择已适配的类目后可下载产品信息模板。';
+    }
+  }
+  if (node('category')) updateTemplateLink();
   node('category')?.addEventListener('change',() => {
     const selected = node('category').selectedOptions[0];
+    updateTemplateLink();
     node('keyword').value = selected?.dataset.categoryName || '';
     node('preflight').disabled = !fileMap.size || !node('category').value;
     node('import-note').textContent = '类目已更换，请确认素材并重新自检。';

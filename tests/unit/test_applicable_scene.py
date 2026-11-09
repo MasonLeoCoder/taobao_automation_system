@@ -58,6 +58,13 @@ class ApplicableSceneTests(unittest.TestCase):
             attributes.select_applicable_scene(page,None)
         popup.get_by_role.return_value.fill.assert_called_once_with("")
 
+    def test_explicit_template_value_never_defaults_if_platform_option_changed(self):
+        page, _, _, chosen, _ = self.page(["地板"])
+        with patch.object(attributes, "expect"):
+            with self.assertRaisesRegex(NeedsAttention, "适用场景.*地毯"):
+                attributes.select_template_attribute(page, "适用场景", "地毯")
+        self.assertEqual(chosen, [])
+
     def test_no_options_or_click_failure_does_not_report_success(self):
         page,_,_,_,_ = self.page([])
         with patch.object(attributes,"expect"):

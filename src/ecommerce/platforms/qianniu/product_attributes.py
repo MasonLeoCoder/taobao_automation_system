@@ -19,7 +19,7 @@ class AttributeSelectionResult:
     fallback_reason: str | None
 
 
-def _select_attribute(page: Page, field_name: str, value: Any) -> AttributeSelectionResult:
+def _select_attribute(page: Page, field_name: str, value: Any, *, require_match=False) -> AttributeSelectionResult:
     """共用属性选择；参数：页面、字段名称、Excel原值；返回：选择及回退原因。"""
     logger = getLogger(__name__)
     group = page.locator(ATTRIBUTE_GROUP).filter(has=page.get_by_title(field_name, exact=True))
@@ -41,6 +41,8 @@ def _select_attribute(page: Page, field_name: str, value: Any) -> AttributeSelec
         raise NeedsAttention(f"{field_name}没有可核对的下拉选项，无法默认第一项")
     requested = value.strip() if isinstance(value, str) else ""
     matches = [i for i, name in enumerate(names) if requested and name == requested]
+    if require_match and requested and len(matches) != 1:
+        raise NeedsAttention(f'「{field_name}」的模板值「{requested}」无法在当前千牛列表唯一匹配，请核对平台选项')
     reason = None
     if len(matches) == 1:
         index = matches[0]
@@ -77,6 +79,12 @@ def _select_attribute(page: Page, field_name: str, value: Any) -> AttributeSelec
 
 # 保留已有场景结果导入方式，各属性字段共用同一结果结构。
 ApplicableSceneResult = AttributeSelectionResult
+
+
+@qianniu_operation
+def select_template_attribute(page: Page, field_name: str, value: Any) -> AttributeSelectionResult:
+    """按模板值精确选择，留空沿用第一项规则。"""
+    return _select_attribute(page, field_name, value, require_match=True)
 
 
 @qianniu_operation

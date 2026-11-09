@@ -32,6 +32,7 @@ class ProductWorkbook:
     sheet_name: str
     fields: dict[str, Any]
     skus: list[dict[str, Any]]
+    template: tuple[str, int] | None = None
 
     def text(self, field: str) -> str:
         """读取明确的文本字段；参数：列名；返回：去除首尾空白的非空文本。"""
@@ -47,7 +48,8 @@ class ProductWorkbook:
     def shop_categories(self) -> list[str]:
         """拆分分类单元格；支持分号、逗号、顿号或换行，去重并保留输入顺序。"""
         value = self.text("分类")
-        names = list(dict.fromkeys(part.strip() for part in re.split(r"[;；,，、\r\n]+", value) if part.strip()))
+        separators = r"[|;；,，、\r\n]+" if self.template is not None else r"[;；,，、\r\n]+"
+        names = list(dict.fromkeys(part.strip() for part in re.split(separators, value) if part.strip()))
         if not names:
             raise ValueError("商品表格“分类”列需要至少一个分类名称")
         return names
@@ -142,6 +144,8 @@ def load_product_workbook(path: Path, sheet_name: str = "Sheet1") -> ProductWork
         sku_headers = None
         skus = []
         for row in rows[2:]:
+            if not row:
+                continue
             if row[0].value == "销售规格":
                 if sku_headers is not None:
                     raise ValueError("销售规格表头出现多次，请核对固定格式")
@@ -149,6 +153,14 @@ def load_product_workbook(path: Path, sheet_name: str = "Sheet1") -> ProductWork
                 continue
             if sku_headers is not None and any(cell.value is not None for cell in row):
                 skus.append(_values(row, sku_headers))
-        return ProductWorkbook(path, sheet_name, fields, skus)
+        template = None
+        if '填写说明' in workbook.sheetnames:
+            metadata = next(workbook['填写说明'].iter_rows(max_row=1, max_col=4, values_only=True), ())
+            if metadata and metadata[0] == '模板类目':
+                _, category, version_label, version = metadata
+                if not isinstance(category, str) or version_label != '模板版本' or type(version) is not int:
+                    raise ValueError('产品信息模板标记不完整，请重新下载')
+                template = (category, version)
+        return ProductWorkbook(path, sheet_name, fields, skus, template)
     finally:
         workbook.close()

@@ -12,12 +12,18 @@
       <fieldset id="listing-import-fields">
         <div class="listing-fields">
           {% if use_catalog %}
+            <div>
             {% call ui.field('千牛类目') %}{% call ui.select_control({'id':'listing-category','name':'category','required':true,'data-searchable-select':'true','data-search-disabled':'true'}) %}
               <option value="">选择已支持的末级类目</option>
               {% for item in choices|sort(attribute='support') %}
-                <option value="{{ item.full_path }}" data-category-name="{{ item.name }}" {% if item.support != '已支持' %}disabled{% endif %}>{{ item.full_path }} · {{ item.support }}</option>
+                <option value="{{ item.full_path }}" data-category-name="{{ item.name }}"{% if item.has_template %} data-template-url="{{ url_for('product_listing.download_template', category=item.full_path) }}"{% endif %} {% if item.support != '已支持' %}disabled{% endif %}>{{ item.full_path }} · {{ item.support }}</option>
               {% endfor %}
             {% endcall %}{% endcall %}
+            <p class="ui-form-note" aria-live="polite">
+              <span id="listing-template-note">选择已适配的类目后可下载产品信息模板。</span>
+              <a id="listing-template-download" hidden>下载产品信息模板</a>
+            </p>
+            </div>
           {% endif %}
           <div class="ui-field">
             <span class="ui-label">商品文件夹</span>
@@ -37,7 +43,12 @@
             </label>
           </div>
           {% call ui.field('发品搜索词') %}{{ ui.input_control({'id':'listing-keyword','name':'keyword','value':'' if use_catalog else '粘毛器','required':true,'maxlength':120}) }}{% endcall %}
-          {% if not use_catalog %}{% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}{% endif %}
+          {% if not use_catalog %}
+            <div>
+              {% call ui.field('千牛类目') %}{{ ui.input_control({'name':'category','value':category,'readonly':true}) }}{% endcall %}
+              <p class="ui-form-note"><a href="{{ url_for('product_listing.download_template', category=category) }}">下载产品信息模板</a></p>
+            </div>
+          {% endif %}
           {% call ui.field('完整品牌名') %}{{ ui.input_control({'id':'listing-brand','name':'brand','value':'无品牌/无注册商标','required':true,'maxlength':120}) }}{% endcall %}
         </div>
         {% if use_catalog and not choices|selectattr('support','equalto','已支持')|list %}

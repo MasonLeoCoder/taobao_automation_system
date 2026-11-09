@@ -15,6 +15,8 @@ from ecommerce.infrastructure.tasks.ownership import atomic_json
 from .assets import load_detail_images, load_main_images, load_portrait_images, load_sku_images
 from .workbook import load_product_workbook
 from .listing_profiles import ATTRIBUTES, CATEGORY, GROUPS, LINT_ROLLER
+from .listing_templates import validate_template
+from ecommerce.platforms.qianniu.product_shop_category import MAX_CATEGORIES
 
 LIMIT = 512 * 1024**2
 MAX_FILES = 300
@@ -98,16 +100,20 @@ def validate_titles(title, guide):
     return {'title': title, 'guide': guide}
 
 
-def _book(path, profile=LINT_ROLLER):
+def _book(path, profile=LINT_ROLLER, category=CATEGORY):
     """预检固定表格并汇总字段；参数：Excel副本；返回：预览和可跳过项。"""
     with ZipFile(path) as archive:
         if sum(info.file_size for info in archive.infolist()) > 64 * 1024**2:
             raise ValueError('Excel 解压后超过 64 MB')
     book = load_product_workbook(path)
+    validate_template(book, profile, category)
     guide = book.fields.get('导购标题')
     titles = validate_titles(book.text('宝贝标题'), '' if guide is None else guide)
+    shop_categories = book.shop_categories()
+    if book.template is not None and len(shop_categories) > MAX_CATEGORIES:
+        raise ValueError(f'「分类」最多选择 {MAX_CATEGORIES} 项')
     return {**titles, 'code': book.text('商家编码'), 'price': book.fixed_price(),
-            'skus': book.sku_details(), 'shop_categories': book.shop_categories(),
+            'skus': book.sku_details(), 'shop_categories': shop_categories,
             'attributes': {key: str(book.fields.get(key) or '').strip() for key in profile.attributes}}
 
 
@@ -169,7 +175,7 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     if not size:
                         raise ValueError('文件为空')
                     if group == 'excel':
-                        preview.update(_book(path, profile))
+                        preview.update(_book(path, profile, preview['category']))
                     elif group == 'video':
                         _probe_video(path)
                     else:

@@ -7,6 +7,7 @@ from ecommerce.modules.product.assets import load_main_images, load_portrait_ima
 from ecommerce.platforms.qianniu.product_images import upload_main_images, upload_portrait_images
 from ecommerce.modules.product.workbook import load_product_workbook
 from ecommerce.platforms.qianniu.product_attributes import select_applicable_scene, select_pet_type, select_handle_shape, select_adhesive_material, select_adhesion_strength
+from ecommerce.platforms.qianniu.product_attributes import select_template_attribute
 from ecommerce.platforms.qianniu.product_basic import fill_product_title, fill_guide_title, fill_fixed_price, fill_merchant_code, enable_multi_item_discount, select_warehouse_listing
 from ecommerce.platforms.qianniu.product_shop_category import select_shop_categories
 from ecommerce.platforms.qianniu.product_sku import create_sales_specifications, fill_sku_details
@@ -224,8 +225,12 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                         '握柄形态': select_handle_shape, '粘面材质': select_adhesive_material,
                         '粘性强度': select_adhesion_strength}
             profile = getattr(web_review, 'profile', None)
-            attributes = {label: handlers[label](page, product_info.fields.get(label))
-                          for label in (profile.attributes if profile else handlers)}
+            labels = profile.attributes if profile else handlers
+            if web_review and product_info.template is not None:
+                attributes = {label: select_template_attribute(page, label, product_info.fields.get(label))
+                              for label in labels}
+            else:
+                attributes = {label: handlers[label](page, product_info.fields.get(label)) for label in labels}
             scene_result, pet_type_result, handle_shape_result, adhesive_material_result, adhesion_strength_result = (
                 attributes.get(label) for label in handlers)
             create_sales_specifications(page, sales_specifications)

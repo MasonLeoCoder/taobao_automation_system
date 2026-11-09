@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from PIL import Image
 from ecommerce.modules.product.web_materials import CATEGORY
 from ecommerce.shared.config import load_settings
@@ -51,13 +51,54 @@ class WebListingTests(TestCase):
         self.headers = {'X-Collection-Token': self.app.config['COLLECTION_TOKEN']}
         self.open_publish = self.enterContext(patch('ecommerce.modules.product.web_listing.open_publish'))
 
-    def preflight(self, *, bad_image=False):
+    def preflight(self, *, bad_image=False, excel=None):
         """走真实导入接口；参数：是否破坏图片内容；返回：HTTP响应。"""
         images = [(BytesIO(b'fake' if bad_image and p.stem == '2' else p.read_bytes()), p.name)
                   for p in sorted((self.folder / '1-1主图').iterdir())]
+        if excel is None:
+            excel = BytesIO((self.folder / '任意表名.xlsx').read_bytes())
         return self.client.post('/api/listing/preflight', headers=self.headers, data={
             'keyword': '粘毛器', 'brand': '无品牌/无注册商标', 'category': CATEGORY,
-            'excel': (BytesIO((self.folder / '任意表名.xlsx').read_bytes()), '任意表名.xlsx'), 'main': images})
+            'excel': (excel, '任意表名.xlsx'), 'main': images})
+
+    def test_download_template_examples_are_separate_and_filled_input_is_validated(self):
+        response = self.client.get('/api/listing/template', query_string={'category': CATEGORY})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('attachment', response.headers['Content-Disposition'])
+        data = response.data
+        response.close()
+        workbook = load_workbook(BytesIO(data))
+        self.addCleanup(workbook.close)
+        self.assertEqual(workbook.sheetnames, ['Sheet1', '填写示例', '属性选项', '填写说明'])
+        entry = workbook['Sheet1']
+        self.assertTrue(all(cell.value is None for cell in entry[2]))
+        self.assertEqual(len(entry.data_validations.dataValidation), 5)
+        empty = self.preflight(excel=BytesIO(data))
+        self.assertEqual(empty.status_code, 422)
+        example = workbook['填写示例']
+        for number in (2, 5, 6):
+            for cell in example[number]:
+                entry[cell.coordinate] = cell.value
+
+        def submit_workbook():
+            stream = BytesIO()
+            workbook.save(stream)
+            stream.seek(0)
+            return self.preflight(excel=stream)
+
+        result = submit_workbook()
+        self.assertEqual(result.status_code, 201, result.json)
+        self.assertEqual(result.json['preview']['shop_categories'], ['猫毛清洁', '家居清洁'])
+        self.assertEqual(len(result.json['preview']['skus']), 2)
+        entry['F2'] = '未知场景'
+        rejected = submit_workbook()
+        self.assertEqual(rejected.status_code, 422)
+        self.assertIn('「适用场景」的值「未知场景」', rejected.json['errors'][0])
+        entry['F2'] = '地毯'
+        workbook['填写说明']['D1'] = 99
+        self.assertIn('模板与当前类目或版本不一致', submit_workbook().json['errors'][0])
+        self.assertEqual(self.client.get('/api/listing/template', query_string={'category': '其他类目'}).status_code, 404)
+        self.open_publish.assert_not_called()
 
     def state(self, identifier, condition):
         """等待本机后台状态；参数：导入编号、判定；返回：对应任务快照。"""
