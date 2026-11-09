@@ -78,7 +78,14 @@
           <a class="category-tree-root{% if not branch %} is-current{% endif %}" href="{{ url_for('publish_categories.index') }}" {% if not branch %}aria-current="location"{% endif %}>全部类目</a>
           {{ branches(none) }}
         </div>
-        <ul id="category-tree-matches" class="category-tree-scroll category-tree-matches" aria-label="匹配的类目分支" hidden></ul>
+        <ul id="category-tree-matches" class="category-tree-scroll category-tree-matches" aria-label="匹配的类目" hidden></ul>
+        <template id="category-tree-leaves">
+          {% for siblings in tree.values() %}{% for node in siblings if node.is_leaf %}
+            {% set parent_path = node.full_path.rpartition(' > ')[0] %}
+            <a href="{{ url_for('publish_categories.index', branch=parent_path or none, q=node.full_path, _anchor='category-row-' ~ node.id) }}"
+              data-category-path="{{ node.full_path }}"></a>
+          {% endfor %}{% endfor %}
+        </template>
       </nav>
       <div class="ui-tool-card category-results">
         <nav class="category-crumbs" aria-label="当前位置">
@@ -136,7 +143,7 @@
         <div class="category-table"><table>
           <thead><tr><th scope="col">类目</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
           <tbody>{% for row in rows %}
-            <tr><td>
+            <tr id="category-row-{{ row.id }}"><td>
               {% if row.is_leaf %}<strong>{{ row.name }}</strong>
               {% else %}<a class="category-name" href="{{ url_for('publish_categories.index', branch=row.full_path) }}">{{ row.name }}</a>{% endif %}
               {% if query or selected_status or visibility %}<small class="category-path">{{ row.full_path }}</small>{% endif %}

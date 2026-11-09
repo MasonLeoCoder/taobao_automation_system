@@ -10,7 +10,8 @@
     const matches = document.getElementById('category-tree-matches');
     const status = document.getElementById('category-tree-search-status');
     const normalize = text => text.normalize('NFKC').toLowerCase().trim().replace(/\s*[>›]\s*/gu, ' > ');
-    const branches = [...tree.querySelectorAll('[data-category-path]')].map(link => {
+    const leafLinks = document.getElementById('category-tree-leaves')?.content.querySelectorAll('[data-category-path]') ?? [];
+    const categories = [...tree.querySelectorAll('[data-category-path]'), ...leafLinks].map(link => {
       const path = link.dataset.categoryPath;
       const parts = path.split(' > ');
       const name = parts.pop();
@@ -29,9 +30,9 @@
         return;
       }
       const byName = [], byPath = [];
-      for (const branch of branches) {
-        if (branch.nameKey.includes(keyword)) byName.push(branch);
-        else if (branch.pathKey.includes(keyword)) byPath.push(branch);
+      for (const category of categories) {
+        if (category.nameKey.includes(keyword)) byName.push(category);
+        else if (category.pathKey.includes(keyword)) byPath.push(category);
       }
       const results = [...byName, ...byPath];
       const fragment = document.createDocumentFragment();
