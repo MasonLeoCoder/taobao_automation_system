@@ -13,8 +13,8 @@ from xml.etree.ElementTree import ParseError
 from PIL import Image
 from ecommerce.infrastructure.tasks.ownership import atomic_json
 from .assets import load_detail_images, load_main_images, load_portrait_images, load_sku_images
-from .workbook import load_product_workbook
-from .listing_profiles import ATTRIBUTES, CATEGORY, GROUPS, LINT_ROLLER, MATERIAL_FOLDERS
+from .workbook import LAYERED_SKU, SKU_DIMENSIONS, load_product_workbook
+from .listing_profiles import ATTRIBUTES, BACKPACK, CATEGORY, GROUPS, LINT_ROLLER, MATERIAL_FOLDERS
 from .listing_templates import validate_template
 from ecommerce.platforms.qianniu.product_shop_category import MAX_CATEGORIES
 
@@ -66,7 +66,9 @@ def compact_title(value):
 
 def sku_specs(preview):
     """用封存资料的行序分配标识，定位千牛时仍使用原规格名。"""
-    return [{'sku_key': f'sku-{index}', 'name': row['销售规格']}
+    combinations = preview.get('sku_combinations', {})
+    return [{'sku_key': f'sku-{index}', 'name': row['销售规格'],
+             **dict(zip(SKU_DIMENSIONS, combinations.get(row['销售规格'], ())))}
             for index, row in enumerate(preview['skus'], 1)]
 
 
@@ -112,8 +114,12 @@ def _book(path, profile=LINT_ROLLER, category=CATEGORY):
     shop_categories = book.shop_categories()
     if book.template is not None and len(shop_categories) > MAX_CATEGORIES:
         raise ValueError(f'「分类」最多选择 {MAX_CATEGORIES} 项')
+    mode = book.sku_mode(layered_supported=profile.key == BACKPACK.key)
     return {**titles, 'code': book.text('商家编码'), 'price': book.fixed_price(),
             'skus': book.sku_details(), 'shop_categories': shop_categories,
+            **({'sku_mode': mode, 'sku_combinations': book.sku_combinations() if mode == LAYERED_SKU else {},
+                'sku_attributes': [[str(row.get(label) or '').strip() for label in SKU_DIMENSIONS] for row in book.skus]}
+               if profile.key == BACKPACK.key else {}),
             'attributes': {key: str(book.fields.get(key) or '').strip() for key in profile.attributes}}
 
 
@@ -205,10 +211,18 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     errors.append(f'{label} / {MATERIAL_FOLDERS[group]}：{error}')
         if 'skus' in preview:
             names = [row['销售规格'] for row in preview['skus']]
-            matched = load_sku_images(bundle / 'sku', names) if files['sku'] else None
+            codes = {row['销售规格']: row['商家编码'] for row in preview['skus']} if 'sku_mode' in preview else None
+            matched = load_sku_images(bundle / 'sku', names, codes=codes) if files['sku'] else None
             if matched:
+                by_name = {row['销售规格']: row['商家编码'] for row in preview['skus']}
                 for name, reason in matched.missing.items():
-                    warnings.append(f'SKU 图 / {name}：{reason.replace(str(bundle / "sku"), "SKU 图分组")}，将跳过')
+                    label = f'{name}（{by_name[name]}）' if codes is not None else name
+                    action = '，请整理冲突文件后重新自检' if codes is not None and (
+                        '不唯一' in reason or '多条 SKU' in reason) else '，将跳过'
+                    warnings.append(f'SKU 图 / {label}：{reason.replace(str(bundle / "sku"), "SKU 图分组")}{action}')
+                if codes is not None:
+                    preview['sku_image_issues'] = {name: reason.replace(str(bundle / 'sku'), 'SKU 图分组')
+                                                   for name, reason in matched.missing.items()}
                 unmatched = set(files['sku']) - {path.name for path in matched.files.values()}
                 if unmatched:
                     warnings.append('SKU 图中未匹配的文件：' + '、'.join(sorted(unmatched)))

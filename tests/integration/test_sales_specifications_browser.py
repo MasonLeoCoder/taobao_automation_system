@@ -2,7 +2,7 @@
 import os
 import unittest
 from playwright.sync_api import sync_playwright
-from ecommerce.platforms.qianniu.product_sku import create_sales_specifications
+from ecommerce.platforms.qianniu.product_sku import create_layered_specifications, create_sales_specifications, layered_sku_rows
 from ecommerce.platforms.qianniu.verification import VerificationGuard
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -60,6 +60,24 @@ class SalesSpecificationsBrowserTests(unittest.TestCase):
         self.context = self.browser.new_context()
         self.addCleanup(self.context.close)
         self.page = self.context.new_page()
+
+    def test_layered_rows_use_color_and_size_instead_of_row_order(self):
+        self.page.set_content("""
+          <div id="sell-field-sku"><table>
+            <thead><tr><th>颜色分类</th><th>适用尺码</th></tr></thead>
+            <tbody><tr class="sku-table-row" id="large"><td rowspan="2">黑色</td><td>L 码</td></tr>
+            <tr class="sku-table-row" id="medium"><td>M 码</td></tr></tbody>
+          </table></div>
+        """)
+        combinations = {"规格一": ("黑色", "M 码"), "规格二": ("黑色", "L 码")}
+        with VerificationGuard(self.context):
+            create_layered_specifications(self.page, combinations, on_manual=self.fail)
+        group = self.page.locator("#sell-field-sku")
+        rows = layered_sku_rows(group, combinations)
+        self.assertEqual(rows["规格一"].get_attribute("id"), "medium")
+        self.assertEqual(rows["规格二"].get_attribute("id"), "large")
+        with self.assertRaisesRegex(NeedsAttention, "多出：黑色 × L 码；缺少：灰色 × L 码"):
+            layered_sku_rows(group, {**combinations, "规格二": ("灰色", "L 码")})
 
     def test_variable_count_order_and_repeat_do_not_add_extra_rows(self):
         for names in (["单规格"], ["规格1", "规格10", "规格2"]):

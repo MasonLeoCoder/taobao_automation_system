@@ -7,7 +7,7 @@ from uuid import uuid4
 from playwright.sync_api import Page
 from ecommerce.modules.product.assets import SkuImageInputs
 from ecommerce.shared.exceptions import NeedsAttention
-from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES
+from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, layered_sku_rows
 from .verification import qianniu_operation, checkpoint, expect, page_step, choose_file_dialog, intercept_file_dialogs
 
 DRAWER = '.sku-component-sku-detail-drawer:visible'
@@ -150,14 +150,15 @@ def _core_values(row):
 
 
 @qianniu_operation
-def fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None) -> SkuMediaResult:
+def fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None, combinations=None) -> SkuMediaResult:
     """逐 SKU 填写图片和搜索标题，缺少专属标题时取导购标题。"""
     with intercept_file_dialogs(page):
         return _fill_sku_media(page, names, images, guide_title,
-                               **({'sku_titles': sku_titles} if sku_titles is not None else {}))
+                               **({'sku_titles': sku_titles} if sku_titles is not None else {}),
+                               **({'combinations': combinations} if combinations else {}))
 
 
-def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None) -> SkuMediaResult:
+def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None, combinations=None) -> SkuMediaResult:
     """执行逐SKU填写；参数及返回同公开入口；调用方负责全程接管文件选择请求。"""
     if not names or len(set(names)) != len(names) or any(not isinstance(name, str) or not name.strip() for name in names):
         raise ValueError('SKU补充信息需要非空、唯一的销售规格名称')
@@ -165,16 +166,19 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
     guide = guide_title.strip() if isinstance(guide_title, str) else ''
     titles = sku_titles or {}
     missing_title = 'Excel缺少导购标题或值为空' if sku_titles is None else 'SKU 搜索标题和导购标题均为空'
-    rows = page.locator(SKU_GROUP).locator(SKU_ROWS)
+    group = page.locator(SKU_GROUP)
+    rows = group.locator(SKU_ROWS)
+    image_fields = IMAGE_FIELDS[:1] if combinations else IMAGE_FIELDS
     for name in names:
         title = titles.get(name) or guide
         title_reason = None if title else missing_title
         if title and sum(1 if ord(char) < 128 else 2 for char in title) > 30:
             title_reason = 'SKU 搜索标题超过 30 字符限制'
         checkpoint(f'填写SKU图片及搜索标题：{name}')
-        matching = [rows.nth(i) for i in range(rows.count()) if rows.nth(i).locator(CREATED_NAMES).input_value() == name]
+        matching = [layered_sku_rows(group, combinations)[name]] if combinations else [
+            rows.nth(i) for i in range(rows.count()) if rows.nth(i).locator(CREATED_NAMES).input_value() == name]
         if len(matching) != 1:
-            for label in (*IMAGE_FIELDS, 'SKU搜索标题'):
+            for label in (*image_fields, 'SKU搜索标题'):
                 _skip(result, name, label, f'页面SKU行未唯一匹配，实际匹配{len(matching)}行')
             continue
         row = matching[0]
@@ -183,29 +187,43 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
         if file is not None and not file.is_file():
             file, reason = None, f'SKU图片已不存在：{file}'
         if file is None:
-            for label in IMAGE_FIELDS:
+            for label in image_fields:
                 _skip(result, name, label, reason)
         if title_reason:
             _skip(result, name, 'SKU搜索标题', title_reason)
         if file is None and title_reason:
             continue
         drawer = page.locator(DRAWER)
+        if combinations and drawer.count():
+            raise NeedsAttention('请先关闭已有的 SKU 详情面板，再核对分层规格')
         if not drawer.count():
             buttons = row.locator(TITLE).get_by_role('button')
             if buttons.count() != 1:
-                for label in (*IMAGE_FIELDS, 'SKU搜索标题'):
+                for label in (*image_fields, 'SKU搜索标题'):
                     if label not in result.skipped.get(name, {}):
                         _skip(result, name, label, '缺少唯一的SKU详情填写入口')
                 continue
             page_step(lambda: buttons.click(timeout=WAIT_MS), completed=lambda: drawer.count() == 1)
         expect(drawer).to_have_count(1, timeout=WAIT_MS)
-        if drawer.locator(CREATED_NAMES).input_value() != name:
+        if not combinations and drawer.locator(CREATED_NAMES).input_value() != name:
             raise NeedsAttention(f'已打开的SKU详情不是“{name}”，未填写或覆盖其他规格')
         original = _core_values(row)
         filled, selected = [], {}
         asset = None
         if file:
-            for label, selector, writer in [('SKU搜索主图', SEARCH_IMAGE, _fill_search_image), ('商品规格图片', SPEC_IMAGE, _fill_spec_image)]:
+            writers = [(IMAGE_FIELDS[0], SEARCH_IMAGE, _fill_search_image),
+                       (IMAGE_FIELDS[1], SPEC_IMAGE, _fill_spec_image)]
+            platform_name = name
+            if combinations:
+                writers = writers[:1]
+                name_field = drawer.locator(CREATED_NAMES)
+                platform_name = name_field.input_value() if name_field.count() == 1 else ''
+                def labels(pair):
+                    return {separator.join(pair) for separator in (' ', '/', ' / ', ' × ', '×', ';', '；')}
+                candidates = [sku for sku, pair in combinations.items() if platform_name in labels(pair)]
+                if candidates != [name]:
+                    raise NeedsAttention(f'SKU「{name}」的搜索主图入口无法唯一核对颜色和尺码')
+            for label, selector, writer in writers:
                 cell = drawer.locator(selector)
                 if cell.count() != 1:
                     _skip(result, name, label, '页面缺少唯一的图片填写区域')
@@ -213,7 +231,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                 if cell.locator('img').count():
                     _skip(result, name, label, '页面已有图片，未覆盖；请核对是否对应当前素材')
                     continue
-                asset = writer(page, drawer, name, file, asset) if label == 'SKU搜索主图' else writer(page, drawer, file, asset)
+                asset = writer(page, drawer, platform_name, file, asset) if label == 'SKU搜索主图' else writer(page, drawer, file, asset)
                 selected[selector] = asset
                 filled.append(label)
         if not title_reason:
@@ -235,6 +253,8 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
             raise NeedsAttention(f'SKU“{name}”详情有平台校验错误：' + '；'.join(errors.all_text_contents()))
         page_step(lambda: drawer.get_by_role('button', name='确定', exact=True).click(timeout=WAIT_MS), completed=lambda: drawer.count() == 0)
         expect(drawer).to_have_count(0, timeout=WAIT_MS)
+        if combinations:
+            row = layered_sku_rows(group, combinations)[name]
         if _core_values(row) != original:
             raise NeedsAttention(f'SKU“{name}”详情保存后原有规格、价格、数量或编码发生变化，请人工核对')
         for selector, uploaded in selected.items():

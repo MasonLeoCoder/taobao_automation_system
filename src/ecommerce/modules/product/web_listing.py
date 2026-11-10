@@ -20,7 +20,7 @@ from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from .service import open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
-from .web_materials import NO_GUIDE_WARNING, digest, import_materials, sku_specs, validate_sku_title, validate_titles
+from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
 from .listing_profiles import PROFILES, support
 
 _ID = re.compile('[0-9a-f]{32}')
@@ -321,11 +321,17 @@ class _ListingRun:
         self.media[group] = read_listing_media(page, group)
 
     def _sku_title(self, name):
-        return (self.sku_titles or {}).get(name) or self.preview['guide']
+        guide = self.preview['guide']
+        return (self.sku_titles or {}).get(name) or (compact_title(guide) if 'sku_mode' in self.preview else guide)
+
+    def specifications_wait(self, page, message):
+        self._wait(message, ['continue'], page=page)
 
     def _read_fields(self, page):
         if self.profile and self.profile.brand_in_editor:
-            return read_listing_fields(page, attribute_labels=(*self.profile.attributes, '品牌'))
+            combinations = self.preview.get('sku_combinations')
+            return read_listing_fields(page, attribute_labels=(*self.profile.attributes, '品牌'),
+                                       **({'sku_combinations': combinations} if combinations else {}))
         return read_listing_fields(page)
 
     def filled(self, page, categories, sku, attributes):
@@ -352,9 +358,10 @@ class _ListingRun:
             if any(actual[field] != self.preview[field] for field in ('price', 'code', 'skus')):
                 raise NeedsAttention('一口价、商家编码或 SKU 回读与确认资料不一致')
             actual_images = {name: sources for name, _, sources in actual['sku_media']}
+            image_count = 1 if self.preview.get('sku_combinations') else 2
             for name, image in self.preview['sku_images'].items():
-                if image and len([source for source in actual_images.get(name, []) if source]) < 2:
-                    raise NeedsAttention(f'SKU「{name}」的搜索主图或规格图片未核实')
+                if image and len([source for source in actual_images.get(name, []) if source]) < image_count:
+                    raise NeedsAttention(f'SKU「{name}」的图片未核实，请核对搜索主图及当前模式的图片入口')
             getLogger(__name__).info('已回读核对品牌、商品属性、价格和商家编码，以及 %d 条 SKU 和匹配图片',
                                      len(actual['skus']))
         self.sku_media = actual['sku_media']

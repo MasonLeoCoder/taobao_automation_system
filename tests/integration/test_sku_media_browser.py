@@ -81,6 +81,39 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertTrue(all(set(fields) == set(platform.IMAGE_FIELDS) for fields in repeated.skipped.values()))
         self.assert_core_unchanged()
 
+    def test_layered_same_color_keeps_search_images_and_titles_on_the_correct_size(self):
+        self.page.evaluate("""() => {
+            const table = document.querySelector('#sell-field-sku table');
+            table.createTHead().innerHTML = '<tr><th>颜色分类</th><th>适用尺码</th></tr>';
+            const original = rowOf;
+            rowOf = (record, index, detail) => {
+                const row = original(record, index, detail);
+                if (!detail) {
+                    for (const value of [record.size, '黑色']) {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.prepend(cell);
+                    }
+                }
+                return row;
+            };
+            seedRows(records.map((record, index) => {
+                const size = index ? 'M 码' : 'L 码';
+                return {...record, size, name:'黑色 ' + size};
+            }));
+        }""")
+        combinations = dict(zip(NAMES, [('黑色', 'M 码'), ('黑色', 'L 码')]))
+        titles = dict(zip(NAMES, ['黑色中号宠物背包', '黑色大号宠物背包']))
+        with self.guard():
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE,
+                                             sku_titles=titles, combinations=combinations)
+        self.assertEqual(result.skipped, {})
+        self.assertEqual(self.page.evaluate('uploadCount'), 2)
+        rows = self.page.evaluate('records')
+        self.assertEqual([(row['code'], row['title']) for row in rows], [('0002', titles[NAMES[1]]), ('0001', titles[NAMES[0]])])
+        self.assertNotEqual(rows[0]['search'], rows[1]['search'])
+        self.assertTrue(all(row.get('search') and not row.get('spec') for row in rows))
+
     def test_missing_one_image_still_fills_its_title_and_all_other_sku_fields(self):
         inputs = SkuImageInputs({NAMES[1]: self.images.files[NAMES[1]]}, {NAMES[0]: '未找到同名图片'})
         with self.guard(), self.assertLogs(platform.__name__, level='WARNING') as logs:

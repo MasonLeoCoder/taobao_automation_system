@@ -146,7 +146,7 @@
     }
   }
 
-  let skuOwner = null, skuDraft = {};
+  let skuOwner = null, skuDraft = {}, skuDraftContext = null;
 
   function saveSkuDraft() {
     try { if (skuOwner) sessionStorage.setItem('listing-sku-titles:' + skuOwner, JSON.stringify(skuDraft)); }
@@ -181,8 +181,9 @@
       const fallback = node(field.dataset.skuKey + '-fallback');
       const comparison = field.closest('td').querySelector('[data-sku-comparison]');
       fallback.hidden = Boolean(result.value) || Boolean(comparison && !comparison.hidden);
+      const fallbackTitle = skuDraftContext ? root.checkListingTitle('sku', guide.value).value : guide.value;
       fallback.textContent = guide.issue ? '请先修正正式导购标题' :
-        guide.value ? `将使用导购标题：${guide.value}` : '将跳过填写 SKU 搜索标题';
+        fallbackTitle ? `将使用导购标题：${fallbackTitle}` : '将跳过填写 SKU 搜索标题';
     }
     errors.replaceChildren(...entries);
     errors.hidden = !id || node('titles').disabled || !entries.length;
@@ -195,17 +196,42 @@
   }
 
   function renderSkus(data, preview) {
-    if (skuOwner !== data.id) {
+    const rows = preview.skus || [];
+    if (data.id && skuOwner !== data.id) {
+      const previous = skuDraftContext;
+      const context = preview.sku_mode ? {
+        product: JSON.stringify([preview.category, preview.brand, preview.code]),
+        keys: rows.map((row, index) => JSON.stringify([
+          row['商家编码'], row['销售规格'], preview.sku_attributes?.[index],
+        ])),
+      } : null;
+      const previousDraft = skuDraft;
       skuOwner = data.id;
+      skuDraftContext = context;
       skuDraft = {};
       try { if (skuOwner) skuDraft = JSON.parse(sessionStorage.getItem('listing-sku-titles:' + skuOwner)) || {}; }
       catch { /* 保留空草稿 */ }
+      if (!data.task && context && previous?.product === context.product) {
+        const drafts = new Map(previous.keys.map((key, index) => [key, previousDraft[`sku-${index + 1}`]]));
+        context.keys.forEach((key, index) => {
+          const target = `sku-${index + 1}`, draft = drafts.get(key);
+          if (!skuDraft[target] && draft) skuDraft[target] = {...draft, carried:true};
+        });
+        saveSkuDraft();
+      }
     }
-    const rows = preview.skus || [];
     node('skus').hidden = !rows.length;
+    node('skus').querySelector('caption').textContent = preview.sku_mode
+      ? '销售规格 · ' + preview.sku_mode : '销售规格';
     node('skus').querySelector('tbody').replaceChildren(...rows.map((row, index) => {
       const tr = element('tr'), name = row['销售规格'], spec = element('td');
       spec.append(element('strong', name));
+      const combination = preview.sku_combinations?.[name];
+      if (combination) {
+        const values = element('small', `颜色 ${combination[0]} · 尺码 ${combination[1]}`);
+        values.className = 'listing-sku-title-label';
+        spec.append(values);
+      }
       if (data.id) {
         const key = `sku-${index + 1}`;
         const field = element('input'), count = element('small'), fallback = element('small');
@@ -227,6 +253,12 @@
         label.className = 'listing-sku-title-label';
         spec.append(label, field, count, fallback);
         if (!data.task) {
+          const draft = skuDraft[key];
+          if (draft?.carried && draft.original) {
+            const original = element('small', '上次导入的 AI 原稿 · ' + draft.original);
+            original.className = 'listing-sku-title-label';
+            spec.append(original);
+          }
           const comparison = element('div');
           comparison.dataset.skuComparison = key;
           comparison.className = 'listing-sku-comparison';
@@ -235,7 +267,7 @@
         }
       }
       tr.append(spec, ...['价格','数量','商家编码'].map(key => element('td',row[key])),
-        element('td',preview.sku_images?.[name] || '未匹配'));
+        element('td',preview.sku_images?.[name] || preview.sku_image_issues?.[name] || '未匹配'));
       return tr;
     }));
   }
@@ -472,7 +504,7 @@
   node('skus').addEventListener('input', event => {
     const field = event.target;
     if (!field.dataset.skuKey) return;
-    skuDraft[field.dataset.skuKey] = {title:field.value, manual:true};
+    skuDraft[field.dataset.skuKey] = {...skuDraft[field.dataset.skuKey], title:field.value, manual:true};
     saveSkuDraft();
     startError();
     node('start').disabled = !checkTitles() || !id || busy;
@@ -484,12 +516,15 @@
       const byKey = new Map(rows.map(row => [row.sku_key, row.raw_title ?? row.title ?? '']));
       for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
         const key = field.dataset.skuKey, draft = skuDraft[key];
-        if (draft && (draft.manual !== false || draft.attempt === attempt)) continue;
+        if (draft && (draft.manual !== false || draft.attempt === attempt)) {
+          if (byKey.has(key)) skuDraft[key] = {...draft, original:byKey.get(key)};
+          continue;
+        }
         const manual = typeof previousEdits?.[key] === 'string';
         const raw = manual ? previousEdits[key] : byKey.get(key) ?? '';
         const title = root.checkListingTitle('sku', raw).value;
         field.value = title;
-        skuDraft[key] = {title, attempt, manual};
+        skuDraft[key] = {title, attempt, manual, original:byKey.get(key)};
       }
       saveSkuDraft();
     }

@@ -1,6 +1,7 @@
 """千牛自定义销售规格创建、SKU明细填写及回读核对。"""
 import re
 from decimal import Decimal, InvalidOperation
+from collections import Counter
 from logging import getLogger
 from playwright.sync_api import Page
 from ecommerce.shared.exceptions import NeedsAttention
@@ -14,6 +15,7 @@ SKU_ROWS = "tr.sku-table-row"
 DETAIL_CELLS = {"价格": "td[id$='-skuPrice']", "数量": "td[id$='-skuStock']", "商家编码": "td[id$='-skuOuterId']"}
 CATEGORY_CELL = "td[id$='-skuQuality']"
 CATEGORY_POPUP = ".sell-o-select-popup-overlay:visible"
+LAYERED_DIMENSIONS = ("颜色分类", "适用尺码")
 
 
 def _values(fields) -> list[str]:
@@ -62,7 +64,7 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
     if not drawer.count():
         page_step(lambda: group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS), completed=lambda: drawer.count() == 1)
     expect(drawer).to_have_count(1, timeout=WAIT_MS)
-    custom = drawer.get_by_role("radio", name=re.compile(r"^(?:单层展示\s*[·・]\s*)?自定义填写规格$"))
+    custom = drawer.get_by_role("radio", name=re.compile(r"^(?:单层展示\s*[:：·・]?\s*)?自定义填写规格$"))
     if not custom.is_checked():
         # 防止切换模式时丢弃用户已填写的标准属性规格。
         standard_values = drawer.locator(".sale-props-value input").evaluate_all("els => els.map(e => e.value).filter(Boolean)")
@@ -100,6 +102,119 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
     _verify_created(group, names)
     logger.info("销售规格创建完成并核对数量、顺序：共%d项，实际规格=%r", len(names), names)
     return names
+
+
+def layered_sku_rows(group, combinations):
+    """按表头读取组合，兼容同色行合并。核对通过后才返回 Excel 规格到行的映射。"""
+    rows = group.locator(SKU_ROWS)
+    actual = rows.evaluate_all("""(rows, labels) => {
+        const table = rows[0]?.closest('table');
+        if (!table || !rows.every(row => row.closest('table') === table)) return [];
+        const headers = Array.from(table.tHead?.rows || []);
+        const indexes = labels.map(label => {
+            const matches = headers.flatMap(row => Array.from(row.cells))
+                .filter(cell => cell.textContent.trim() === label && cell.colSpan === 1);
+            return matches.length === 1 ? matches[0].cellIndex : -1;
+        });
+        if (indexes.some(index => index < 0) || new Set(indexes).size !== labels.length) return [];
+        const carried = new Map();
+        return rows.map(row => {
+            const grid = new Map(carried);
+            for (const [index, entry] of carried) {
+                if (--entry.remaining === 0) carried.delete(index);
+            }
+            let column = 0;
+            for (const cell of row.cells) {
+                while (grid.has(column)) column++;
+                const entry = {value: cell.innerText.trim(), remaining: cell.rowSpan - 1};
+                for (let offset = 0; offset < cell.colSpan; offset++) {
+                    grid.set(column, entry);
+                    if (entry.remaining > 0) carried.set(column, entry);
+                    column++;
+                }
+            }
+            return indexes.map(index => grid.get(index)?.value || '');
+        });
+    }""", list(LAYERED_DIMENSIONS))
+    if not actual or any(not all(values) for values in actual):
+        raise NeedsAttention("无法通过千牛表头逐条核对颜色和尺码，请确认已选分层展示并且规格表完整")
+    pairs = [tuple(values) for values in actual]
+    expected = {tuple(values): name for name, values in combinations.items()}
+    unexpected = dict.fromkeys(pair for pair in pairs if pair not in expected)
+    missing = [pair for pair in expected if pair not in pairs]
+    duplicates = [pair for pair, count in Counter(pairs).items() if count > 1]
+    if unexpected or missing or duplicates:
+        issues = [label + "：" + "、".join(" × ".join(pair) for pair in values)
+                  for label, values in (("多出", unexpected), ("缺少", missing), ("重复", duplicates)) if values]
+        raise NeedsAttention("千牛分层 SKU 与 Excel 不一致。" + "；".join(issues))
+    return {expected[pair]: rows.nth(index) for index, pair in enumerate(pairs)}
+
+
+def _fill_layered_dimensions(drawer, combinations):
+    """仅填写可唯一识别的标准属性输入框，其余页面结构交给人工确认。"""
+    sections = []
+    for index, label in enumerate(LAYERED_DIMENSIONS):
+        heading = drawer.locator(".props-label").filter(has_text=re.compile(rf"^{label}\s*(?:[（(]\d+[）)])?$"))
+        section = drawer.locator(".sale-props-value").filter(has=heading)
+        if section.count() != 1:
+            return False
+        fields = section.locator('input:not([type="checkbox"]):not([type="hidden"]):not([readonly]):not([placeholder*="备注"]):visible')
+        values = list(dict.fromkeys(pair[index] for pair in combinations.values()))
+        existing = _values(fields)
+        add = section.locator("button.add:visible")
+        if not existing or len(existing) > len(values) or any(
+            value and value != values[position] for position, value in enumerate(existing)
+        ) or (len(existing) < len(values) and add.count() != 1):
+            return False
+        sections.append((fields, add, values))
+    for fields, add, values in sections:
+        for index, value in enumerate(values):
+            checkpoint(f"填写分层规格属性：{value}")
+            if fields.count() == index:
+                if not add.is_enabled():
+                    return False
+                page_step(lambda: add.click(timeout=WAIT_MS), completed=lambda: fields.count() == index + 1)
+                if fields.count() != index + 1:
+                    return False
+            field = fields.nth(index)
+            if field.input_value() != value:
+                page_step(lambda: field.fill(value, timeout=WAIT_MS))
+                page_step(lambda: field.press("Tab", timeout=WAIT_MS))
+            if field.input_value() != value:
+                return False
+            _check_drawer_errors(drawer)
+        if _values(fields) != values:
+            return False
+    return True
+
+
+@qianniu_operation
+def create_layered_specifications(page, combinations, *, on_manual):
+    """切到分层展示，待标准属性明确后核对平台实际生成的组合。"""
+    group = page.locator(SKU_GROUP)
+    drawer = page.locator(DRAWER)
+    expect(group).to_be_visible(timeout=WAIT_MS)
+    if not group.locator(SKU_ROWS).count() and not drawer.count():
+        page_step(lambda: group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS),
+                  completed=lambda: drawer.count() == 1)
+    if drawer.count() == 1:
+        layered = drawer.get_by_role("radio", name=re.compile(r"分层展示|选择标准属性构建规格"))
+        custom_values = drawer.get_by_placeholder("输入规格", exact=True)
+        if layered.count() == 1 and not layered.is_checked() and not any(_values(custom_values)):
+            page_step(lambda: layered.check(timeout=WAIT_MS), completed=layered.is_checked)
+        confirm = drawer.get_by_role("button", name="确认创建", exact=True)
+        if (layered.count() == 1 and layered.is_checked() and confirm.count() == 1
+                and _fill_layered_dimensions(drawer, combinations) and confirm.is_enabled()):
+            _check_drawer_errors(drawer)
+            page_step(lambda: confirm.click(timeout=WAIT_MS), completed=lambda: drawer.count() == 0)
+    if drawer.count() or not group.locator(SKU_ROWS).count():
+        specifications = "；".join(
+            f"{label}：{'、'.join(dict.fromkeys(pair[index] for pair in combinations.values()))}"
+            for index, label in enumerate(LAYERED_DIMENSIONS))
+        on_manual(f"请在千牛的分层展示中确认标准属性并创建规格。{specifications}。创建后点击「完成」，系统会逐条核对组合。")
+    if drawer.count():
+        raise NeedsAttention("规格设置面板仍打开，请确认已创建分层规格")
+    layered_sku_rows(group, combinations)
 
 
 def _numeric_pattern(value: str) -> re.Pattern:
@@ -146,9 +261,10 @@ def _select_sku_category(page: Page, row, category: str, name: str) -> None:
     expect(label).to_have_attribute("title", category, timeout=WAIT_MS)
 
 
-def _verify_sku_detail(row, detail: dict[str, str], category: str) -> None:
+def _verify_sku_detail(row, detail: dict[str, str], category: str, *, layered=False) -> None:
     """核对整行SKU；参数：规格行、预期明细、分类；返回：全部字段一致后返回。"""
-    expect(row.locator(CREATED_NAMES)).to_have_value(detail["销售规格"], timeout=WAIT_MS)
+    if not layered:
+        expect(row.locator(CREATED_NAMES)).to_have_value(detail["销售规格"], timeout=WAIT_MS)
     for key, selector in DETAIL_CELLS.items():
         expected = detail[key] if key == "商家编码" else _numeric_pattern(detail[key])
         expect(row.locator(selector).get_by_role("textbox")).to_have_value(expected, timeout=WAIT_MS)
@@ -159,7 +275,7 @@ def _verify_sku_detail(row, detail: dict[str, str], category: str) -> None:
 
 
 @qianniu_operation
-def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str = "单品") -> list[dict[str, str]]:
+def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str = "单品", combinations=None) -> list[dict[str, str]]:
     """填写SKU明细；参数：商品页、已校验的Excel明细、默认分类；返回：按规格匹配并核对的明细。"""
     if not details or not isinstance(category, str) or not category.strip():
         raise ValueError("SKU明细及分类不能为空")
@@ -176,18 +292,23 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
     expect(group).to_be_visible(timeout=WAIT_MS)
     rows = group.locator(SKU_ROWS)
     expect(rows.first).to_be_visible(timeout=WAIT_MS)
-    actual_names = []
-    for index in range(rows.count()):
-        name_field = rows.nth(index).locator(CREATED_NAMES)
-        expect(name_field).to_have_count(1, timeout=WAIT_MS)
-        actual_names.append(name_field.input_value())
-    if len(set(actual_names)) != len(actual_names) or set(actual_names) != set(names) or len(actual_names) != len(names):
-        logger.warning("SKU规格无法一一匹配：Excel=%r；页面=%r；明细尚未填写", names, actual_names)
-        raise NeedsAttention("页面SKU规格与Excel无法一一匹配，请核对数量、名称及页面是否完整显示")
-    row_indices = {name: index for index, name in enumerate(actual_names)}
+    def matched_rows():
+        if combinations:
+            return layered_sku_rows(group, combinations)
+        actual_names = []
+        for row in rows.all():
+            name_field = row.locator(CREATED_NAMES)
+            expect(name_field).to_have_count(1, timeout=WAIT_MS)
+            actual_names.append(name_field.input_value())
+        if set(actual_names) != set(names) or len(actual_names) != len(names):
+            logger.warning("SKU规格无法一一匹配：Excel=%r；页面=%r；明细尚未填写", names, actual_names)
+            raise NeedsAttention("页面SKU规格与Excel无法一一匹配，请核对数量、名称及页面是否完整显示")
+        return {name: rows.nth(index) for index, name in enumerate(actual_names)}
+
+    matching = matched_rows()
     # 先检查全部对应字段和长度，避免填到一半才发现后续单元格无法接收数据。
     for detail in details:
-        row = rows.nth(row_indices[detail["销售规格"]])
+        row = matching[detail["销售规格"]]
         for key, selector in DETAIL_CELLS.items():
             field = row.locator(selector).get_by_role("textbox")
             expect(field).to_have_count(1, timeout=WAIT_MS)
@@ -204,8 +325,9 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
     for index, detail in enumerate(details, start=1):
         name = detail["销售规格"]
         checkpoint(f"填写SKU明细 {index}/{len(details)}：{name}")
-        row = rows.nth(row_indices[name])
-        expect(row.locator(CREATED_NAMES)).to_have_value(name, timeout=WAIT_MS)
+        row = matched_rows()[name] if combinations else matching[name]
+        if not combinations:
+            expect(row.locator(CREATED_NAMES)).to_have_value(name, timeout=WAIT_MS)
         for key, selector in DETAIL_CELLS.items():
             _fill_sku_field(row.locator(selector).get_by_role("textbox"), detail[key], key != "商家编码")
         _select_sku_category(page, row, category, name)
@@ -214,11 +336,12 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
         if messages:
             logger.warning("SKU明细存在平台提示：规格=%s；提示=%r；当前行未报告完成", name, messages)
             raise NeedsAttention(f"规格“{name}”存在平台提示，请核对：" + "；".join(messages))
-        _verify_sku_detail(row, detail, category)
+        _verify_sku_detail(row, detail, category, layered=bool(combinations))
         logger.info("SKU明细已按规格匹配并回读核对：规格=%s；价格=%s；数量=%s；商家编码=%s；SKU分类=%s",
                     name, detail["价格"], detail["数量"], detail["商家编码"], category)
     for detail in details:
         checkpoint(f"最终核对SKU明细：{detail['销售规格']}")
-        _verify_sku_detail(rows.nth(row_indices[detail["销售规格"]]), detail, category)
+        _verify_sku_detail(matched_rows()[detail["销售规格"]] if combinations else matching[detail["销售规格"]],
+                           detail, category, layered=bool(combinations))
     logger.info("全部SKU明细填写完成：共%d项，按规格名称匹配", len(details))
     return details

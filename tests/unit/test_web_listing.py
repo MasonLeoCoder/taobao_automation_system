@@ -125,7 +125,7 @@ class WebListingTests(TestCase):
         book = load_workbook(template_for(BACKPACK.key, BACKPACK_CATEGORY))
         self.addCleanup(book.close)
         entry = book['Sheet1']
-        self.assertEqual(len(entry.data_validations.dataValidation), 4)
+        self.assertEqual(len(entry.data_validations.dataValidation), 5)
         for row in (2, 5, 6):
             for cell in book['填写示例'][row]:
                 entry[cell.coordinate] = cell.value
@@ -145,8 +145,11 @@ class WebListingTests(TestCase):
         self.assertIn('最多 100 个字符', check()['errors'][0])
         entry['I2'] = '英国短毛猫'
         entry['J2'] = None
+        entry['K2'] = None
+        entry['A6'] = '灰色 L 码'
         result = check()
         self.assertEqual(result['errors'], [])
+        self.assertEqual(result['preview']['sku_mode'], '单层展示')
         self.assertEqual([row['销售规格'] for row in result['preview']['skus']], ['黑色 M 码', '灰色 L 码'])
         self.assertNotIn('allow_submit', result['preview'])
         identifier = result['id']

@@ -82,7 +82,7 @@ class SkuImageInputs:
     missing: dict[str, str]
 
 
-def load_sku_images(directory: Path, names: list[str]) -> SkuImageInputs:
+def load_sku_images(directory: Path, names: list[str], *, codes=None) -> SkuImageInputs:
     """按完整规格名匹配任意图片扩展名；参数：目录、规格名；返回：文件与逐项缺失原因。"""
     directory = directory.resolve()
     if not names or any(not isinstance(name, str) or not name.strip() for name in names) or len(set(names)) != len(names):
@@ -95,7 +95,10 @@ def load_sku_images(directory: Path, names: list[str]) -> SkuImageInputs:
         candidates = []
         directory_error = f"SKU图片目录无法读取：{directory}；原因={error}"
     for name in names:
-        matches = [path for path in candidates if path.stem == name]
+        code = (codes or {}).get(name)
+        matches = [path for path in candidates if path.stem.casefold() == code.casefold()] if code else []
+        if not matches:
+            matches = [path for path in candidates if path.stem == name]
         reason = None
         if directory_error:
             reason = directory_error
@@ -105,6 +108,10 @@ def load_sku_images(directory: Path, names: list[str]) -> SkuImageInputs:
             reason = f"未找到图片：{directory / (name + '.*')}"
         elif len(matches) != 1:
             reason = "同名图片不唯一：" + "、".join(sorted(path.name for path in matches))
+        elif code and matches[0].stem.casefold() == code.casefold() and sum(
+            other.casefold() == code.casefold() for other in codes.values()
+        ) > 1:
+            reason = f"商家编码「{code}」对应多条 SKU：{matches[0].name}"
         else:
             try:
                 if not 0 < matches[0].stat().st_size <= 20 * 1024 * 1024:
@@ -116,4 +123,11 @@ def load_sku_images(directory: Path, names: list[str]) -> SkuImageInputs:
             getLogger(__name__).warning("SKU图片跳过：规格=%s；缺少SKU搜索主图、商品规格图片；原因=%s", name, reason)
         else:
             files[name] = matches[0]
+    if codes is not None:
+        for file in set(files.values()):
+            owners = [name for name, path in files.items() if path == file]
+            if len(owners) > 1:
+                for name in owners:
+                    del files[name]
+                    missing[name] = f"图片「{file.name}」同时匹配多条 SKU：" + "、".join(owners)
     return SkuImageInputs(files, missing)

@@ -6,7 +6,7 @@ from .product_attributes import ATTRIBUTE_GROUP
 from .product_basic import TITLE_GROUP, GUIDE_TITLE_GROUP, FIXED_PRICE_GROUP, MERCHANT_CODE_GROUP
 from .product_details import IMAGES
 from .product_images import _image_group
-from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, DETAIL_CELLS
+from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, DETAIL_CELLS, layered_sku_rows
 from .product_sku_media import SEARCH_IMAGE, SPEC_IMAGE, TITLE
 from .product_video import VIDEO_GROUP
 from .verification import qianniu_operation
@@ -38,7 +38,7 @@ def read_listing_media(page, group):
 
 
 @qianniu_operation
-def read_listing_fields(page, *, attribute_labels=ATTRIBUTES):
+def read_listing_fields(page, *, attribute_labels=ATTRIBUTES, sku_combinations=None):
     """读取实际商品和SKU；参数：编辑页；返回：结构化当前值。"""
     def value(locator, label, *, optional=False, strip=True):
         """读取唯一文本框；参数：定位器、名称及可空标志；返回：当前值。"""
@@ -67,15 +67,21 @@ def read_listing_fields(page, *, attribute_labels=ATTRIBUTES):
             values = group.locator('.next-select-values > em').all_text_contents()
             result['attributes'][label] = values[0].strip() if len(values) == 1 else None
     result['skus'], result['sku_media'] = [], []
-    rows = page.locator(SKU_GROUP).locator(SKU_ROWS)
-    for row in rows.all():
-        name = value(row.locator(CREATED_NAMES), '销售规格')
+    group = page.locator(SKU_GROUP)
+    if sku_combinations:
+        matching = layered_sku_rows(group, sku_combinations)
+        named_rows = [(name, matching[name]) for name in sku_combinations]
+    else:
+        named_rows = [(value(row.locator(CREATED_NAMES), '销售规格'), row)
+                      for row in group.locator(SKU_ROWS).all()]
+    for name, row in named_rows:
         info = {label: value(row.locator(selector).get_by_role('textbox'), f'{name}的{label}')
                 for label, selector in DETAIL_CELLS.items()}
         info.update({'销售规格': name, '价格': _number(info['价格']), '数量': _number(info['数量'])})
         result['skus'].append(info)
+        pictures = f'{SEARCH_IMAGE} img' if sku_combinations else f'{SEARCH_IMAGE} img, {SPEC_IMAGE} img'
         result['sku_media'].append([name, row.locator(TITLE).all_inner_texts(),
-            row.locator(f'{SEARCH_IMAGE} img, {SPEC_IMAGE} img').evaluate_all("els=>els.map(e=>e.getAttribute('src'))")])
+            row.locator(pictures).evaluate_all("els=>els.map(e=>e.getAttribute('src'))")])
     if not result['code'] or not result['skus']:
         raise NeedsAttention('商家编码或 SKU 无法核对，未自动提交')
     try:

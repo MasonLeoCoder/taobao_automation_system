@@ -4,7 +4,10 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGORY
+from ecommerce.modules.product.listing_templates import template_for
+from ecommerce.modules.product.web_materials import _book, sku_specs
 from ecommerce.modules.product.workbook import load_product_workbook
 from ecommerce.modules.product import service
 from ecommerce.platforms.qianniu import product_shop_category as platform
@@ -15,6 +18,31 @@ from ecommerce.platforms.qianniu.product_sku_media import SkuMediaResult
 
 
 class ProductWorkbookTests(unittest.TestCase):
+    def test_backpack_template_modes_and_layered_sku_validation(self):
+        with tempfile.TemporaryDirectory() as root:
+            file = Path(root) / '产品信息.xlsx'
+            workbook = load_workbook(template_for(BACKPACK.key, BACKPACK_CATEGORY))
+            sheet = workbook['Sheet1']
+            for number, row in enumerate(workbook['填写示例'].iter_rows(min_row=2, values_only=True), 2):
+                for index, value in enumerate(row, 1):
+                    sheet.cell(row=number, column=index).value = value
+            workbook.save(file)
+            preview = _book(file, BACKPACK, BACKPACK_CATEGORY)
+            self.assertEqual(preview['sku_mode'], '分层展示')
+            self.assertEqual([row['适用尺码'] for row in sku_specs(preview)], ['M 码', 'L 码'])
+            sheet['F6'] = 'M 码'
+            workbook.save(file)
+            with self.assertRaisesRegex(ValueError, '第 2 条.*组合重复'):
+                _book(file, BACKPACK, BACKPACK_CATEGORY)
+            sheet['F6'] = None
+            workbook.save(file)
+            with self.assertRaisesRegex(ValueError, '第 2 条.*适用尺码'):
+                _book(file, BACKPACK, BACKPACK_CATEGORY)
+            sheet['K2'] = None
+            workbook.save(file)
+            self.assertEqual(_book(file, BACKPACK, BACKPACK_CATEGORY)['sku_mode'], '单层展示')
+            workbook.close()
+
     def make_file(self, root, category="家居清洁", duplicate=False):
         file = Path(root) / "产品信息.xlsx"
         book = Workbook()

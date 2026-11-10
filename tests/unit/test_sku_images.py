@@ -10,6 +10,17 @@ from ecommerce.cli.app import parser
 
 
 class SkuImageTests(unittest.TestCase):
+    def test_backpack_prefers_code_and_reports_conflict_without_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for filename in ('A.jpg', 'A.png', '黑色 M.jpg', 'B.jpg', '黑色 L.jpg', '灰色 M.jpg'):
+                (root / filename).write_bytes(b'image')
+            names = ['黑色 M', '黑色 L', '灰色 M', '灰色 L']
+            result = load_sku_images(root, names, codes=dict(zip(names, 'ABCD')))
+            self.assertEqual(result.files, {'黑色 L': root / 'B.jpg', '灰色 M': root / '灰色 M.jpg'})
+            self.assertIn('A.jpg、A.png', result.missing['黑色 M'])
+            self.assertIn('未找到图片', result.missing['灰色 L'])
+
     def test_exact_unicode_names_and_varied_extensions(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

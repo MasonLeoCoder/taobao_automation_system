@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 from openpyxl import load_workbook
 
+SINGLE_SKU = '单层展示'
+LAYERED_SKU = '分层展示'
+SKU_DIMENSIONS = ('颜色分类', '适用尺码')
+
 
 def _price_text(value: Any, label: str) -> str:
     """校验金额并转成输入文本；参数：原值、字段说明；返回：不舍入的正金额文本。"""
@@ -96,6 +100,34 @@ class ProductWorkbook:
                 raise ValueError(f"规格“{name}”的商家编码必须为非空文本")
             result.append({"销售规格": name, **numbers, "商家编码": code.strip()})
         return result
+
+    def sku_mode(self, *, layered_supported=False):
+        value = self.fields.get('规格展示模式')
+        if value is None or isinstance(value, str) and not value.strip():
+            return SINGLE_SKU
+        if not isinstance(value, str) or value.strip() not in (SINGLE_SKU, LAYERED_SKU):
+            raise ValueError('规格展示模式只能填写「单层展示」或「分层展示」')
+        mode = value.strip()
+        if mode == LAYERED_SKU and not layered_supported:
+            raise ValueError('当前上架方案尚不支持分层展示')
+        return mode
+
+    def sku_combinations(self):
+        combinations = {}
+        seen = {}
+        for index, (name, row) in enumerate(zip(self.sales_specifications(), self.skus), 1):
+            values = []
+            for label in SKU_DIMENSIONS:
+                value = row.get(label)
+                if isinstance(value, bool) or not isinstance(value, (str, int, float)) or not str(value).strip():
+                    raise ValueError(f'第 {index} 条销售规格「{name}」缺少有效的{label}')
+                values.append(str(value).strip())
+            combination = tuple(values)
+            if combination in seen:
+                raise ValueError(f'第 {index} 条销售规格「{name}」与「{seen[combination]}」组合重复：' + ' × '.join(combination))
+            combinations[name] = combination
+            seen[combination] = name
+        return combinations
 
 
 def _headers(row, label):

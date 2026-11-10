@@ -5,12 +5,14 @@ from uuid import uuid4
 from pathlib import Path
 from ecommerce.modules.product.assets import load_main_images, load_portrait_images, load_detail_images, load_product_video, load_sku_images
 from ecommerce.platforms.qianniu.product_images import upload_main_images, upload_portrait_images
-from ecommerce.modules.product.workbook import load_product_workbook
+from ecommerce.modules.product.listing_profiles import BACKPACK
+from ecommerce.modules.product.web_materials import compact_title
+from ecommerce.modules.product.workbook import LAYERED_SKU, load_product_workbook
 from ecommerce.platforms.qianniu.product_attributes import select_applicable_scene, select_pet_type, select_handle_shape, select_adhesive_material, select_adhesion_strength
 from ecommerce.platforms.qianniu.product_attributes import fill_text_attribute, select_editor_brand, select_template_attribute
 from ecommerce.platforms.qianniu.product_basic import fill_product_title, fill_guide_title, fill_fixed_price, fill_merchant_code, enable_multi_item_discount, select_warehouse_listing
 from ecommerce.platforms.qianniu.product_shop_category import select_shop_categories
-from ecommerce.platforms.qianniu.product_sku import create_sales_specifications, fill_sku_details
+from ecommerce.platforms.qianniu.product_sku import create_layered_specifications, create_sales_specifications, fill_sku_details
 from ecommerce.platforms.qianniu.product_sku_media import fill_sku_media
 from ecommerce.platforms.qianniu.product_details import upload_detail_images
 from ecommerce.platforms.qianniu.product_submit import SubmissionResult, submit_product_to_warehouse, inspect_submission_result
@@ -149,8 +151,11 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
     sku_details = None
     sku_images = None
     sku_media_result = None
+    combinations = {}
     fixed_price = None
     merchant_code = None
+    profile = getattr(web_review, 'profile', None)
+    backpack = bool(profile and profile.key == BACKPACK.key)
     if product_info_file is not None:
         if brand is None:
             raise ValueError("填写店铺分类需要提供品牌并进入商品填写页")
@@ -165,12 +170,16 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             getLogger(__name__).warning("Excel缺少有效导购标题，跳过基础导购标题及每个SKU的搜索标题；其他信息继续填写")
         sales_specifications = product_info.sales_specifications()
         sku_details = product_info.sku_details()
+        if product_info.sku_mode(layered_supported=backpack) == LAYERED_SKU:
+            combinations = product_info.sku_combinations()
         image_directory = Path(sku_images_dir) if sku_images_dir is not None else product_info.source.parent / "sku图"
-        sku_images = load_sku_images(image_directory if image_directory.is_absolute() else settings.root / image_directory, sales_specifications)
+        codes = {'codes': {row['销售规格']: row['商家编码'] for row in sku_details}} if (
+            backpack and 'sku_mode' in web_review.preview) else {}
+        sku_images = load_sku_images(image_directory if image_directory.is_absolute() else settings.root / image_directory,
+                                     sales_specifications, **codes)
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
     verification = {'verification_handler': web_review.verification} if web_review else {}
-    profile = getattr(web_review, 'profile', None)
     brand_in_editor = bool(profile and profile.brand_in_editor)
     with browser_session(settings, on_attention=on_attention, **verification) as (context, page):
         if web_review:
@@ -248,9 +257,15 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                 attributes = {label: handlers[label](page, product_info.fields.get(label)) for label in labels}
             scene_result, pet_type_result, handle_shape_result, adhesive_material_result, adhesion_strength_result = (
                 attributes.get(label) for label in handlers)
-            create_sales_specifications(page, sales_specifications)
-            fill_sku_details(page, sku_details)
-            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, guide_title,
+            layered = {'combinations': combinations} if combinations else {}
+            if combinations:
+                create_layered_specifications(page, combinations, on_manual=lambda message: web_review.specifications_wait(page, message))
+            else:
+                create_sales_specifications(page, sales_specifications)
+            fill_sku_details(page, sku_details, **layered)
+            sku_guide = compact_title(guide_title) if guide_title and codes else guide_title
+            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, sku_guide,
+                                             **layered,
                                              **({'sku_titles': sku_titles} if sku_titles is not None else {}))
             fill_fixed_price(page, fixed_price)
             fill_merchant_code(page, merchant_code)
