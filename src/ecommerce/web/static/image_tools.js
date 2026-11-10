@@ -1,6 +1,7 @@
 /* 工具箱和主图共用格式记忆及本地下载；文件名仅使用文本节点展示。 */
 (() => {
   const notes={png:'PNG：保留透明背景，文件通常较大。',jpg:'JPG：适合普通商品图，透明区域填充白色，文件通常较小。',original:'保持原格式：保留文件内容，不重新编码。'};
+  const downloadExtensions={'image/png':'.png','image/jpeg':'.jpg','image/webp':'.webp','application/zip':'.zip'};
   const token=document.querySelector('meta[name="workbench-token"]')?.content || '';
   function formatControl(root,key) {
     const select=root.querySelector('[data-image-format]'),note=root.querySelector('[data-image-format-note]');
@@ -26,10 +27,13 @@
       try {message=JSON.parse(await response.response.text()).error || message;}catch(_) {}
       throw new Error(message);
     }
-    let filename='图片下载.zip';
     const disposition=response.getResponseHeader('Content-Disposition') || '';
-    const encoded=disposition.match(/filename\*=UTF-8''([^;]+)/i),plain=disposition.match(/filename="([^"]+)"/i);
-    try {filename=encoded ? decodeURIComponent(encoded[1]) : plain ? plain[1] : filename;}catch(_) {}
+    const encoded=disposition.match(/(?:^|;)\s*filename\*=UTF-8''([^;]+)/i);
+    const plain=disposition.match(/(?:^|;)\s*filename=(?:"([^"]+)"|([^";\s]+))/i);
+    let filename=plain?.[1] || plain?.[2] || ('图片下载'+(downloadExtensions[response.response.type] || ''));
+    if(encoded) {
+      try {filename=decodeURIComponent(encoded[1].trim());}catch(_) { /* 保留普通文件名或按类型生成的名称。 */ }
+    }
     const urlObject=URL.createObjectURL(response.response),link=document.createElement('a');
     link.href=urlObject;link.download=filename;document.body.append(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(urlObject),60000);

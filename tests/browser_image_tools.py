@@ -39,17 +39,23 @@ def tool_check(page, root_url):
     ])
     expect(root.locator('[data-image-count]')).to_have_text('2 张')
     with page.expect_download() as event:root.locator('[data-image-convert]').click()
-    decoded_download(event.value,'zip');expect(root.locator('[data-image-feedback]')).to_contain_text('已准备 2 张')
+    assert decoded_download(event.value,'zip')=='图片转换.zip'
+    expect(root.locator('[data-image-feedback]')).to_contain_text('已准备 2 张')
     expect(root.locator('[data-image-list] li')).to_have_count(2)
     root.locator('[data-image-list] li').last.get_by_role('button',name=re.compile('移除')).click()
     root.locator('.ss-trigger').click();page.get_by_role('option',name='JPG',exact=True).click()
     with page.expect_download() as event:root.locator('[data-image-convert]').click()
-    assert decoded_download(event.value,'JPEG').endswith('.jpg')
+    assert decoded_download(event.value,'JPEG')=='相同.jpg'
     page.reload();expect(root.locator('.ss-trigger')).to_contain_text('JPG');expect(root.locator('[data-image-count]')).to_have_text('0 张')
     root.locator('[data-image-files]').set_input_files({'name':'损坏.png','mimeType':'image/png','buffer':b'broken'})
     root.locator('[data-image-convert]').click();expect(root.locator('[data-image-feedback]')).to_contain_text('损坏.png')
     expect(root.locator('[data-image-feedback]')).to_have_class(re.compile('is-error'));expect(root.locator('[data-image-list] li')).to_have_count(1)
     root.locator('[data-image-clear]').click();expect(root.locator('[data-image-count]')).to_have_text('0 张')
+    root.locator('.ss-trigger').click();page.get_by_role('option',name='PNG',exact=True).click()
+    root.locator('[data-image-files]').set_input_files({'name':'sample.jpg','mimeType':'image/jpeg','buffer':picture('JPEG')})
+    with page.expect_download() as event:root.locator('[data-image-convert]').click()
+    assert decoded_download(event.value,'PNG')=='sample.png'
+    root.locator('[data-image-clear]').click()
     root.locator('[data-image-drop]').evaluate("""(zone,bytes)=>{
         const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array(bytes)],'拖入.png',{type:'image/png'}));
         zone.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
