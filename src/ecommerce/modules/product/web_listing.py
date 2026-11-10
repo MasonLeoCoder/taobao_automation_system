@@ -78,6 +78,10 @@ class ListingWorkbench:
         manifest.pop('hashes')
         state = path / 'state.json'
         task = json.loads(state.read_text(encoding='utf-8')) if state.is_file() else None
+        if not task and manifest['preview'].get('allow_submit') is False:
+            profile = PROFILES.get((manifest.get('category_binding') or {}).get('profile'))
+            if profile and profile.allow_submit:
+                manifest['preview'].pop('allow_submit')
         if task and task['phase'] in _ACTIVE and owner_alive(task['pid'], task['process_started']) is False:
             task.update(phase='interrupted', prompt=None,
                         message='原执行进程已退出。未恢复浏览器操作；如已点击提交，请核对千牛仓库。')
@@ -319,6 +323,11 @@ class _ListingRun:
     def _sku_title(self, name):
         return (self.sku_titles or {}).get(name) or self.preview['guide']
 
+    def _read_fields(self, page):
+        if self.profile and self.profile.brand_in_editor:
+            return read_listing_fields(page, attribute_labels=(*self.profile.attributes, '品牌'))
+        return read_listing_fields(page)
+
     def filled(self, page, categories, sku, attributes):
         """汇总填写证据；参数：页面、分类、SKU媒体和属性结果；返回：等待或继续入仓。"""
         for label, result in attributes.items():
@@ -334,8 +343,8 @@ class _ListingRun:
                     planned = self._sku_title(name) if label == 'SKU搜索标题' else self.preview['sku_images'].get(name)
                     if planned:
                         self.notes.append(f'SKU「{name}」{label}未按预检完成：{reason}')
+        actual = self._read_fields(page)
         if self.profile and self.profile.brand_in_editor:
-            actual = read_listing_fields(page, attribute_labels=(*self.profile.attributes, '品牌'))
             expected_attributes = {**self.attributes, '品牌': self.preview['brand']}
             for name, expected in expected_attributes.items():
                 if actual['attributes'].get(name) != expected:
@@ -348,8 +357,6 @@ class _ListingRun:
                     raise NeedsAttention(f'SKU「{name}」的搜索主图或规格图片未核实')
             getLogger(__name__).info('已回读核对品牌、商品属性、价格和商家编码，以及 %d 条 SKU 和匹配图片',
                                      len(actual['skus']))
-        else:
-            actual = read_listing_fields(page)
         self.sku_media = actual['sku_media']
         self.update(outcome='filled', notes=self.notes, message='已填写，尚未提交')
         if not self.state['submit']:
@@ -357,7 +364,7 @@ class _ListingRun:
 
     def _comparison(self, page):
         """比较预检与当前页面；参数：编辑页；返回：实际快照及差异。"""
-        actual = read_listing_fields(page)
+        actual = self._read_fields(page)
         actual['media'] = {key: read_listing_media(page, key) for key in self.media}
         lines = list(self.notes)
         for key, label in (('price', '一口价'), ('code', '商家编码')):
@@ -374,8 +381,11 @@ class _ListingRun:
 
         if other_sku_fields(actual['sku_media']) != other_sku_fields(self.sku_media):
             lines.append('SKU 图片或留空规格的页面标题在填写完成后发生变化')
-        for label, value in self.attributes.items():
-            current = actual['attributes'][label]
+        expected_attributes = dict(self.attributes)
+        if self.profile and self.profile.brand_in_editor:
+            expected_attributes['品牌'] = self.preview['brand']
+        for label, value in expected_attributes.items():
+            current = actual['attributes'].get(label)
             if value != current:
                 lines.append(f'{label}：填写值「{value}」，当前页「{current or "未核实"}」')
         for key, label in (('main', '1:1 主图'), ('portrait', '3:4 主图'), ('detail', '详情图'), ('video', '视频')):
@@ -403,10 +413,14 @@ class _ListingRun:
         actual, differences = self._comparison(page)
         while True:
             check_binding(self.settings, self.manifest)
-            if self.profile and (any(not actual['attributes'].get(label) for label in self.profile.attributes)
-                    or [row['销售规格'] for row in actual['skus']] !=
-                    [row['销售规格'] for row in self.preview['skus']]):
-                raise NeedsAttention('千牛属性或 SKU 结构与上架方案不符，已暂停入仓')
+            if self.profile:
+                required = set(self.profile.required_attributes or self.profile.attributes)
+                if self.profile.brand_in_editor:
+                    required.add('品牌')
+                if (any(not actual['attributes'].get(label) for label in required)
+                        or [row['销售规格'] for row in actual['skus']] !=
+                        [row['销售规格'] for row in self.preview['skus']]):
+                    raise NeedsAttention('千牛品牌、必填属性或 SKU 结构与上架方案不符，已暂停入仓')
             title_differences = self._title_differences(actual)
             action = None
             if title_differences:

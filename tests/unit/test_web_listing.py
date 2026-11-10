@@ -1,6 +1,7 @@
 """商品工作台隔离验证：上传、只填、入仓意图和人工恢复。"""
 from dataclasses import replace
 from io import BytesIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -16,6 +17,7 @@ from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGO
 from ecommerce.modules.product.listing_templates import template_for
 from ecommerce.modules.product.web_materials import CATEGORY, import_materials
 from ecommerce.shared.config import load_settings
+from ecommerce.shared.exceptions import NeedsAttention
 from ecommerce.web.app import create_app
 
 
@@ -117,7 +119,7 @@ class WebListingTests(TestCase):
         self.assertIn('缺少编号 5', result.json['errors'][0])
         self.assertTrue(any('视频：未提供，将跳过' in warning for warning in result.json['warnings']))
 
-    def test_backpack_combined_skus_and_required_text_are_fill_only(self):
+    def test_backpack_combined_skus_allow_warehouse_after_profile_readback(self):
         workbench = self.app.extensions['product_listing']
         binding = {'id': 12, 'platform_id': None, 'profile': BACKPACK.key}
         book = load_workbook(template_for(BACKPACK.key, BACKPACK_CATEGORY))
@@ -146,11 +148,49 @@ class WebListingTests(TestCase):
         result = check()
         self.assertEqual(result['errors'], [])
         self.assertEqual([row['销售规格'] for row in result['preview']['skus']], ['黑色 M 码', '灰色 L 码'])
-        self.assertFalse(result['preview']['allow_submit'])
-        response = self.client.post(f'/api/listing/{result["id"]}/start', headers=self.headers, json={'submit': True})
-        self.assertEqual(response.status_code, 422)
-        self.assertIn('只开放填写验收', response.json['error'])
-        self.open_publish.assert_not_called()
+        self.assertNotIn('allow_submit', result['preview'])
+        identifier = result['id']
+        manifest = workbench.root / identifier / 'manifest.json'
+        saved = json.loads(manifest.read_text(encoding='utf-8'))
+        saved['preview']['allow_submit'] = False
+        manifest.write_text(json.dumps(saved, ensure_ascii=False), encoding='utf-8')
+        self.assertNotIn('allow_submit', self.client.get(f'/api/listing/{identifier}').json['preview'])
+
+        preview = result['preview']
+        actual = {key: preview[key] for key in ('title', 'guide', 'price', 'code', 'skus')}
+        actual['attributes'] = {key: value or None for key, value in preview['attributes'].items()}
+        actual['attributes']['品牌'] = preview['brand']
+        actual['sku_media'] = [[row['销售规格'], [preview['guide']] if preview['guide'] else [], []]
+                               for row in preview['skus']]
+        attributes = {key: SimpleNamespace(selected=value, fallback_reason=None)
+                      for key, value in preview['attributes'].items() if value}
+
+        def read(page, *, attribute_labels):
+            self.assertEqual(attribute_labels, (*BACKPACK.attributes, '品牌'))
+            return {**actual, 'attributes':dict(actual['attributes'])}
+
+        def open_and_review(settings, *, web_review, submit, **kwargs):
+            self.assertTrue(submit)
+            page = MagicMock()
+            web_review.filled(page, None, None, attributes)
+            actual['attributes']['品牌'] = None
+            with self.assertRaisesRegex(NeedsAttention, '品牌、必填属性或 SKU 结构'):
+                web_review.before_click(page)
+            actual['attributes']['品牌'] = preview['brand']
+            web_review.before_click(page)
+            web_review.click_intent()
+            web_review.click_finished()
+            web_review.result(SimpleNamespace(status='succeeded', message='模拟已入仓', item_id='123456', page=page))
+            return '模拟已入仓'
+
+        self.open_publish.side_effect = open_and_review
+        with patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=read):
+            response = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+            self.assertEqual(response.status_code, 202)
+            final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        self.assertTrue(final['submit_attempted'])
+        self.assertEqual((final['outcome'], final['item_id']), ('warehouse', '123456'))
+        self.open_publish.assert_called_once()
 
     def state(self, identifier, condition):
         """等待本机后台状态；参数：导入编号、判定；返回：对应任务快照。"""

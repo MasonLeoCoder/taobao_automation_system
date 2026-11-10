@@ -29,7 +29,7 @@ BACKPACK = ListingProfile('pet_backpack', '背包/箱包上架方案', GROUPS, f
                           ('商品品类', '适用场景', '适用动物种类', '适用品种', '是否防水'),
                           required_attributes=frozenset({'适用场景', '适用动物种类', '适用品种'}),
                           text_limits={'适用品种': 100},
-                          search_keyword='宠物背包', brand_in_editor=True, allow_submit=False)
+                          search_keyword='宠物背包', brand_in_editor=True)
 PROFILES = {profile.key: profile for profile in (LINT_ROLLER, BACKPACK)}
 INITIAL_PROFILES = {CATEGORY: LINT_ROLLER.key}
 
