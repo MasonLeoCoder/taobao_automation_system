@@ -10,6 +10,22 @@ from ecommerce.cli.app import parser
 
 
 class SkuImageTests(unittest.TestCase):
+    def test_explicit_stem_allows_sharing_but_never_falls_back(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            shared = '卡其配绿色【双肩背包款】'
+            for filename in (f'{shared}.jpg', 'A.jpg', 'B.jpg', 'C.jpg', '同名.jpg', '同名.png'):
+                (root / filename).write_bytes(b'image')
+            names = ['M 码', 'L 码', '小号', '大号', shared]
+            codes = dict(zip(names, 'ABCDE'))
+            result = load_sku_images(root, names, codes=codes, requested={
+                'M 码': f' {shared} ', 'L 码': shared, '小号': '没有这张图', '大号': '同名',
+            })
+            self.assertEqual(result.files, {name: root / f'{shared}.jpg' for name in names[:2]})
+            self.assertIn('未找到指定图片「没有这张图」', result.missing['小号'])
+            self.assertIn('同名.jpg、同名.png', result.missing['大号'])
+            self.assertIn('同时匹配多条 SKU', result.missing[shared])
+
     def test_backpack_prefers_code_and_reports_conflict_without_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

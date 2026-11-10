@@ -82,8 +82,8 @@ class SkuImageInputs:
     missing: dict[str, str]
 
 
-def load_sku_images(directory: Path, names: list[str], *, codes=None) -> SkuImageInputs:
-    """按完整规格名匹配任意图片扩展名；参数：目录、规格名；返回：文件与逐项缺失原因。"""
+def load_sku_images(directory: Path, names: list[str], *, codes=None, requested=None) -> SkuImageInputs:
+    """按指定图名或商家编码、规格名匹配，返回每条 SKU 的文件和跳过原因。"""
     directory = directory.resolve()
     if not names or any(not isinstance(name, str) or not name.strip() for name in names) or len(set(names)) != len(names):
         raise ValueError("SKU图片匹配需要非空、唯一的销售规格名称")
@@ -94,21 +94,28 @@ def load_sku_images(directory: Path, names: list[str], *, codes=None) -> SkuImag
     except OSError as error:
         candidates = []
         directory_error = f"SKU图片目录无法读取：{directory}；原因={error}"
+    requested = {name: stem.strip() for name, stem in (requested or {}).items() if stem.strip()}
     for name in names:
+        stem = requested.get(name)
         code = (codes or {}).get(name)
-        matches = [path for path in candidates if path.stem.casefold() == code.casefold()] if code else []
-        if not matches:
-            matches = [path for path in candidates if path.stem == name]
+        if stem:
+            matches = [path for path in candidates if path.stem == stem]
+        else:
+            matches = [path for path in candidates if path.stem.casefold() == code.casefold()] if code else []
+            if not matches:
+                matches = [path for path in candidates if path.stem == name]
         reason = None
         if directory_error:
             reason = directory_error
+        elif stem and not matches:
+            reason = f"未找到指定图片「{stem}」，请核对 SKU 图文件夹"
         elif not directory.is_dir():
             reason = f"SKU图片目录不存在：{directory}"
         elif not matches:
             reason = f"未找到图片：{directory / (name + '.*')}"
         elif len(matches) != 1:
             reason = "同名图片不唯一：" + "、".join(sorted(path.name for path in matches))
-        elif code and matches[0].stem.casefold() == code.casefold() and sum(
+        elif not stem and code and matches[0].stem.casefold() == code.casefold() and sum(
             other.casefold() == code.casefold() for other in codes.values()
         ) > 1:
             reason = f"商家编码「{code}」对应多条 SKU：{matches[0].name}"
@@ -123,11 +130,11 @@ def load_sku_images(directory: Path, names: list[str], *, codes=None) -> SkuImag
             getLogger(__name__).warning("SKU图片跳过：规格=%s；缺少SKU搜索主图、商品规格图片；原因=%s", name, reason)
         else:
             files[name] = matches[0]
-    if codes is not None:
+    if codes is not None or requested:
         for file in set(files.values()):
             owners = [name for name, path in files.items() if path == file]
             if len(owners) > 1:
-                for name in owners:
+                for name in (name for name in owners if name not in requested):
                     del files[name]
                     missing[name] = f"图片「{file.name}」同时匹配多条 SKU：" + "、".join(owners)
     return SkuImageInputs(files, missing)

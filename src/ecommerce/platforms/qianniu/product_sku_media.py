@@ -169,6 +169,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
     group = page.locator(SKU_GROUP)
     rows = group.locator(SKU_ROWS)
     image_fields = IMAGE_FIELDS[:1] if combinations else IMAGE_FIELDS
+    uploaded_assets = {}
     for name in names:
         title = titles.get(name) or guide
         title_reason = None if title else missing_title
@@ -209,7 +210,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
             raise NeedsAttention(f'已打开的SKU详情不是“{name}”，未填写或覆盖其他规格')
         original = _core_values(row)
         filled, selected = [], {}
-        asset = None
+        asset = uploaded_assets.get(file)
         if file:
             writers = [(IMAGE_FIELDS[0], SEARCH_IMAGE, _fill_search_image),
                        (IMAGE_FIELDS[1], SPEC_IMAGE, _fill_spec_image)]
@@ -232,6 +233,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                     _skip(result, name, label, '页面已有图片，未覆盖；请核对是否对应当前素材')
                     continue
                 asset = writer(page, drawer, platform_name, file, asset) if label == 'SKU搜索主图' else writer(page, drawer, file, asset)
+                uploaded_assets[file] = asset
                 selected[selector] = asset
                 filled.append(label)
         if not title_reason:

@@ -125,6 +125,19 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertTrue(all(NAMES[0] in line and '未找到同名图片' in line for line in logs.output))
         self.assert_core_unchanged()
 
+    def test_two_skus_can_use_one_uploaded_image_with_separate_titles(self):
+        images = SkuImageInputs(dict.fromkeys(NAMES, self.images.files[NAMES[0]]), {})
+        titles = dict(zip(NAMES, ('中号宠物背包', '大号宠物背包')))
+        with self.guard():
+            result = platform.fill_sku_media(self.page, NAMES, images, TITLE, sku_titles=titles)
+        self.assertEqual(result.skipped, {})
+        self.assertEqual(self.page.evaluate('uploadCount'), 1)
+        rows = self.page.evaluate('records')
+        self.assertEqual([row['title'] for row in rows], [titles[name] for name in reversed(NAMES)])
+        self.assertEqual(rows[0]['search'], rows[1]['search'])
+        self.assertTrue(rows[0]['search'])
+        self.assert_core_unchanged()
+
     def test_one_spec_uses_its_title_and_blank_spec_uses_final_guide(self):
         title = '规格一宠物除毛刷'
         inputs = SkuImageInputs({}, {})

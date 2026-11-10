@@ -130,12 +130,13 @@ class WebListingTests(TestCase):
             for cell in book['填写示例'][row]:
                 entry[cell.coordinate] = cell.value
 
-        def check():
+        def check(sku_images=()):
             stream = BytesIO()
             book.save(stream)
             stream.seek(0)
             images = [(path.name, BytesIO(path.read_bytes())) for path in (self.folder / '1-1主图').iterdir()]
-            return import_materials(workbench.root, {'excel': [('产品信息.xlsx', stream)], 'main': images},
+            return import_materials(workbench.root, {'excel': [('产品信息.xlsx', stream)], 'main': images,
+                                                     'sku': list(sku_images)},
                                     keyword='宠物背包', category=BACKPACK_CATEGORY, brand='无品牌/无注册商标',
                                     profile=BACKPACK, binding=binding)
 
@@ -151,6 +152,17 @@ class WebListingTests(TestCase):
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['preview']['sku_mode'], '单层展示')
         self.assertEqual([row['销售规格'] for row in result['preview']['skus']], ['黑色 M 码', '灰色 L 码'])
+        shared = '双肩背包【配色】'
+        entry['G5'] = entry['G6'] = shared
+        no_image = check()
+        self.assertEqual(no_image['errors'], [])
+        self.assertIn(shared, no_image['preview']['sku_image_issues']['黑色 M 码'])
+        sample = next((self.folder / '1-1主图').iterdir()).read_bytes()
+        with_image = check([(shared + '.png', BytesIO(sample))])
+        self.assertEqual(with_image['errors'], [])
+        self.assertEqual(with_image['preview']['sku_images'], {
+            '黑色 M 码': shared + '.png', '灰色 L 码': shared + '.png',
+        })
         self.assertNotIn('allow_submit', result['preview'])
         identifier = result['id']
         manifest = workbench.root / identifier / 'manifest.json'

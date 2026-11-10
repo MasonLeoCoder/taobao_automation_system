@@ -10,9 +10,9 @@ from .listing_profiles import BACKPACK, BACKPACK_CATEGORY, CATEGORY, LINT_ROLLER
 
 
 TEMPLATE_VERSION = 1
-BACKPACK_TEMPLATE_VERSION = 2
+BACKPACK_TEMPLATE_VERSION = 3
 TEMPLATES = {(LINT_ROLLER.key, CATEGORY): '粘毛器-产品信息模板.xlsx',
-             (BACKPACK.key, BACKPACK_CATEGORY): '背包箱包-产品信息模板-v2.xlsx'}
+             (BACKPACK.key, BACKPACK_CATEGORY): '背包箱包-产品信息模板-v3.xlsx'}
 
 BUNDLE_INSTRUCTIONS = """商品资料填写说明
 
@@ -46,7 +46,8 @@ def build_material_bundle(template, name):
         if template.name == TEMPLATES[(BACKPACK.key, BACKPACK_CATEGORY)]:
             instructions = instructions.replace(
                 '文件名与 Excel 中的完整销售规格一致，包含其中的空格。',
-                '优先以每条 SKU 的商家编码命名，也可使用 Excel 的完整销售规格名称。缺图时跳过。')
+                'Excel 的「SKU 图文件名」填写不含扩展名的完整名称，多条 SKU 可指定同一张图。'
+                '留空时先按商家编码匹配，再按完整销售规格名称匹配。缺图时跳过。')
         archive.writestr(f'{name}/填写说明.txt', instructions)
     stream.seek(0)
     return stream
@@ -72,7 +73,7 @@ def validate_template(book, profile, category):
             raise ValueError('请使用从当前类目资料包下载的产品信息模板')
         return
     template = template_for(profile.key, category)
-    versions = (TEMPLATE_VERSION, BACKPACK_TEMPLATE_VERSION) if profile.key == BACKPACK.key else (TEMPLATE_VERSION,)
+    versions = (TEMPLATE_VERSION, 2, BACKPACK_TEMPLATE_VERSION) if profile.key == BACKPACK.key else (TEMPLATE_VERSION,)
     if not template or book.template[0] != category or book.template[1] not in versions:
         raise ValueError('产品信息模板与当前类目或版本不一致，请重新下载')
     options = _attribute_options(template)

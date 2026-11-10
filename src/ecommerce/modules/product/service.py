@@ -176,7 +176,9 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         codes = {'codes': {row['销售规格']: row['商家编码'] for row in sku_details}} if (
             backpack and 'sku_mode' in web_review.preview) else {}
         sku_images = load_sku_images(image_directory if image_directory.is_absolute() else settings.root / image_directory,
-                                     sales_specifications, **codes)
+                                     sales_specifications, **codes,
+                                     **({'requested': web_review.preview['sku_image_names']}
+                                        if codes and web_review.preview.get('sku_image_names') else {}))
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
     verification = {'verification_handler': web_review.verification} if web_review else {}
