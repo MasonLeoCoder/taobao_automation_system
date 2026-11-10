@@ -2,6 +2,49 @@
   const root = document.getElementById('publish-categories');
   if (!root) return;
 
+  const stateKey = 'publishCategoryTree';
+  const handoffKey = 'publish-category-tree-handoff';
+  const currentUrl = new URL(location.href);
+  const selection = url => `${url.searchParams.get('branch') || ''}${url.hash}`;
+  let state = history.state?.[stateKey] || {};
+  let handoff;
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(handoffKey));
+    sessionStorage.removeItem(handoffKey);
+    if (pending?.url === currentUrl.href && Date.now() - pending.time < 30000) {
+      handoff = pending;
+      state = pending.state;
+    }
+  } catch { /* 浏览器限制存储时仍可浏览目录 */ }
+
+  let treeState = () => state;
+  function rememberTree() {
+    const saved = treeState();
+    try { history.replaceState({...history.state, [stateKey]:saved}, ''); }
+    catch { /* 浏览器历史不可写时仍可正常跳转 */ }
+    return saved;
+  }
+
+  function keepTreeFor(url) {
+    if (url.origin !== currentUrl.origin || url.pathname !== currentUrl.pathname || url.href === currentUrl.href) return;
+    const saved = rememberTree();
+    try {
+      sessionStorage.setItem(handoffKey, JSON.stringify({url:url.href, from:selection(currentUrl), time:Date.now(), state:saved}));
+    } catch { /* 页面打开后仍会定位当前类目 */ }
+  }
+
+  root.addEventListener('click', event => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target.closest('a[href]');
+    if (link && !link.target) keepTreeFor(new URL(link.href));
+  });
+  root.querySelector('.category-filter')?.addEventListener('submit', event => {
+    const url = new URL(event.currentTarget.action);
+    url.search = new URLSearchParams(new FormData(event.currentTarget));
+    keepTreeFor(url);
+  });
+  window.addEventListener('pagehide', rememberTree);
+
   const treeSearch = document.getElementById('category-tree-search');
   if (treeSearch) {
     const query = document.getElementById('category-tree-query');
@@ -9,8 +52,13 @@
     const tree = document.getElementById('category-tree-branches');
     const matches = document.getElementById('category-tree-matches');
     const status = document.getElementById('category-tree-search-status');
-    const normalize = text => text.normalize('NFKC').toLowerCase().trim().replace(/\s*[>›]\s*/gu, ' > ');
+    const currentBranch = tree.querySelector('[aria-current="location"]');
+    const nodes = [...tree.querySelectorAll('.category-node')].map(node => [node, node.querySelector('a').dataset.categoryPath]);
     const leafLinks = document.getElementById('category-tree-leaves')?.content.querySelectorAll('[data-category-path]') ?? [];
+    const currentLeaf = currentUrl.hash && [...leafLinks].find(link => link.getAttribute('href').endsWith(currentUrl.hash));
+    const currentLink = currentLeaf || currentBranch;
+    let treePosition = 0;
+    const normalize = text => text.normalize('NFKC').toLowerCase().trim().replace(/\s*[>›]\s*/gu, ' > ');
     const categories = [...tree.querySelectorAll('[data-category-path]'), ...leafLinks].map(link => {
       const path = link.dataset.categoryPath;
       const parts = path.split(' > ');
@@ -21,12 +69,14 @@
     function filterTree() {
       const keyword = normalize(query.value);
       clear.hidden = !query.value;
+      if (!tree.hidden) treePosition = tree.scrollTop;
       tree.hidden = Boolean(keyword);
       status.hidden = !keyword;
       matches.replaceChildren();
       if (!keyword) {
         matches.hidden = true;
         status.textContent = '';
+        tree.scrollTop = treePosition;
         return;
       }
       const byName = [], byPath = [];
@@ -40,6 +90,8 @@
         const item = document.createElement('li');
         const result = link.cloneNode(false);
         result.removeAttribute('data-category-path');
+        if (link === currentLink) result.setAttribute('aria-current', 'location');
+        else result.removeAttribute('aria-current');
         result.classList.add('category-tree-match');
         const title = document.createElement('strong');
         title.textContent = name;
@@ -58,21 +110,73 @@
       status.textContent = results.length ? `找到 ${results.length} 个类目` : '未找到匹配的类目';
     }
 
+    function reveal(container, item) {
+      if (!item || container.hidden) return;
+      const bounds = container.getBoundingClientRect(), target = item.getBoundingClientRect();
+      const top = bounds.top + container.clientTop;
+      if (target.top < top || target.bottom > top + container.clientHeight) {
+        container.scrollTop += target.top - top - (container.clientHeight - target.height) / 2;
+      }
+    }
+
+    function openCurrentBranch() {
+      for (let node = currentBranch?.closest('.category-node'); node; node = node.parentElement.closest('.category-node')) {
+        node.open = true;
+      }
+    }
+
     function clearTreeSearch() {
       query.value = '';
       filterTree();
-      query.focus();
+      openCurrentBranch();
+      if (currentBranch?.dataset.categoryPath) reveal(tree, currentBranch);
+      query.focus({preventScroll:true});
     }
-    query.addEventListener('input', filterTree);
-    query.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && query.value && !event.isComposing) {
+
+    function searchKeys(event) {
+      if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === 'Escape' && query.value) {
         event.preventDefault();
         clearTreeSearch();
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const links = [...matches.querySelectorAll('a')];
+        if (!links.length) return;
+        const index = links.indexOf(event.target);
+        const next = event.key === 'ArrowDown' ? Math.min(index + 1, links.length - 1) :
+          index < 0 ? links.length - 1 : Math.max(index - 1, 0);
+        event.preventDefault();
+        links[next].focus({preventScroll:true});
+        reveal(matches, links[next]);
       }
-    });
+    }
+
+    query.addEventListener('input', filterTree);
+    query.addEventListener('keydown', searchKeys);
+    matches.addEventListener('keydown', searchKeys);
     clear.addEventListener('click', clearTreeSearch);
+    if (Array.isArray(state.open)) {
+      const open = new Set(state.open);
+      for (const [node, path] of nodes) node.open = open.has(path);
+    }
+    openCurrentBranch();
+    query.value = typeof state.query === 'string' ? state.query : '';
     filterTree();
     treeSearch.hidden = false;
+    treePosition = state.treePosition || 0;
+    tree.scrollTop = treePosition;
+    matches.scrollTop = state.matchPosition || 0;
+    const currentMatch = matches.querySelector('[aria-current="location"]');
+    if (handoff && handoff.from !== selection(currentUrl) && !currentMatch) {
+      query.value = '';
+      filterTree();
+    }
+    const back = performance.getEntriesByType('navigation')[0]?.type === 'back_forward';
+    if (!back || handoff) {
+      if (tree.hidden) reveal(matches, currentMatch);
+      else if (currentBranch?.dataset.categoryPath) reveal(tree, currentBranch);
+    }
+    treeState = () => ({query:query.value, treePosition:tree.hidden ? treePosition : tree.scrollTop,
+      matchPosition:matches.scrollTop, open:nodes.filter(([node]) => node.open).map(([, path]) => path)});
   }
 
   const token = document.querySelector('meta[name="workbench-token"]').content;
@@ -109,6 +213,7 @@
       activeId = state.id;
       timer = setTimeout(poll,1000);
     } else if (state.id === activeId) {
+      rememberTree();
       location.reload();
     }
   }

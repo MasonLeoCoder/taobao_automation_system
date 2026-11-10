@@ -68,9 +68,10 @@
   display: grid; gap: 3px; padding: 7px 8px; margin: 2px 0; border-radius: 7px;
   color: inherit; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere;
 }
-#publish-categories .category-tree-match:is(:hover,[aria-current]) {
+#publish-categories .category-tree-match:is(:hover,:focus-visible,[aria-current]) {
   color: var(--category-accent); background: var(--category-soft);
 }
+#publish-categories .category-tree-match:focus-visible { outline-offset: -2px; }
 #publish-categories .category-tree-match small { display: block; color: var(--category-muted); font-size: 11px; }
 #publish-categories .category-node { margin: 2px 0; }
 #publish-categories .category-node-line {
