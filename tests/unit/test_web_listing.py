@@ -414,26 +414,31 @@ class WebListingTests(TestCase):
             final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
         self.assertTrue(final['submit_attempted'])
 
-    def test_layered_specification_review_can_end_the_task(self):
-        data = self.preflight().json
-        page = MagicMock()
-        page.is_closed.return_value = False
-        page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(.01)
+    def test_specification_and_main_image_review_can_end_the_task(self):
+        cases = [
+            ('specifications', 'specifications_wait', '适用尺码多出「大号」'),
+            ('main_image', 'main_image_wait', '3:4 主图已核对 2/5，正在填写第 3 格'),
+        ]
+        for kind, method, message in cases:
+            with self.subTest(kind=kind):
+                identifier = self.preflight().json['id']
+                page = MagicMock()
+                page.is_closed.return_value = False
+                page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(.01)
 
-        def fake_open(*args, **kwargs):
-            kwargs['web_review'].specifications_wait(page, '适用尺码多出「大号」')
-            self.fail('结束任务后不得继续填写')
+                def fake_open(*args, **kwargs):
+                    getattr(kwargs['web_review'], method)(page, message)
+                    self.fail('结束任务后不得继续填写')
 
-        self.open_publish.side_effect = fake_open
-        identifier = data['id']
-        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
-        paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
-        self.assertEqual(paused['prompt']['kind'], 'specifications')
-        self.assertIn('适用尺码多出「大号」', paused['message'])
-        self.assertEqual(self.send(identifier, paused, 'finish').status_code, 200)
-        ended = self.state(identifier, lambda state: state['phase'] == 'cancelled')
-        self.assertIsNone(ended['prompt'])
-        self.assertFalse(ended['submit_attempted'])
+                self.open_publish.side_effect = fake_open
+                self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+                paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
+                self.assertEqual(paused['prompt']['kind'], kind)
+                self.assertIn(message, paused['message'])
+                self.assertEqual(self.send(identifier, paused, 'finish').status_code, 200)
+                ended = self.state(identifier, lambda state: state['phase'] == 'cancelled')
+                self.assertIsNone(ended['prompt'])
+                self.assertFalse(ended['submit_attempted'])
 
     def test_video_review_resumes_or_ends_when_editor_closes(self):
         for close in (False, True):

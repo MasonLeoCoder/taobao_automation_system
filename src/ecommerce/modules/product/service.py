@@ -210,18 +210,19 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         if web_review:
             web_review.editor_page = page
             web_review.progress('填写主图、详情图和视频')
+        slot_review = {'on_slot_review': web_review.main_image_wait} if web_review else {}
         if images is not None:
             if on_attention is None:
-                upload_main_images(page, images)
+                upload_main_images(page, images, **slot_review)
             else:
-                upload_main_images(page, images, on_attention=on_attention)
+                upload_main_images(page, images, on_attention=on_attention, **slot_review)
             if web_review:
                 web_review.record_media(page, 'main')
         if portrait_images is not None:
             if on_attention is None:
-                upload_portrait_images(page, portrait_images)
+                upload_portrait_images(page, portrait_images, **slot_review)
             else:
-                upload_portrait_images(page, portrait_images, on_attention=on_attention)
+                upload_portrait_images(page, portrait_images, on_attention=on_attention, **slot_review)
             if web_review:
                 web_review.record_media(page, 'portrait')
         if detail_images is not None:

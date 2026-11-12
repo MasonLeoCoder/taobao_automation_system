@@ -336,6 +336,12 @@ class _ListingRun:
                    '确认商品页只保留这个视频后，点击「完成」继续填写。',
                    ['continue'], page=page, kind='video')
 
+    def main_image_wait(self, page, message):
+        action = self._wait(f'{message}\n在千牛核对或重新打开这个图位的素材库，再点击「完成」。',
+                            ['continue', 'finish'], page=page, kind='main_image')
+        if action == 'finish':
+            raise TaskStopped('用户已结束主图填写任务')
+
     def _sku_title(self, name):
         guide = self.preview['guide']
         return (self.sku_titles or {}).get(name) or (compact_title(guide) if 'sku_mode' in self.preview else guide)

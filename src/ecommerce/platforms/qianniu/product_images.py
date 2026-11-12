@@ -6,10 +6,10 @@ from pathlib import Path
 from uuid import uuid4
 from collections.abc import Callable
 
-from playwright.sync_api import Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Page, Error as PlaywrightError
 from playwright.sync_api import expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
-from .verification import checkpoint, has_human_verification, wait_for_human_verification, qianniu_operation, expect, page_step, choose_file_dialog, intercept_file_dialogs
+from .verification import checkpoint, wait_for_human_verification, qianniu_operation, expect, page_step, choose_file_dialog, intercept_file_dialogs
 
 MAIN_GROUP = "#sell-field-mainImagesGroup"
 PICKER = 'iframe[src*="sucai-selector-ng"]:visible'
@@ -17,10 +17,99 @@ FIELD_LABEL = 'span[title="1:1主图"]'
 TILE = 'div[class*="PicList_pic_background"]'
 WAIT_MS = 30_000
 DROPZONE = "点击/拖拽，批量导入文件"
+SLOT_SETTLE_MS = 1800
+SLOT_CLICK_MS = 5000
 
 
 def _main_tile(picker, name):
     return picker.locator(TILE).filter(has=picker.get_by_text(name, exact=True))
+
+
+def _watch_picker_owner(page):
+    """记住素材窗口打开前的 iframe 和被点击的空图位，供人工返回后核对。"""
+    return page.evaluate_handle("""() => {
+        const state = {};
+        const remember = event => {
+            const trigger = event.target.closest?.('.empty-container');
+            if (!trigger) return;
+            state.slot = trigger.closest('.drag-item');
+            state.previous = Array.from(document.querySelectorAll('iframe[src*="sucai-selector-ng"]'))
+                .filter(frame => frame.getClientRects().length && getComputedStyle(frame).visibility === 'visible');
+        };
+        document.addEventListener('click', remember, true);
+        state.dispose = () => document.removeEventListener('click', remember, true);
+        return state;
+    }""")
+
+
+def _picker_matches_slot(page, slot, owner):
+    picker = page.locator(PICKER)
+    if picker.count() != 1:
+        return False
+    frame = picker.element_handle(timeout=WAIT_MS)
+    try:
+        if not owner.evaluate("(state, frame) => state.previous && !state.previous.includes(frame)", frame):
+            return False
+        return slot.evaluate("(element, state) => state.slot === element", owner)
+    finally:
+        frame.dispose()
+
+
+def _fill_main_slot(page, group, owner, position, aspect_ratio, filename, name, source, review):
+    """只在已核实的空位选择本批素材，复查图位后再决定如何恢复。"""
+    slot = group.locator(".drag-item").nth(position - 1)
+    image = slot.locator("img")
+    picker = page.frame_locator(PICKER)
+    progress = f"{aspect_ratio} 主图已核对 {position - 1}/5，正在填写第 {position} 格"
+    target = f"目标文件「{filename}」，本批素材名「{name}」"
+    verified_source = re.compile(re.escape(source))
+    resuming = False
+    while True:
+        if page.is_closed():
+            raise NeedsAttention(f"千牛发品页已关闭。{progress}")
+        try:
+            checkpoint(progress)
+            if resuming:
+                try:
+                    playwright_expect(image).to_have_attribute("src", verified_source, timeout=SLOT_SETTLE_MS)
+                    return
+                except (PlaywrightError, AssertionError):
+                    pass
+            current = image.evaluate_all("images => images.map(image => image.getAttribute('src'))")
+            if len(current) == 1 and source in (current[0] or ""):
+                return
+            if current:
+                raise NeedsAttention("当前图位的图片与本批目标不符，请在千牛移除或更换这张图")
+            if not resuming or not page.locator(PICKER).count():
+                open_main_image_picker(page, position, aspect_ratio)
+            if not _picker_matches_slot(page, slot, owner):
+                raise NeedsAttention(f"无法确认素材窗口属于第 {position} 格，请从这个空位重新打开素材库")
+            tile = _main_tile(picker, name)
+            try:
+                playwright_expect(tile).to_have_count(1, timeout=WAIT_MS)
+                tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=SLOT_CLICK_MS)
+            except (PlaywrightError, AssertionError):
+                # 点击超时也可能已生效，先等待千牛回写图位，再决定是否请求人工。
+                pass
+            try:
+                playwright_expect(image).to_have_attribute("src", verified_source, timeout=SLOT_SETTLE_MS)
+                return
+            except (PlaywrightError, AssertionError) as error:
+                raise NeedsAttention("本次选择尚未在图位回读成功，请检查素材窗口或手动选择目标图片") from error
+        except (NeedsAttention, PlaywrightError) as error:
+            if page.is_closed():
+                raise NeedsAttention(f"千牛发品页已关闭。{progress}") from error
+            reason = str(error) if isinstance(error, NeedsAttention) else "素材窗口或图位发生变化，请核对当前页面"
+            message = f"{progress}。{target}。{reason}。"
+            if review is None:
+                raise NeedsAttention(message) from error
+            try:
+                review(page, message)
+            except NeedsAttention as feedback_error:
+                if page.is_closed():
+                    raise NeedsAttention(f"千牛发品页已关闭。{progress}") from feedback_error
+                raise
+            resuming = True
 
 
 def _uploaded_sources(page, group, names, aspect_ratio, on_attention):
@@ -83,10 +172,13 @@ def open_main_image_picker(page: Page, position: int, aspect_ratio: str = "1:1")
 
 
 @qianniu_operation
-def upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1", on_attention: Callable[[str], None] | None = None) -> None:
+def upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1", on_attention: Callable[[str], None] | None = None,
+                       *, on_slot_review: Callable[[Page, str], None] | None = None) -> None:
     """上传并填入五张主图；参数：商品页、有序的五张图片、比例；返回：无，失败抛错。"""
     with intercept_file_dialogs(page):
-        if on_attention is not None:
+        if on_slot_review is not None:
+            _upload_main_images(page, files, aspect_ratio, on_attention=on_attention, on_slot_review=on_slot_review)
+        elif on_attention is not None:
             _upload_main_images(page, files, aspect_ratio, on_attention=on_attention)
         elif aspect_ratio == "1:1":
             _upload_main_images(page, files)
@@ -94,7 +186,8 @@ def upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1",
             _upload_main_images(page, files, aspect_ratio)
 
 
-def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1", on_attention: Callable[[str], None] | None = None) -> None:
+def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1", on_attention: Callable[[str], None] | None = None,
+                        *, on_slot_review: Callable[[Page, str], None] | None = None) -> None:
     """执行主图上传；参数：页面、五张图片；返回：无，外层负责请求拦截。"""
     if len(files) != 5 or any(not path.is_file() for path in files):
         raise ValueError("必须提供五张存在的主图文件")
@@ -134,35 +227,22 @@ def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1"
     sources = _uploaded_sources(page, group, names, aspect_ratio, on_attention)
     logger.info("5 张素材上传成功，开始按文件编号填入主图位置")
 
-    existing = group.locator(".drag-item img").evaluate_all("images => images.map(image => image.getAttribute('src'))")
-    if existing and (len(existing) != len(sources) or not all(
-        source in (actual or "") for source, actual in zip(sources, existing)
-    )):
-        raise NeedsAttention(f"{aspect_ratio} 主图的数量或顺序与本批素材不一致，请核对已填图片")
-    for position, (path, name, source) in enumerate(zip(files, names, sources), start=1):
-        step = f"选择第 {position} 张 {aspect_ratio} 主图（{path.name}）"
-        wait_for_human_verification(page, on_attention, step=step)
-        slot_image = group.locator(".drag-item").nth(position - 1).locator("img")
-        if slot_image.count() == 1 and source in (slot_image.get_attribute("src") or ""):
-            continue
-        open_main_image_picker(page, position, aspect_ratio)
-        tile = _main_tile(picker, name)
-        expect(tile).to_have_count(1, timeout=WAIT_MS)
-        for attempt in range(3):
-            wait_for_human_verification(page, on_attention, step=step)
-            # 如果之前的点击已生效，不再重复点击，避免取消已选图片。
-            if slot_image.count() and source in (slot_image.get_attribute("src") or ""):
-                break
+    review = on_slot_review
+    if review is None and on_attention is not None:
+        def review(_, message):
+            on_attention(f"{message}\n在千牛处理后输入“继续”。")
+    owner = _watch_picker_owner(page)
+    try:
+        for position, (path, name, source) in enumerate(zip(files, names, sources), start=1):
+            _fill_main_slot(page, group, owner, position, aspect_ratio, path.name, name, source, review)
+            logger.info("%s 主图 %s/5 已填入并核对：%s", aspect_ratio, position, path.name)
+    finally:
+        if not page.is_closed():
             try:
-                page_step(lambda: tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=5_000), completed=lambda: slot_image.count() == 1 and source in (slot_image.get_attribute("src") or ""))
-                wait_for_human_verification(page, on_attention, step=step)
-                break
-            except PlaywrightTimeoutError:
-                if not has_human_verification(page) or attempt == 2:
-                    raise
-                wait_for_human_verification(page, on_attention, step=step)
-        expect(slot_image).to_have_attribute("src", re.compile(re.escape(source)), timeout=WAIT_MS)
-        logger.info("%s 主图 %s/5 已填入并核对：%s", aspect_ratio, position, path.name)
+                owner.evaluate("state => state.dispose()")
+                owner.dispose()
+            except PlaywrightError:
+                logger.debug("素材窗口核对监听已随页面退出")
 
     page_step(lambda: page.locator(f'span[title="{aspect_ratio}主图"]').click(), completed=lambda: page.locator(PICKER).count() == 0)
     expect(page.locator(PICKER)).to_have_count(0, timeout=WAIT_MS)
@@ -187,9 +267,12 @@ def _image_group(page: Page, aspect_ratio: str):
 
 
 @qianniu_operation
-def upload_portrait_images(page: Page, files: list[Path], on_attention: Callable[[str], None] | None = None) -> None:
+def upload_portrait_images(page: Page, files: list[Path], on_attention: Callable[[str], None] | None = None,
+                           *, on_slot_review: Callable[[Page, str], None] | None = None) -> None:
     """上传五张3:4主图；参数：页面、有序图片路径；返回：无，失败抛错。"""
-    if on_attention is None:
+    if on_slot_review is not None:
+        upload_main_images(page, files, aspect_ratio="3:4", on_attention=on_attention, on_slot_review=on_slot_review)
+    elif on_attention is None:
         upload_main_images(page, files, aspect_ratio="3:4")
     else:
         upload_main_images(page, files, aspect_ratio="3:4", on_attention=on_attention)

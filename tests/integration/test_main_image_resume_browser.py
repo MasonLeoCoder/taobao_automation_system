@@ -20,6 +20,7 @@ EDITOR = """
 window.assets = [];
 window.opens = [];
 window.uploads = 0;
+window.selections = [];
 function closePicker(){ document.querySelector('iframe')?.remove(); }
 function openPicker(ratio, slot){
     closePicker();
@@ -44,6 +45,7 @@ function renderGroup(group, ratio){
     }
 }
 function choose(name){
+    selections.push(name);
     const image = document.createElement('img');
     image.src = 'https://qianniu.test/images/' + name;
     currentSlot.replaceChildren(image);
@@ -68,6 +70,8 @@ function gallery(){
         button.innerHTML = '<img width="24" height="24">';
         button.firstChild.src = 'https://qianniu.test/images/' + name;
         button.onclick = () => parent.choose(name);
+        if (parent.blockThird && name === parent.assets[2])
+            button.style.pointerEvents = 'none';
         const label = document.createElement('span');
         label.textContent = name;
         tile.append(button, label);
@@ -102,6 +106,75 @@ gallery();
 
 @unittest.skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器测试')
 class MainImageResumeBrowserTests(unittest.TestCase):
+    def test_third_slot_resumes_after_manual_picker_or_image_changes(self):
+        cases = ("保留窗口", "手动重开", "窗口关闭", "手动选对", "手动选错", "打开其他图位")
+        with TemporaryDirectory() as folder, sync_playwright() as playwright, ExitStack() as cleanup:
+            files = [Path(folder) / f'{index}.png' for index in range(1, 6)]
+            for path in files:
+                path.write_bytes(b'fixture')
+            browser = playwright.chromium.launch(headless=True)
+            cleanup.callback(browser.close)
+            for scenario in cases:
+                with self.subTest(scenario=scenario):
+                    context = browser.new_context()
+                    try:
+                        context.route('**/editor', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=EDITOR))
+                        context.route('**/sucai-selector-ng', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=PICKER))
+                        context.route('**/images/**', lambda route: route.fulfill(status=204, body=''))
+                        page = context.new_page()
+                        page.goto('https://qianniu.test/editor')
+                        page.evaluate('window.blockThird=true')
+                        group = product_images._image_group(page, "3:4")
+                        slots = group.locator(".drag-item")
+                        prompts = []
+                        opens_at_resume = None
+
+                        def review(editor, message):
+                            nonlocal opens_at_resume
+                            self.assertIs(editor, page)
+                            prompts.append(message)
+                            self.assertIn("已核对 2/5，正在填写第 3 格", message)
+                            self.assertIn("目标文件「3.png」", message)
+                            self.assertIn(page.evaluate('assets[2]'), message)
+                            page.evaluate('window.blockThird=false')
+                            if len(prompts) == 2:
+                                if scenario == "手动选错":
+                                    self.assertIn("图片与本批目标不符", message)
+                                    page.evaluate('choose(assets[2])')
+                                else:
+                                    self.assertEqual(scenario, "打开其他图位")
+                                    self.assertIn("无法确认素材窗口属于第 3 格", message)
+                                    page.evaluate('closePicker()')
+                                    slots.nth(2).locator(".empty-container").click()
+                            elif scenario == "保留窗口":
+                                page.frame_locator(product_images.PICKER).locator('[class*="imgBox"]').nth(2).evaluate(
+                                    "element => element.style.pointerEvents = ''")
+                            elif scenario in {"手动重开", "窗口关闭", "打开其他图位"}:
+                                page.evaluate('closePicker()')
+                                if scenario != "窗口关闭":
+                                    position = 3 if scenario == "打开其他图位" else 2
+                                    slots.nth(position).locator(".empty-container").click()
+                            else:
+                                selected = 4 if scenario == "手动选错" else 2
+                                page.evaluate('index => choose(assets[index])', selected)
+                            opens_at_resume = page.evaluate('opens.length')
+
+                        popups = PopupGuard(context, self.fail, Path(folder))
+                        with VerificationGuard(context, self.fail, popup_guard=popups), patch.multiple(
+                            product_images, WAIT_MS=2500, SLOT_CLICK_MS=900, SLOT_SETTLE_MS=350
+                        ):
+                            product_images.upload_main_images(page, files, "3:4", on_slot_review=review)
+                        self.assertEqual(len(prompts), 2 if scenario in {"手动选错", "打开其他图位"} else 1)
+                        self.assertEqual(page.evaluate('uploads'), 1)
+                        sources = group.locator('img').evaluate_all('images => images.map(image => image.src.split("/").at(-1))')
+                        assets = page.evaluate('assets')
+                        self.assertEqual(sources, assets)
+                        selections = page.evaluate('selections')
+                        self.assertEqual(selections, assets[:2] + ([assets[4]] if scenario == "手动选错" else []) + assets[2:])
+                        self.assertEqual(page.evaluate('opens.length') - opens_at_resume, 3 if scenario == "窗口关闭" else 2)
+                    finally:
+                        context.close()
+
     def test_main_images_resume_and_upload_exactly_once(self):
         cases = [('1:1', False, False, False), ('1:1', True, False, False),
                  ('3:4', False, True, False), ('3:4', False, True, True)]
