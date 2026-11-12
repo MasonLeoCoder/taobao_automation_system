@@ -7,7 +7,7 @@ from uuid import uuid4
 from playwright.sync_api import Page
 from ecommerce.modules.product.assets import SkuImageInputs
 from ecommerce.shared.exceptions import NeedsAttention
-from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, layered_sku_rows
+from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, LAYERED_DIMENSIONS, layered_sku_rows
 from .verification import qianniu_operation, checkpoint, expect, page_step, choose_file_dialog, intercept_file_dialogs
 
 DRAWER = '.sku-component-sku-detail-drawer:visible'
@@ -87,18 +87,47 @@ def _tile(page, asset):
     return tile
 
 
-def _fill_search_image(page, drawer, name, file, asset):
+def _asset_for(page, file, uploaded_assets):
+    """素材入库后立即记录，供同一次任务的其他图位复用。"""
+    if file not in uploaded_assets:
+        uploaded_assets[file] = _upload_asset(page, file)
+    return uploaded_assets[file]
+
+
+def _layered_media_name(drawer, name, expected, combinations):
+    """核对详情中的独立属性，再取得搜索主图窗口使用的完整名称。"""
+    values = []
+    for label in LAYERED_DIMENSIONS:
+        heading = drawer.page.locator('.sell-component-info-wrapper-label').filter(has_text=re.compile(f'^{re.escape(label)}$'))
+        section = drawer.locator('.sell-component-info-wrapper-wrap:visible').filter(has=heading)
+        cell = section.locator('td.is-sale-prop:visible')
+        if section.count() != 1 or cell.count() != 1:
+            raise NeedsAttention(f'SKU「{name}」详情无法唯一读取「{label}」')
+        values.append(' '.join(cell.inner_text().split()))
+    pair = tuple(' '.join(value.split()) for value in expected)
+    if tuple(values) != pair:
+        raise NeedsAttention(f'SKU「{name}」详情的颜色和尺码与 Excel 不一致，页面显示「{" × ".join(values)}」')
+    platform_name = ' '.join(pair)
+    if sum(' '.join(' '.join(combination).split()) == platform_name for combination in combinations.values()) != 1:
+        raise NeedsAttention(f'SKU「{name}」与其他规格在搜索主图窗口显示同名，无法唯一选图')
+    return platform_name
+
+
+def _fill_search_image(page, drawer, name, file, uploaded_assets):
     """只为指定SKU选择搜索图；参数：页面、面板、规格、文件、可复用素材；返回：所用素材。"""
     _reset_drawer(drawer)
     batch = page.locator(BATCH)
     trigger = drawer.locator(SEARCH_IMAGE).locator('[class*="skuImagesHocContainer-"]')
     page_step(lambda: trigger.click(timeout=WAIT_MS), completed=lambda: batch.count() == 1)
     expect(batch).to_have_count(1, timeout=WAIT_MS)
-    item = batch.locator('.sku-item').filter(has=page.get_by_text(name, exact=True))
-    expect(item).to_have_count(1, timeout=WAIT_MS)
+    expect(batch.locator('.sku-item').first).to_be_visible(timeout=WAIT_MS)
+    label = page.locator('.sku-text').and_(page.get_by_text(name, exact=True))
+    item = batch.locator('.sku-item').filter(has=label)
+    if item.count() != 1:
+        raise NeedsAttention(f'搜索主图窗口无法唯一定位规格「{name}」')
     # 批量窗口可能默认勾选第一行，切换目标前先取消其他规格，避免同图误填多个SKU。
     for other in batch.locator('.sku-item').all():
-        if other.locator('.sku-text').inner_text() == name:
+        if other.locator(label).count():
             continue
         slot = other.locator('.sku-image-container')
         if 'selected' in (slot.get_attribute('class') or '').split():
@@ -108,8 +137,10 @@ def _fill_search_image(page, drawer, name, file, asset):
         page_step(lambda: target.click(timeout=WAIT_MS), completed=lambda: 'selected' in (target.get_attribute('class') or '').split())
     expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
     expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
-    asset = asset or _upload_asset(page, file)
+    asset = _asset_for(page, file, uploaded_assets)
     tile = _tile(page, asset)
+    expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
+    expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
     preview = target.locator('img')
     if not _same_image(preview, asset.source):
         page_step(lambda: tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=WAIT_MS), completed=lambda: _same_image(preview, asset.source))
@@ -120,14 +151,14 @@ def _fill_search_image(page, drawer, name, file, asset):
     return asset
 
 
-def _fill_spec_image(page, drawer, file, asset):
+def _fill_spec_image(page, drawer, file, uploaded_assets):
     """填写当前规格的图片；参数：页面、面板、文件、可复用素材；返回：所用素材。"""
     _reset_drawer(drawer)
     target = drawer.locator(SPEC_IMAGE)
     picker = page.locator(PICKER)
     page_step(lambda: target.locator('.empty-container').click(timeout=WAIT_MS), completed=lambda: picker.count() == 1)
     expect(picker).to_have_count(1, timeout=WAIT_MS)
-    asset = asset or _upload_asset(page, file)
+    asset = _asset_for(page, file, uploaded_assets)
     tile = _tile(page, asset)
     checkbox = tile.locator('input[type="checkbox"]')
     if not checkbox.is_checked():
@@ -206,34 +237,34 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                 continue
             page_step(lambda: buttons.click(timeout=WAIT_MS), completed=lambda: drawer.count() == 1)
         expect(drawer).to_have_count(1, timeout=WAIT_MS)
-        if not combinations and drawer.locator(CREATED_NAMES).input_value() != name:
+        platform_name = name
+        if combinations:
+            platform_name = _layered_media_name(drawer, name, combinations[name], combinations)
+        elif drawer.locator(CREATED_NAMES).input_value() != name:
             raise NeedsAttention(f'已打开的SKU详情不是“{name}”，未填写或覆盖其他规格')
         original = _core_values(row)
         filled, selected = [], {}
-        asset = uploaded_assets.get(file)
         if file:
             writers = [(IMAGE_FIELDS[0], SEARCH_IMAGE, _fill_search_image),
                        (IMAGE_FIELDS[1], SPEC_IMAGE, _fill_spec_image)]
-            platform_name = name
             if combinations:
                 writers = writers[:1]
-                name_field = drawer.locator(CREATED_NAMES)
-                platform_name = name_field.input_value() if name_field.count() == 1 else ''
-                def labels(pair):
-                    return {separator.join(pair) for separator in (' ', '/', ' / ', ' × ', '×', ';', '；')}
-                candidates = [sku for sku, pair in combinations.items() if platform_name in labels(pair)]
-                if candidates != [name]:
-                    raise NeedsAttention(f'SKU「{name}」的搜索主图入口无法唯一核对颜色和尺码')
             for label, selector, writer in writers:
                 cell = drawer.locator(selector)
                 if cell.count() != 1:
                     _skip(result, name, label, '页面缺少唯一的图片填写区域')
                     continue
-                if cell.locator('img').count():
-                    _skip(result, name, label, '页面已有图片，未覆盖；请核对是否对应当前素材')
+                current_images = cell.locator('img')
+                if current_images.count():
+                    asset = uploaded_assets.get(file)
+                    if combinations and asset and _same_image(current_images, asset.source):
+                        selected[selector] = asset
+                        filled.append(label)
+                    else:
+                        _skip(result, name, label, '页面已有图片，未覆盖；请核对是否对应当前素材')
                     continue
-                asset = writer(page, drawer, platform_name, file, asset) if label == 'SKU搜索主图' else writer(page, drawer, file, asset)
-                uploaded_assets[file] = asset
+                asset = (writer(page, drawer, platform_name, file, uploaded_assets) if label == 'SKU搜索主图'
+                         else writer(page, drawer, file, uploaded_assets))
                 selected[selector] = asset
                 filled.append(label)
         if not title_reason:

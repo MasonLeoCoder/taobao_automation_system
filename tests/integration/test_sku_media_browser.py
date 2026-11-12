@@ -97,6 +97,16 @@ class SkuMediaBrowserTests(unittest.TestCase):
                         cell.textContent = value;
                         row.prepend(cell);
                     }
+                } else {
+                    row.querySelector('.sku-unique-title-textarea').remove();
+                    for (const [label, value] of [['颜色分类', record.color], ['适用尺码', record.size]]) {
+                        const cell = row.insertCell();
+                        cell.innerHTML = '<div class="sell-component-info-wrapper-wrap">'
+                            + '<div class="sell-component-info-wrapper-label-wrap"><span class="sell-component-info-wrapper-label"></span></div>'
+                            + '<table><tbody><tr><td class="is-sale-prop"></td></tr></tbody></table></div>';
+                        cell.querySelector('.sell-component-info-wrapper-label').textContent = label;
+                        cell.querySelector('.is-sale-prop').textContent = value;
+                    }
                 }
                 return row;
             };
@@ -112,6 +122,21 @@ class SkuMediaBrowserTests(unittest.TestCase):
         titles = dict(zip(names, ['黑色中号宠物背包', '黑色大号宠物背包', '灰色中号宠物背包']))
         shared = self.images.files[NAMES[0]]
         images = SkuImageInputs({NAMES[0]: shared, NAMES[1]: shared, '规格三': self.images.files[NAMES[1]]}, {})
+        # 详情里的颜色与表格不一致时，选图窗口和素材上传都不能开始。
+        self.page.evaluate("""() => {
+            const original = window.openDetail;
+            window.openDetail = index => {
+                original(index);
+                document.querySelector('.sku-component-sku-detail-drawer td.is-sale-prop').textContent = '错误颜色';
+            };
+            window.restoreDetail = () => window.openDetail = original;
+        }""")
+        with self.guard(), self.assertRaisesRegex(NeedsAttention, '详情的颜色和尺码与 Excel 不一致'):
+            platform.fill_sku_media(self.page, names, images, TITLE, combinations=combinations)
+        self.assertEqual(self.page.evaluate('uploadCount'), 0)
+        self.assertEqual(self.page.locator(platform.BATCH).count(), 0)
+        self.page.locator(platform.DRAWER).evaluate('drawer => drawer.remove()')
+        self.page.evaluate('() => { restoreDetail(); }')
         # 本例验证选图归属，直接给模拟选择器的文件输入供料，避免系统文件窗口的偶发超时。
         chooser = SimpleNamespace(set_files=self.page.frame_locator(platform.PICKER).locator('input[type="file"]').set_input_files)
         with self.guard(), patch.object(platform, 'choose_file_dialog', return_value=chooser):
@@ -125,6 +150,8 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertEqual(rows[0]['search'], rows[2]['search'])
         self.assertNotEqual(rows[0]['search'], rows[1]['search'])
         self.assertTrue(all(row.get('search') and not row.get('spec') for row in rows))
+        self.assertEqual([(row['price'], row['stock']) for row in rows],
+                         [('19.00', '20'), ('29', '5'), ('17.00', '10')])
 
     def test_missing_one_image_still_fills_its_title_and_all_other_sku_fields(self):
         inputs = SkuImageInputs({NAMES[1]: self.images.files[NAMES[1]]}, {NAMES[0]: '未找到同名图片'})
