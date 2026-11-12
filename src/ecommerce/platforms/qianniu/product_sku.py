@@ -1,10 +1,12 @@
 """千牛自定义销售规格创建、SKU明细填写及回读核对。"""
+import json
 import re
 from decimal import Decimal, InvalidOperation
 from collections import Counter
 from logging import getLogger
 from playwright.sync_api import Error as PlaywrightError, Page, expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
+from .layered_sku_table import FIXED_TABLE, READ_LAYERED_TABLE
 from .verification import checkpoint, qianniu_operation, expect, page_step
 
 SKU_GROUP = "#sell-field-sku"
@@ -105,42 +107,20 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
     return names
 
 
-def layered_sku_rows(group, combinations):
+def layered_sku_rows(group, combinations, *, only=None):
     """按表头读取组合，兼容同色行合并。核对通过后才返回 Excel 规格到行的映射。"""
     rows = group.locator(SKU_ROWS)
-    actual = rows.evaluate_all("""(rows, labels) => {
-        const table = rows[0]?.closest('table');
-        if (!table || !rows.every(row => row.closest('table') === table)) return [];
-        const headers = Array.from(table.tHead?.rows || []);
-        const indexes = labels.map(label => {
-            const matches = headers.flatMap(row => Array.from(row.cells))
-                .filter(cell => cell.textContent.trim() === label && cell.colSpan === 1);
-            return matches.length === 1 ? matches[0].cellIndex : -1;
-        });
-        if (indexes.some(index => index < 0) || new Set(indexes).size !== labels.length) return [];
-        const carried = new Map();
-        return rows.map(row => {
-            const grid = new Map(carried);
-            for (const [index, entry] of carried) {
-                if (--entry.remaining === 0) carried.delete(index);
-            }
-            let column = 0;
-            for (const cell of row.cells) {
-                while (grid.has(column)) column++;
-                const entry = {value: cell.innerText.trim(), remaining: cell.rowSpan - 1};
-                for (let offset = 0; offset < cell.colSpan; offset++) {
-                    grid.set(column, entry);
-                    if (entry.remaining > 0) carried.set(column, entry);
-                    column++;
-                }
-            }
-            return indexes.map(index => grid.get(index)?.value || '');
-        });
-    }""", list(LAYERED_DIMENSIONS))
-    if not actual or any(not all(values) for values in actual):
-        raise NeedsAttention("无法通过千牛表头逐条核对颜色和尺码，请确认已选分层展示并且规格表完整")
-    pairs = [tuple(values) for values in actual]
-    expected = {tuple(values): name for name, values in combinations.items()}
+    actual = rows.evaluate_all(READ_LAYERED_TABLE, list(LAYERED_DIMENSIONS))
+    if actual.get('error'):
+        raise NeedsAttention(actual['error'])
+    entries = actual['entries']
+    pairs = [tuple(item['pair']) for item in entries]
+    expected = {}
+    for name, values in combinations.items():
+        pair = tuple(" ".join(value.split()) for value in values)
+        if pair in expected:
+            raise NeedsAttention("Excel 组合的显示文字无法唯一匹配：" + " × ".join(pair))
+        expected[pair] = name
     unexpected = dict.fromkeys(pair for pair in pairs if pair not in expected)
     missing = [pair for pair in expected if pair not in pairs]
     duplicates = [pair for pair, count in Counter(pairs).items() if count > 1]
@@ -148,7 +128,25 @@ def layered_sku_rows(group, combinations):
         issues = [label + "：" + "、".join(" × ".join(pair) for pair in values)
                   for label, values in (("多出", unexpected), ("缺少", missing), ("重复", duplicates)) if values]
         raise NeedsAttention("千牛分层 SKU 与 Excel 不一致。" + "；".join(issues))
-    return {expected[pair]: rows.nth(index) for index, pair in enumerate(pairs)}
+    result = {}
+    for item, pair in zip(entries, pairs):
+        name = expected[pair]
+        if only is not None and name != only:
+            continue
+        if not item['codeId']:
+            result[name] = rows.nth(item['index'])
+            continue
+        code_cell = group.page.locator(f'td[id={json.dumps(item["codeId"], ensure_ascii=False)}] input')
+        row = rows.filter(has=code_cell)
+        for label in ("价格", "数量"):
+            row = row.filter(has=group.page.locator(f'{DETAIL_CELLS[label]} input'))
+        if not actual['fixed']:
+            fixed_rows = ', '.join(f'{selector.strip()} tr' for selector in FIXED_TABLE.split(','))
+            row = row.and_(group.page.locator(f'tr:not({fixed_rows})'))
+        if row.count() != 1:
+            raise NeedsAttention(f"SKU「{name}」的商家编码输入行无法唯一确认")
+        result[name] = row
+    return result
 
 
 def _dimension_heading(label):
@@ -345,9 +343,9 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
     expect(group).to_be_visible(timeout=WAIT_MS)
     rows = group.locator(SKU_ROWS)
     expect(rows.first).to_be_visible(timeout=WAIT_MS)
-    def matched_rows():
+    def matched_rows(only=None):
         if combinations:
-            return layered_sku_rows(group, combinations)
+            return layered_sku_rows(group, combinations, only=only)
         actual_names = []
         for row in rows.all():
             name_field = row.locator(CREATED_NAMES)
@@ -378,12 +376,18 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
     for index, detail in enumerate(details, start=1):
         name = detail["销售规格"]
         checkpoint(f"填写SKU明细 {index}/{len(details)}：{name}")
-        row = matched_rows()[name] if combinations else matching[name]
+        row = matched_rows(only=name)[name] if combinations else matching[name]
         if not combinations:
             expect(row.locator(CREATED_NAMES)).to_have_value(name, timeout=WAIT_MS)
         for key, selector in DETAIL_CELLS.items():
+            if combinations:
+                row = matched_rows(only=name)[name]
             _fill_sku_field(row.locator(selector).get_by_role("textbox"), detail[key], key != "商家编码")
+        if combinations:
+            row = matched_rows(only=name)[name]
         _select_sku_category(page, row, category, name)
+        if combinations:
+            row = matched_rows(only=name)[name]
         errors = row.locator(".sell-o-message:visible, [role='alert']:visible")
         messages = [message.strip() for message in errors.all_text_contents() if message.strip()]
         if messages:
@@ -394,7 +398,8 @@ def fill_sku_details(page: Page, details: list[dict[str, str]], *, category: str
                     name, detail["价格"], detail["数量"], detail["商家编码"], category)
     for detail in details:
         checkpoint(f"最终核对SKU明细：{detail['销售规格']}")
-        _verify_sku_detail(matched_rows()[detail["销售规格"]] if combinations else matching[detail["销售规格"]],
+        name = detail["销售规格"]
+        _verify_sku_detail(matched_rows(only=name)[name] if combinations else matching[name],
                            detail, category, layered=bool(combinations))
     logger.info("全部SKU明细填写完成：共%d项，按规格名称匹配", len(details))
     return details

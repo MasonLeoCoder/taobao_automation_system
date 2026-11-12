@@ -167,6 +167,31 @@ class SalesSpecificationsBrowserTests(unittest.TestCase):
         with self.assertRaisesRegex(NeedsAttention, "多出：黑色 × L 码；缺少：灰色 × L 码"):
             layered_sku_rows(group, {**combinations, "规格二": ("灰色", "L 码")})
 
+    def test_fixed_columns_join_editable_rows_by_key_and_reject_ambiguous_layout(self):
+        self.page.set_content("""
+          <div id="sell-field-sku">
+            <div class="next-table-fixed-left"><table>
+              <thead><tr><th>颜色分类</th><th>适用尺码</th></tr></thead>
+              <tbody><tr class="sku-table-row" data-row-key="standard"><td rowspan="2">黑色</td><td>M 码</td></tr>
+              <tr class="sku-table-row" data-row-key="large"><td>L 码</td></tr></tbody>
+            </table></div>
+            <table><tbody>
+              <tr class="sku-table-row" data-row-key="large" id="edit-large">
+                <td id="L-skuPrice"><input></td><td id="L-skuStock"><input></td><td id="L-skuOuterId"><input></td></tr>
+              <tr class="sku-table-row" data-row-key="standard" id="edit-standard">
+                <td id="M-skuPrice"><input></td><td id="M-skuStock"><input></td><td id="M-skuOuterId"><input></td></tr>
+            </tbody></table>
+          </div>
+        """)
+        group = self.page.locator("#sell-field-sku")
+        combinations = {"规格一": ("黑色", "M 码"), "规格二": ("黑色", "L 码")}
+        rows = layered_sku_rows(group, combinations)
+        self.assertEqual(rows["规格一"].get_attribute("id"), "edit-standard")
+        self.assertEqual(rows["规格二"].get_attribute("id"), "edit-large")
+        group.locator("#edit-large").evaluate("row => row.removeAttribute('data-row-key')")
+        with self.assertRaisesRegex(NeedsAttention, "无法将千牛表头"):
+            layered_sku_rows(group, combinations)
+
     def test_variable_count_order_and_repeat_do_not_add_extra_rows(self):
         for names in (["单规格"], ["规格1", "规格10", "规格2"]):
             with self.subTest(names=names):

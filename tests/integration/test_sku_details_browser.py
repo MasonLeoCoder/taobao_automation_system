@@ -77,6 +77,44 @@ class SkuDetailsBrowserTests(unittest.TestCase):
     def seed(self, records):
         self.page.evaluate("records => seedRows(records)", records)
 
+    def test_layered_split_header_and_merged_color_survive_row_reorder(self):
+        self.seed([{"name": "large"}, {"name": "standard"}])
+        self.page.evaluate("""() => {
+            const body = document.querySelector('#sell-field-sku tbody');
+            const header = document.createElement('table');
+            header.innerHTML = '<thead><tr><th>颜色分类</th><th>适用尺码</th><th colspan="6">编辑字段</th>'
+                + '<th class="next-table-scrollbar"></th></tr></thead>';
+            body.closest('table').before(header);
+            const [large, standard] = body.rows;
+            for (const [row, size] of [[large, '大件尺码'], [standard, '标准尺码']]) {
+                const cell = document.createElement('td');
+                cell.textContent = size;
+                row.prepend(cell);
+            }
+            const color = document.createElement('td');
+            color.textContent = '卡其配绿色【双肩背包款】';
+            color.rowSpan = 2;
+            large.prepend(color);
+            const field = standard.querySelector('[id$="-skuPrice"] input');
+            field.addEventListener('input', () => {
+                body.prepend(standard);
+                standard.prepend(color);
+            }, {once:true});
+        }""")
+        details = [
+            {"销售规格": "标准", "价格": "84", "数量": "10", "商家编码": "CJ007-01"},
+            {"销售规格": "大件", "价格": "87", "数量": "20", "商家编码": "CJ007-08"},
+        ]
+        combinations = {
+            "标准": ("卡其配绿色【双肩背包款】", "标准尺码"),
+            "大件": ("卡其配绿色【双肩背包款】", "大件尺码"),
+        }
+        with VerificationGuard(self.context):
+            fill_sku_details(self.page, details, combinations=combinations)
+        observed = self.page.locator(".sku-table-row").evaluate_all("""rows => rows.map(row =>
+            ['skuPrice','skuStock','skuOuterId'].map(field => row.querySelector('[id$="-' + field + '"] input').value))""")
+        self.assertEqual(observed, [['84.00', '10', 'CJ007-01'], ['87.00', '20', 'CJ007-08']])
+
     def test_reversed_page_order_matches_name_and_repeat_preserves_codes(self):
         self.seed([{"name": "规格二"}, {"name": "规格一"}])
         with VerificationGuard(self.context):

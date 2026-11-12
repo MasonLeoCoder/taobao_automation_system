@@ -176,7 +176,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
         if title and sum(1 if ord(char) < 128 else 2 for char in title) > 30:
             title_reason = 'SKU 搜索标题超过 30 字符限制'
         checkpoint(f'填写SKU图片及搜索标题：{name}')
-        matching = [layered_sku_rows(group, combinations)[name]] if combinations else [
+        matching = [layered_sku_rows(group, combinations, only=name)[name]] if combinations else [
             rows.nth(i) for i in range(rows.count()) if rows.nth(i).locator(CREATED_NAMES).input_value() == name]
         if len(matching) != 1:
             for label in (*image_fields, 'SKU搜索标题'):
@@ -256,7 +256,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
         page_step(lambda: drawer.get_by_role('button', name='确定', exact=True).click(timeout=WAIT_MS), completed=lambda: drawer.count() == 0)
         expect(drawer).to_have_count(0, timeout=WAIT_MS)
         if combinations:
-            row = layered_sku_rows(group, combinations)[name]
+            row = layered_sku_rows(group, combinations, only=name)[name]
         if _core_values(row) != original:
             raise NeedsAttention(f'SKU“{name}”详情保存后原有规格、价格、数量或编码发生变化，请人工核对')
         for selector, uploaded in selected.items():

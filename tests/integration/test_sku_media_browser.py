@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from playwright.sync_api import sync_playwright
 from ecommerce.modules.product.assets import SkuImageInputs
@@ -81,15 +82,17 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertTrue(all(set(fields) == set(platform.IMAGE_FIELDS) for fields in repeated.skipped.values()))
         self.assert_core_unchanged()
 
-    def test_layered_same_color_keeps_search_images_and_titles_on_the_correct_size(self):
+    def test_layered_split_header_checks_shared_and_distinct_search_images(self):
         self.page.evaluate("""() => {
             const table = document.querySelector('#sell-field-sku table');
-            table.createTHead().innerHTML = '<tr><th>颜色分类</th><th>适用尺码</th></tr>';
+            const header = document.createElement('table');
+            header.createTHead().innerHTML = '<tr><th>颜色分类</th><th>适用尺码</th><th colspan="8">其他字段</th></tr>';
+            table.before(header);
             const original = rowOf;
             rowOf = (record, index, detail) => {
                 const row = original(record, index, detail);
                 if (!detail) {
-                    for (const value of [record.size, '黑色']) {
+                    for (const value of [record.size, record.color]) {
                         const cell = document.createElement('td');
                         cell.textContent = value;
                         row.prepend(cell);
@@ -97,20 +100,29 @@ class SkuMediaBrowserTests(unittest.TestCase):
                 }
                 return row;
             };
-            seedRows(records.map((record, index) => {
+            const data = records.map((record, index) => {
                 const size = index ? 'M 码' : 'L 码';
-                return {...record, size, name:'黑色 ' + size};
-            }));
+                return {...record, size, color:'黑色', name:'黑色 ' + size};
+            });
+            data.splice(1, 0, {name:'灰色 M 码', size:'M 码', color:'灰色', price:'29', stock:'5', code:'0003'});
+            seedRows(data);
         }""")
-        combinations = dict(zip(NAMES, [('黑色', 'M 码'), ('黑色', 'L 码')]))
-        titles = dict(zip(NAMES, ['黑色中号宠物背包', '黑色大号宠物背包']))
-        with self.guard():
-            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE,
+        names = [*NAMES, '规格三']
+        combinations = dict(zip(names, [('黑色', 'M 码'), ('黑色', 'L 码'), ('灰色', 'M 码')]))
+        titles = dict(zip(names, ['黑色中号宠物背包', '黑色大号宠物背包', '灰色中号宠物背包']))
+        shared = self.images.files[NAMES[0]]
+        images = SkuImageInputs({NAMES[0]: shared, NAMES[1]: shared, '规格三': self.images.files[NAMES[1]]}, {})
+        # 本例验证选图归属，直接给模拟选择器的文件输入供料，避免系统文件窗口的偶发超时。
+        chooser = SimpleNamespace(set_files=self.page.frame_locator(platform.PICKER).locator('input[type="file"]').set_input_files)
+        with self.guard(), patch.object(platform, 'choose_file_dialog', return_value=chooser):
+            result = platform.fill_sku_media(self.page, names, images, TITLE,
                                              sku_titles=titles, combinations=combinations)
         self.assertEqual(result.skipped, {})
         self.assertEqual(self.page.evaluate('uploadCount'), 2)
         rows = self.page.evaluate('records')
-        self.assertEqual([(row['code'], row['title']) for row in rows], [('0002', titles[NAMES[1]]), ('0001', titles[NAMES[0]])])
+        self.assertEqual([(row['code'], row['title']) for row in rows],
+                         [('0002', titles[NAMES[1]]), ('0003', titles['规格三']), ('0001', titles[NAMES[0]])])
+        self.assertEqual(rows[0]['search'], rows[2]['search'])
         self.assertNotEqual(rows[0]['search'], rows[1]['search'])
         self.assertTrue(all(row.get('search') and not row.get('spec') for row in rows))
 
