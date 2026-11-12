@@ -1,18 +1,71 @@
 """千牛商品页 1:1 和 3:4 主图上传及顺序验证。"""
 import logging
 import re
+from time import monotonic
 from pathlib import Path
 from uuid import uuid4
 from collections.abc import Callable
 
 from playwright.sync_api import Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
-from .verification import has_human_verification, wait_for_human_verification, qianniu_operation, expect, page_step, choose_file_dialog, intercept_file_dialogs
+from playwright.sync_api import expect as playwright_expect
+from ecommerce.shared.exceptions import NeedsAttention
+from .verification import checkpoint, has_human_verification, wait_for_human_verification, qianniu_operation, expect, page_step, choose_file_dialog, intercept_file_dialogs
 
 MAIN_GROUP = "#sell-field-mainImagesGroup"
 PICKER = 'iframe[src*="sucai-selector-ng"]:visible'
 FIELD_LABEL = 'span[title="1:1主图"]'
 TILE = 'div[class*="PicList_pic_background"]'
 WAIT_MS = 30_000
+DROPZONE = "点击/拖拽，批量导入文件"
+
+
+def _main_tile(picker, name):
+    return picker.locator(TILE).filter(has=picker.get_by_text(name, exact=True))
+
+
+def _uploaded_sources(page, group, names, aspect_ratio, on_attention):
+    """交付本地文件后只核对本批素材，支持素材窗口关闭后的恢复。"""
+    step = f"核对已上传的 {aspect_ratio} 主图"
+    picker = page.frame_locator(PICKER)
+    success = picker.get_by_text(re.compile(r"^5\s*个文件上传成功$"))
+    panel = picker.locator('[class*="UploadDialog_dialog__"]:visible')
+    deadline = monotonic() + 120
+    while True:
+        checkpoint(step)
+        if page.is_closed():
+            raise NeedsAttention(f"千牛发品页已关闭，{aspect_ratio} 主图上传结果待核对")
+        if not page.locator(PICKER).count():
+            break
+        if success.is_visible():
+            complete = picker.get_by_role("button", name="完成", exact=True)
+            wait_for_human_verification(page, on_attention, step=step)
+            if success.is_visible():
+                page_step(lambda: complete.click(timeout=WAIT_MS), completed=lambda: not success.is_visible())
+            break
+        if not panel.count() and not picker.get_by_text(DROPZONE, exact=True).is_visible() and (
+            _main_tile(picker, names[0]).is_visible() or picker.get_by_text("本地上传", exact=True).is_visible()
+        ):
+            break
+        if monotonic() >= deadline:
+            raise NeedsAttention(f"{aspect_ratio} 主图已交给千牛，但未核实本批 5 张素材，请检查上传结果")
+        page.wait_for_timeout(500)
+
+    if not page.locator(PICKER).count():
+        if group.locator(".drag-item img").count():
+            raise NeedsAttention(f"{aspect_ratio} 主图栏已有图片，请人工核对本批素材和顺序")
+        open_main_image_picker(page, 1, aspect_ratio)
+    sources = []
+    for name in names:
+        tile = _main_tile(picker, name)
+        try:
+            playwright_expect(tile).to_have_count(1, timeout=WAIT_MS)
+            source = tile.locator("img").get_attribute("src", timeout=WAIT_MS)
+        except (PlaywrightError, AssertionError) as error:
+            raise NeedsAttention(f"{aspect_ratio} 主图本批素材未能唯一核对，请检查上传结果：{name}") from error
+        if not source:
+            raise NeedsAttention(f"{aspect_ratio} 主图素材缺少可核对地址：{name}")
+        sources.append(source.split("_320x320")[0])
+    return sources
 
 
 @qianniu_operation
@@ -59,34 +112,42 @@ def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1"
                  "mimeType": "image/png" if path.suffix.lower() == ".png" else "image/jpeg",
                  "buffer": path.read_bytes()}
                 for path, name in zip(files, names)]
-    open_main_image_picker(page, 1, aspect_ratio)
     picker = page.frame_locator(PICKER)
-    page_step(lambda: picker.get_by_text("本地上传", exact=True).click(), completed=lambda: picker.get_by_text("点击/拖拽，批量导入文件", exact=True).is_visible())
-    chooser = choose_file_dialog(page, picker.get_by_text("点击/拖拽，批量导入文件", exact=True))
+    dropzone = picker.get_by_text(DROPZONE, exact=True)
+
+    def prepare_picker():
+        if page.is_closed():
+            raise NeedsAttention("千牛发品页已关闭，请重新启动填写任务")
+        if group.locator(".drag-item img").count():
+            raise NeedsAttention(f"{aspect_ratio} 主图栏已有图片，请先核对当前主图")
+        if not page.locator(PICKER).count():
+            open_main_image_picker(page, 1, aspect_ratio)
+        if not dropzone.is_visible():
+            picker.get_by_text("本地上传", exact=True).click(timeout=WAIT_MS)
+
+    chooser = choose_file_dialog(page, dropzone, timeout=WAIT_MS, prepare=prepare_picker)
     logger.info("开始上传 5 张 %s 主图，素材批次：%s", aspect_ratio, batch)
-    chooser.set_files(payloads)
-    page_step(lambda: picker.get_by_text(re.compile(r"^5\s*个文件上传成功$")).wait_for(
-        state="visible", timeout=120_000))
-    page_step(lambda: page.locator(PICKER).scroll_into_view_if_needed())
-    complete_button = picker.get_by_role("button", name="完成", exact=True)
-    page_step(complete_button.scroll_into_view_if_needed)
-    wait_for_human_verification(page, on_attention, step=f"结束 {aspect_ratio} 主图素材上传")
-    page_step(lambda: complete_button.click(timeout=WAIT_MS), completed=lambda: not complete_button.is_visible())
+    try:
+        chooser.set_files(payloads)
+    except PlaywrightError:
+        logger.warning("%s 主图交付结果待核对，检查本批素材", aspect_ratio)
+    sources = _uploaded_sources(page, group, names, aspect_ratio, on_attention)
     logger.info("5 张素材上传成功，开始按文件编号填入主图位置")
 
-    sources = []
-    for position, (path, name) in enumerate(zip(files, names), start=1):
+    existing = group.locator(".drag-item img").evaluate_all("images => images.map(image => image.getAttribute('src'))")
+    if existing and (len(existing) != len(sources) or not all(
+        source in (actual or "") for source, actual in zip(sources, existing)
+    )):
+        raise NeedsAttention(f"{aspect_ratio} 主图的数量或顺序与本批素材不一致，请核对已填图片")
+    for position, (path, name, source) in enumerate(zip(files, names, sources), start=1):
         step = f"选择第 {position} 张 {aspect_ratio} 主图（{path.name}）"
         wait_for_human_verification(page, on_attention, step=step)
-        open_main_image_picker(page, position, aspect_ratio)
-        picker = page.frame_locator(PICKER)
-        tile = picker.locator(TILE).filter(has=picker.get_by_text(name, exact=True))
-        expect(tile).to_have_count(1, timeout=WAIT_MS)
-        source = tile.locator("img").get_attribute("src")
-        if not source:
-            raise ValueError(f"素材没有图片地址：{path.name}")
-        source = source.split("_320x320")[0]
         slot_image = group.locator(".drag-item").nth(position - 1).locator("img")
+        if slot_image.count() == 1 and source in (slot_image.get_attribute("src") or ""):
+            continue
+        open_main_image_picker(page, position, aspect_ratio)
+        tile = _main_tile(picker, name)
+        expect(tile).to_have_count(1, timeout=WAIT_MS)
         for attempt in range(3):
             wait_for_human_verification(page, on_attention, step=step)
             # 如果之前的点击已生效，不再重复点击，避免取消已选图片。
@@ -101,7 +162,6 @@ def _upload_main_images(page: Page, files: list[Path], aspect_ratio: str = "1:1"
                     raise
                 wait_for_human_verification(page, on_attention, step=step)
         expect(slot_image).to_have_attribute("src", re.compile(re.escape(source)), timeout=WAIT_MS)
-        sources.append(source)
         logger.info("%s 主图 %s/5 已填入并核对：%s", aspect_ratio, position, path.name)
 
     page_step(lambda: page.locator(f'span[title="{aspect_ratio}主图"]').click(), completed=lambda: page.locator(PICKER).count() == 0)

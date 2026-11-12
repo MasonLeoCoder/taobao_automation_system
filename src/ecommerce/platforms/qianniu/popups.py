@@ -48,6 +48,7 @@ def _business_rules(operation: str) -> dict:
         rules["selectors"].append('iframe[src*="sucai-selector-ng"]')
         rules["frame_sources"].append("sucai-selector-ng")
         rules["crop"] = module == "product_details"
+    rules["main_upload"] = module == "product_images"
     if module == "product_sku_media":
         rules["selectors"].extend([".sku-component-sku-detail-drawer", ".batch-fill-sku-image-dialog"])
     if module == "product_video":
@@ -66,6 +67,9 @@ _SCAN = """rules => {
  const matches=(e,sel)=>(e.matches(sel)&&visible(e))||Array.from(e.querySelectorAll(sel)).some(visible);
  const allowed=e=>rules.selectors.some(s=>matches(e,s)) ||
    (rules.crop&&Array.from(e.querySelectorAll('button')).some(b=>visible(b)&&b.innerText.trim()==='确认全部分割')) ||
+   (rules.main_upload&&rules.in_picker&&e.matches('[class*="UploadDialog_dialog__"]')&&
+     Array.from(e.querySelectorAll('button,[role="button"],label,span'))
+       .some(b=>visible(b)&&b.innerText.trim()==='点击/拖拽，批量导入文件')) ||
    (rules.in_picker&&(!!e.querySelector('input[type="file"],[class*="PicList_pic_background"],[class*="VideoList--videoItem--"]')||
      Array.from(e.querySelectorAll('button')).some(b=>/^(本地上传|裁剪|确认全部分割)$/.test(b.innerText.trim()))));
  const result=[];

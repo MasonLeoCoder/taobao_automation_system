@@ -294,18 +294,22 @@ def intercept_file_dialogs(page):
         page.remove_listener("filechooser", intercept)
 
 
-def choose_file_dialog(page, trigger, timeout=30000):
+def choose_file_dialog(page, trigger, timeout=30000, *, prepare=None):
     """获取一次文件选择请求；参数：页面、入口定位器、等待时限；返回：文件选择器，不上传文件。
 
     上传调用方须用intercept_file_dialogs覆盖完整操作；本函数仅临时捕获本次请求。
     在人工等待导致点击超时后复用已捕获的请求，避免再次点击或丢失文件请求。
+    尚未捕获请求时可由prepare恢复入口所在面板，再重新查找点击目标。
     """
     captured = []
     def capture(chooser):
         captured.append(chooser)
     def obtain():
         if not captured:
-            trigger.click(timeout=timeout)
+            if prepare is not None:
+                prepare()
+            if not captured:
+                trigger.click(timeout=timeout)
         if not captured:
             captured.append(page.wait_for_event("filechooser", timeout=timeout))
         return captured[0]
