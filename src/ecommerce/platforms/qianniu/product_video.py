@@ -3,7 +3,7 @@ import logging
 import re
 from pathlib import Path
 from uuid import uuid4
-from playwright.sync_api import Page
+from playwright.sync_api import Error as PlaywrightError, Page, expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
 from .verification import checkpoint, qianniu_operation, expect, page_step
 
@@ -27,7 +27,7 @@ def _open_picker(page: Page) -> None:
     expect(page.locator(VIDEO_PICKER)).to_have_count(1, timeout=WAIT_MS)
 
 
-def _select_video(page: Page, asset_name: str) -> None:
+def _select_video(page: Page, asset_name: str, *, on_cover_review=None) -> None:
     """选择本次唯一素材并核对商品封面；参数：编辑页、素材名；返回：无。"""
     picker = page.frame_locator(VIDEO_PICKER)
     tile = picker.locator(VIDEO_TILE).filter(has=picker.get_by_text(asset_name, exact=True))
@@ -45,16 +45,28 @@ def _select_video(page: Page, asset_name: str) -> None:
     page_step(lambda: picker.get_by_role("button", name=re.compile(r"^确认上传\s*\(\s*1\s*\)$")).click(timeout=WAIT_MS), completed=lambda: page.locator(VIDEO_PICKER).count() == 0 or page.locator(VIDEO_GROUP).locator("img.cover").count() == 1)
     expect(page.locator(VIDEO_PICKER), "等待视频窗口关闭").to_have_count(0, timeout=WAIT_MS)
     cover = page.locator(VIDEO_GROUP).locator("img.cover")
-    expect(cover).to_have_count(1, timeout=WAIT_MS)
-    expect(cover).to_have_attribute("src", poster, timeout=WAIT_MS)
+    if on_cover_review is None:
+        expect(cover).to_have_count(1, timeout=WAIT_MS)
+        expect(cover).to_have_attribute("src", poster, timeout=WAIT_MS)
+    else:
+        try:
+            playwright_expect(cover).to_have_attribute("src", poster, timeout=WAIT_MS)
+        except (AssertionError, PlaywrightError):
+            if page.is_closed():
+                raise NeedsAttention("千牛发品页已关闭，本次视频核验已结束") from None
+            on_cover_review(page)
+            sources = cover.evaluate_all("images => images.map(image => image.getAttribute('src'))")
+            if len(sources) != 1 or not sources[0]:
+                raise NeedsAttention("人工确认后仍未看到唯一的视频，请核对千牛发品页") from None
+            logging.getLogger(__name__).info("已按人工确认核对发品页视频：%s", asset_name)
     group = page.locator(VIDEO_GROUP)
     if group.get_by_text("详情页不展示", exact=True).count():
         logging.getLogger(__name__).warning("视频已填入，但平台提示当前比例在详情页不展示")
-    logging.getLogger(__name__).info("商品视频已填入并核对封面：%s", asset_name)
+    logging.getLogger(__name__).info("商品视频核验完成：%s", asset_name)
 
 
 @qianniu_operation
-def upload_product_video(page: Page, file: Path) -> None:
+def upload_product_video(page: Page, file: Path, *, on_cover_review=None) -> None:
     """上传一个MP4视频并加入商品页；已有视频则停止，不重复上传或发布商品。"""
     if not file.is_file() or file.suffix.lower() != ".mp4" or not file.stat().st_size:
         raise ValueError("请提供存在且非空的MP4商品视频")
@@ -71,4 +83,4 @@ def upload_product_video(page: Page, file: Path) -> None:
     # 此处“发布成功”是素材上传组件状态，商品仍未提交。
     page_step(lambda: picker.get_by_role("button", name="完成", exact=True).click(timeout=WAIT_MS), completed=lambda: not picker.get_by_role("button", name="完成", exact=True).is_visible())
     checkpoint("选择已上传商品视频")
-    _select_video(page, asset_name)
+    _select_video(page, asset_name, on_cover_review=on_cover_review)

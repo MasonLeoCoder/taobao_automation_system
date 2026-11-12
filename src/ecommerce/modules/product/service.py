@@ -208,6 +208,7 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             else:
                 page = select_brand_and_continue(page, brand)
         if web_review:
+            web_review.editor_page = page
             web_review.progress('填写主图、详情图和视频')
         if images is not None:
             if on_attention is None:
@@ -231,7 +232,10 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             category_result = select_shop_categories(page, shop_categories)
         if video_path is not None:
             from ecommerce.platforms.qianniu.product_video import upload_product_video
-            upload_product_video(page, video_path)
+            if web_review:
+                upload_product_video(page, video_path, on_cover_review=web_review.video_review)
+            else:
+                upload_product_video(page, video_path)
             if web_review:
                 web_review.record_media(page, 'video')
         if web_review:

@@ -37,6 +37,39 @@ function confirmed(){
 
 @unittest.skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器测试')
 class VideoResumeBrowserTests(unittest.TestCase):
+    def test_changed_poster_continues_after_one_video_review(self):
+        picker = PICKER_HTML.replace(
+            '<img class="cover" src="https://qianniu.test/poster.png">',
+            '<img class="cover" src="https://qianniu.test/generated-cover.jpg">',
+        ).replace(
+            "document.body.insertAdjacentHTML('beforeend','<p>比例不符，请人工检查</p>');",
+            "parent.document.querySelector('#picker').remove();",
+        )
+        with tempfile.TemporaryDirectory() as folder, sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                context = browser.new_context()
+                context.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=picker))
+                page = context.new_page()
+                page.goto('https://qianniu.test/editor')
+                page.set_content('''<div id="sell-field-auctionVideos"><button onclick="openPicker()">上传视频</button></div>
+                    <input id="next"><script>
+                    window.uploadCount=0; window.confirmCount=0;
+                    function openPicker(){let frame=document.createElement('iframe'); frame.id='picker';
+                      frame.src='https://qianniu.test/videoSelector.htm'; document.body.append(frame)}
+                    </script>''')
+                file = Path(folder) / 'local.mp4'
+                file.write_bytes(b'isolated-video-fixture')
+                reviewed = []
+                with VerificationGuard(context), patch.object(product_video, 'WAIT_MS', 750):
+                    product_video.upload_product_video(page, file, on_cover_review=reviewed.append)
+                    page.locator('#next').fill('继续执行成功')
+                self.assertEqual(reviewed, [page])
+                self.assertEqual(page.evaluate('[uploadCount, confirmCount]'), [1, 1])
+                self.assertEqual(page.locator('#next').input_value(), '继续执行成功')
+            finally:
+                browser.close()
+
     def test_manual_close_continues_after_video_and_does_not_reupload(self):
         with tempfile.TemporaryDirectory() as folder, sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)

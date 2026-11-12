@@ -212,6 +212,7 @@ class _ListingRun:
         self.sku_media = None
         self.click_in_progress = False
         self.local_log = None
+        self.editor_page = None
 
     def update(self, **values):
         """原子保存当前进度；参数：状态更新；返回：无。"""
@@ -280,9 +281,16 @@ class _ListingRun:
             elif page is not None:
                 if page.is_closed():
                     raise NeedsAttention('千牛页面已关闭，无法继续本次操作')
-                page.wait_for_timeout(250)
+                try:
+                    page.wait_for_timeout(250)
+                except PlaywrightError:
+                    if page.is_closed():
+                        raise NeedsAttention('千牛页面已关闭，无法继续本次操作') from None
+                    raise
             else:
                 time.sleep(.25)
+        if page is not None and page.is_closed():
+            raise NeedsAttention('千牛页面已关闭，无法继续本次操作')
         action = json.loads(feedback.read_text(encoding='utf-8'))['action']
         if action not in actions:
             raise NeedsAttention('人工反馈不属于当前提示')
@@ -307,7 +315,8 @@ class _ListingRun:
         if self.click_in_progress and not native:
             self._wait(f'{message}\n提交点击期间出现中断，请核对仓库，程序不会重放提交。', ['finish'])
             raise NeedsAttention('提交结果待核实，未重放提交')
-        answer = self._wait(message, ['confirm', 'cancel'] if native else ['continue'], kind='native' if native else 'manual')
+        answer = self._wait(message, ['confirm', 'cancel'] if native else ['continue'],
+                            page=None if native else self.editor_page, kind='native' if native else 'manual')
         return {'confirm': '确认', 'cancel': '取消', 'continue': '继续'}[answer]
 
     def submission_attention(self, message):
@@ -319,6 +328,13 @@ class _ListingRun:
     def record_media(self, page, group):
         """记录刚核对过的媒体；参数：商品页和分组；返回：无。"""
         self.media[group] = read_listing_media(page, group)
+
+    def video_review(self, page):
+        """让用户核对已加入商品的实际视频，再恢复剩余填写。"""
+        filename = self.manifest['files']['video'][0]
+        self._wait(f'请在千牛发品页播放商品视频，核对是否为「{filename}」。'
+                   '确认商品页只保留这个视频后，点击「完成」继续填写。',
+                   ['continue'], page=page, kind='video')
 
     def _sku_title(self, name):
         guide = self.preview['guide']

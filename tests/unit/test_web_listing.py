@@ -414,6 +414,37 @@ class WebListingTests(TestCase):
             final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
         self.assertTrue(final['submit_attempted'])
 
+    def test_video_review_resumes_or_ends_when_editor_closes(self):
+        for close in (False, True):
+            with self.subTest(close=close):
+                data = self.preflight().json
+                page = MagicMock()
+                page.is_closed.return_value = False
+                page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(.01)
+
+                def fake_open(*args, **kwargs):
+                    review = kwargs['web_review']
+                    review.manifest['files']['video'] = ['商品视频.mp4']
+                    review.video_review(page)
+                    return '已继续填写'
+
+                self.open_publish.side_effect = fake_open
+                identifier = data['id']
+                self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+                paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
+                self.assertEqual(paused['prompt']['kind'], 'video')
+                self.assertIn('商品视频.mp4', paused['message'])
+                if close:
+                    page.is_closed.return_value = True
+                    final = self.state(identifier, lambda state: state['phase'] == 'needs_attention')
+                    self.assertIn('千牛页面已关闭', final['message'])
+                else:
+                    self.assertEqual(self.send(identifier, paused, 'continue').status_code, 200)
+                    final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
+                    self.assertEqual(final['message'], '已继续填写')
+                self.assertIsNone(final['prompt'])
+                self.assertFalse(final['submit_attempted'])
+
     def test_confirmed_receipt_keeps_platform_item_id(self):
         data = self.preflight().json
         def fake_open(*args, **kwargs):
