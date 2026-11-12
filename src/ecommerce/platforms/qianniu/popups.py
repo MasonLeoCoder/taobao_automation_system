@@ -54,7 +54,7 @@ def _business_rules(operation: str) -> dict:
     if module == "product_video":
         rules["selectors"].append('iframe[src*="videoSelector.htm"]')
         rules["frame_sources"].append("videoSelector.htm")
-    if operation == "product_sku.create_sales_specifications":
+    if operation in {"product_sku.create_sales_specifications", "product_sku.create_layered_specifications"}:
         rules["selectors"].append(".sku-decouple-drawer")
     return rules
 

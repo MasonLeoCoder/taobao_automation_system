@@ -3,10 +3,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from ecommerce.infrastructure.browser.session import restore_missing_session_cookies
+from playwright.sync_api import Error as PlaywrightError
+
+from ecommerce.infrastructure.browser.session import browser_session, restore_missing_session_cookies
 from ecommerce.shared.config import load_settings
+from ecommerce.shared.exceptions import NeedsAttention
 
 
 class SessionCookieRestoreTests(unittest.TestCase):
@@ -60,6 +63,17 @@ class SessionCookieRestoreTests(unittest.TestCase):
                 self.assertEqual(restore_missing_session_cookies(self.context, self.settings), 0)
         self.context.add_cookies.assert_not_called()
         self.context.add_init_script.assert_not_called()
+
+    def test_already_closed_context_preserves_reason_for_stopping(self):
+        self.context.pages = []
+        self.context.close.side_effect = PlaywrightError(
+            'BrowserContext.close: Target page, context or browser has been closed')
+        with patch('playwright.sync_api.sync_playwright') as factory:
+            browser = factory.return_value.__enter__.return_value.chromium
+            browser.launch_persistent_context.return_value = self.context
+            with self.assertRaisesRegex(NeedsAttention, '千牛发品页已关闭'):
+                with browser_session(self.settings, restore_state=False):
+                    raise NeedsAttention('千牛发品页已关闭')
 
 
 if __name__ == "__main__":

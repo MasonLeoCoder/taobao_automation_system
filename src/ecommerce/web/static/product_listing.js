@@ -68,7 +68,7 @@
     seenPrompt = prompt.id;
     const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异', titles:'请修正千牛标题',
       receipt:'请核对提交结果', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对',
-      video:'请核对商品视频', manual:'需要人工处理'};
+      video:'请核对商品视频', specifications:'请核对分层规格', manual:'需要人工处理'};
     node('manual-dialog-title').textContent = titles[prompt.kind] || titles.manual;
     node('manual-message').textContent = task.message + (terminal && !task.prompt ? '\n当前任务已结束，不能从该步骤自动继续。' : '');
     const diff = node('manual-differences');
@@ -81,7 +81,9 @@
     buttons.replaceChildren();
     for (const action of prompt.actions) {
       const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',approve:'确认差异并提交到仓库',
-        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',finish:task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
+        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',
+        finish:prompt.kind === 'specifications' ? '结束本次任务' :
+          task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
       const button = element('button',words[action]);
       button.className = `ui-button ${['approve','continue','confirm','recheck_titles'].includes(action) ? 'ui-primary' : 'ui-secondary'}`;
       button.type = 'button'; button.disabled = sentPrompt === prompt.id;

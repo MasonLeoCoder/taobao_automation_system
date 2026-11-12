@@ -3,7 +3,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from collections import Counter
 from logging import getLogger
-from playwright.sync_api import Page
+from playwright.sync_api import Error as PlaywrightError, Page, expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
 from .verification import checkpoint, qianniu_operation, expect, page_step
 
@@ -16,6 +16,7 @@ DETAIL_CELLS = {"价格": "td[id$='-skuPrice']", "数量": "td[id$='-skuStock']"
 CATEGORY_CELL = "td[id$='-skuQuality']"
 CATEGORY_POPUP = ".sell-o-select-popup-overlay:visible"
 LAYERED_DIMENSIONS = ("颜色分类", "适用尺码")
+LAYERED_PLACEHOLDERS = (re.compile(r"^主色\s*[（(]\s*必选\s*[）)]$"), re.compile(r"^请输入$"))
 
 
 def _values(fields) -> list[str]:
@@ -150,71 +151,123 @@ def layered_sku_rows(group, combinations):
     return {expected[pair]: rows.nth(index) for index, pair in enumerate(pairs)}
 
 
+def _dimension_heading(label):
+    return re.compile(rf"^{label}\s*[（(]\s*\d+\s*[）)]$")
+
+
+def _layered_controls(drawer, index):
+    """从属性计数标题定位独立区块，并按输入提示和添加按钮定位控件。"""
+    label = LAYERED_DIMENSIONS[index]
+    heading = drawer.get_by_text(_dimension_heading(label))
+    if heading.count() != 1:
+        raise NeedsAttention(f"无法唯一找到分层规格的「{label}」区块")
+    other = _dimension_heading(LAYERED_DIMENSIONS[1 - index])
+    section = heading
+    visible_fields = None
+    field_count = 0
+    for _ in range(8):
+        section = section.locator("..")
+        if section.get_by_text(other).count():
+            break
+        fields = section.get_by_placeholder(LAYERED_PLACEHOLDERS[index]).and_(section.locator("input:visible"))
+        add = section.get_by_role("button", name=re.compile(r"^[+＋]$|^添加(?:颜色|尺码|规格)?$")).or_(
+            section.locator('button[class*="add" i]:visible, button:has(svg[data-icon="plus"]):visible'))
+        count = fields.count()
+        if count:
+            if add.count() == 1:
+                return fields, add
+            if count > field_count:
+                visible_fields, field_count = (fields, add), count
+    if visible_fields is not None:
+        return visible_fields
+    field_name = "主色（必选）" if index == 0 else "请输入"
+    raise NeedsAttention(f"无法在「{label}」区块唯一定位「{field_name}」输入框和添加按钮")
+
+
 def _fill_layered_dimensions(drawer, combinations):
-    """仅填写可唯一识别的标准属性输入框，其余页面结构交给人工确认。"""
-    sections = []
-    for index, label in enumerate(LAYERED_DIMENSIONS):
-        heading = drawer.locator(".props-label").filter(has_text=re.compile(rf"^{label}\s*(?:[（(]\d+[）)])?$"))
-        section = drawer.locator(".sale-props-value").filter(has=heading)
-        if section.count() != 1:
-            return False
-        fields = section.locator('input:not([type="checkbox"]):not([type="hidden"]):not([readonly]):not([placeholder*="备注"]):visible')
-        values = list(dict.fromkeys(pair[index] for pair in combinations.values()))
+    """逐项核对已有值，填写空行并在每次添加后验证结果。"""
+    for dimension, label in enumerate(LAYERED_DIMENSIONS):
+        fields, add = _layered_controls(drawer, dimension)
+        values = list(dict.fromkeys(pair[dimension] for pair in combinations.values()))
         existing = _values(fields)
-        add = section.locator("button.add:visible")
-        if not existing or len(existing) > len(values) or any(
-            value and value != values[position] for position, value in enumerate(existing)
-        ) or (len(existing) < len(values) and add.count() != 1):
-            return False
-        sections.append((fields, add, values))
-    for fields, add, values in sections:
+        if len(existing) > len(values):
+            raise NeedsAttention(f"「{label}」多出第 {len(values) + 1} 项，请核对千牛已有内容")
+        for index, actual in enumerate(existing):
+            if actual and actual != values[index]:
+                raise NeedsAttention(f"「{label}」第 {index + 1} 项应为「{values[index]}」，千牛显示「{actual}」")
         for index, value in enumerate(values):
-            checkpoint(f"填写分层规格属性：{value}")
-            if fields.count() == index:
-                if not add.is_enabled():
-                    return False
-                page_step(lambda: add.click(timeout=WAIT_MS), completed=lambda: fields.count() == index + 1)
-                if fields.count() != index + 1:
-                    return False
-            field = fields.nth(index)
-            if field.input_value() != value:
-                page_step(lambda: field.fill(value, timeout=WAIT_MS))
-                page_step(lambda: field.press("Tab", timeout=WAIT_MS))
-            if field.input_value() != value:
-                return False
-            _check_drawer_errors(drawer)
+            item = f"「{label}」第 {index + 1} 项「{value}」"
+            checkpoint(f"填写分层规格 {item}")
+            operation = "添加输入行"
+            try:
+                if fields.count() == index:
+                    if add.count() != 1 or not add.is_enabled():
+                        raise NeedsAttention("无法使用唯一的添加按钮，请先核对上一项")
+                    add.click(timeout=WAIT_MS)
+                    playwright_expect(fields).to_have_count(index + 1, timeout=WAIT_MS)
+                operation = "填写并回读"
+                field = fields.nth(index)
+                current = field.input_value(timeout=WAIT_MS)
+                if current and current != value:
+                    raise NeedsAttention(f"千牛显示「{current}」")
+                if current != value:
+                    field.fill(value, timeout=WAIT_MS)
+                    field.press("Tab", timeout=WAIT_MS)
+                playwright_expect(field).to_have_value(value, timeout=WAIT_MS)
+                _check_drawer_errors(drawer)
+            except NeedsAttention as error:
+                raise NeedsAttention(f"{item}无法确认。{error}") from error
+            except (PlaywrightError, AssertionError) as error:
+                raise NeedsAttention(f"{item}在{operation}时未获得预期结果，请核对该项") from error
         if _values(fields) != values:
-            return False
-    return True
+            raise NeedsAttention(f"「{label}」当前值与 Excel 不一致，请按 Excel 核对")
 
 
 @qianniu_operation
 def create_layered_specifications(page, combinations, *, on_manual):
-    """切到分层展示，待标准属性明确后核对平台实际生成的组合。"""
+    """自动填写分层规格，人工反馈后复查本步骤和实际组合。"""
     group = page.locator(SKU_GROUP)
     drawer = page.locator(DRAWER)
     expect(group).to_be_visible(timeout=WAIT_MS)
-    if not group.locator(SKU_ROWS).count() and not drawer.count():
-        page_step(lambda: group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS),
-                  completed=lambda: drawer.count() == 1)
-    if drawer.count() == 1:
-        layered = drawer.get_by_role("radio", name=re.compile(r"分层展示|选择标准属性构建规格"))
-        custom_values = drawer.get_by_placeholder("输入规格", exact=True)
-        if layered.count() == 1 and not layered.is_checked() and not any(_values(custom_values)):
-            page_step(lambda: layered.check(timeout=WAIT_MS), completed=layered.is_checked)
-        confirm = drawer.get_by_role("button", name="确认创建", exact=True)
-        if (layered.count() == 1 and layered.is_checked() and confirm.count() == 1
-                and _fill_layered_dimensions(drawer, combinations) and confirm.is_enabled()):
-            _check_drawer_errors(drawer)
-            page_step(lambda: confirm.click(timeout=WAIT_MS), completed=lambda: drawer.count() == 0)
-    if drawer.count() or not group.locator(SKU_ROWS).count():
-        specifications = "；".join(
-            f"{label}：{'、'.join(dict.fromkeys(pair[index] for pair in combinations.values()))}"
-            for index, label in enumerate(LAYERED_DIMENSIONS))
-        on_manual(f"请在千牛的分层展示中确认标准属性并创建规格。{specifications}。创建后点击「完成」，系统会逐条核对组合。")
-    if drawer.count():
-        raise NeedsAttention("规格设置面板仍打开，请确认已创建分层规格")
-    layered_sku_rows(group, combinations)
+    rows = group.locator(SKU_ROWS)
+    creation_requested = False
+    while True:
+        checkpoint("核对分层销售规格")
+        if page.is_closed():
+            raise NeedsAttention("千牛发品页已关闭，分层规格填写已结束")
+        try:
+            if not drawer.count() and rows.count():
+                layered_sku_rows(group, combinations)
+                return
+            if creation_requested:
+                raise NeedsAttention("千牛尚未显示创建后的分层规格表，请核对创建结果")
+            if not drawer.count():
+                page_step(lambda: group.get_by_role("button", name="创建规格", exact=False).click(timeout=WAIT_MS),
+                          completed=lambda: drawer.count() == 1)
+            if drawer.count() != 1:
+                raise NeedsAttention("无法唯一找到销售规格设置面板")
+            layered = drawer.get_by_role("radio", name=re.compile(r"分层展示|选择标准属性构建规格"))
+            if layered.count() != 1:
+                raise NeedsAttention("无法唯一找到「分层展示」选项")
+            if not layered.is_checked():
+                if any(_values(drawer.get_by_placeholder("输入规格", exact=True))):
+                    raise NeedsAttention("千牛已有单层规格内容，请先核对并切换到「分层展示」")
+                page_step(lambda: layered.check(timeout=WAIT_MS), completed=layered.is_checked)
+            _fill_layered_dimensions(drawer, combinations)
+            confirm = drawer.get_by_role("button", name="确认创建", exact=True)
+            if confirm.count() != 1 or not confirm.is_enabled():
+                raise NeedsAttention("颜色和尺码已经核对，「确认创建」按钮仍不可用")
+            creation_requested = True
+            try:
+                confirm.click(timeout=WAIT_MS)
+                playwright_expect(drawer).to_have_count(0, timeout=WAIT_MS)
+                rows.first.wait_for(state="visible", timeout=WAIT_MS)
+            except (PlaywrightError, AssertionError) as error:
+                if drawer.count() or not rows.count():
+                    raise NeedsAttention("已请求创建分层规格，请核对千牛实际创建结果") from error
+        except NeedsAttention as error:
+            getLogger(__name__).warning("分层规格待核对：%s", error)
+            on_manual(str(error))
 
 
 def _numeric_pattern(value: str) -> re.Pattern:

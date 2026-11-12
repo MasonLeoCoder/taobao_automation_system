@@ -1,8 +1,12 @@
 """本地HTML规格创建回归，不连接店铺；显式启用QIANNIU_BROWSER_TESTS运行。"""
 import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from playwright.sync_api import sync_playwright
 from ecommerce.platforms.qianniu.product_sku import create_layered_specifications, create_sales_specifications, layered_sku_rows
+from ecommerce.platforms.qianniu.popups import PopupGuard
 from ecommerce.platforms.qianniu.verification import VerificationGuard
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -49,6 +53,49 @@ function confirmCreation(){
 </script>
 """
 
+LAYERED_HTML = """
+<div id="sell-field-sku"><button onclick="drawer.hidden=false">创建规格</button></div>
+<div id="drawer" class="sku-decouple-drawer next-drawer" role="dialog" hidden>
+  <label><input type="radio" name="mode">单层展示·自定义填写规格</label>
+  <label><input type="radio" name="mode" checked>分层展示·选择标准属性构建规格</label>
+  <div>属性 2/2 <span>颜色分类</span><span>适用尺码</span></div>
+  <section id="color"><header><span>颜色分类 (0)</span><label><input type="checkbox">添加图片</label></header>
+    <div><input placeholder="主色(必选)"><input placeholder="备注(可选)"></div>
+    <button onclick="add(color)">＋</button>
+  </section>
+  <section id="size"><header><span>适用尺码（0）</span><label><input type="checkbox">添加图片</label></header>
+    <div><input placeholder="请输入"></div>
+    <button onclick="add(size)">+</button>
+  </section>
+  <button onclick="create()">确认创建</button>
+</div>
+<script>
+window.creations = 0;
+window.additions = 0;
+function add(section) {
+    const list = section.querySelector(':scope > div');
+    const field = document.createElement('input');
+    field.placeholder = list.querySelector('input').placeholder;
+    list.append(field);
+    additions++;
+}
+function create() {
+    const values = section => Array.from(section.querySelectorAll(':scope > div input'))
+        .filter(input => !input.placeholder.includes('备注')).map(input => input.value);
+    const rows = values(color).flatMap(color => values(size).map(size => [color, size]));
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>颜色分类</th><th>适用尺码</th></tr></thead><tbody></tbody>';
+    for (const pair of rows) {
+        const row = table.tBodies[0].insertRow();
+        row.className = 'sku-table-row';
+        for (const value of pair) row.insertCell().textContent = value;
+    }
+    document.querySelector('#sell-field-sku').replaceChildren(table);
+    drawer.hidden = true;
+    creations++;
+}
+</script>
+"""
 
 @unittest.skipUnless(os.environ.get("QIANNIU_BROWSER_TESTS") == "1", "显式启用本地浏览器测试")
 class SalesSpecificationsBrowserTests(unittest.TestCase):
@@ -60,6 +107,47 @@ class SalesSpecificationsBrowserTests(unittest.TestCase):
         self.context = self.browser.new_context()
         self.addCleanup(self.context.close)
         self.page = self.context.new_page()
+
+    def test_layered_screen_fills_fourteen_combinations_and_recovers_existing_conflict(self):
+        self.page.set_content(LAYERED_HTML)
+        self.page.get_by_role("button", name="创建规格").click()
+        self.page.get_by_placeholder("主色(必选)").fill("已有不符颜色")
+        combinations = {f"SKU-{color}-{size}": (f"颜色 {color}", size)
+                        for color in range(1, 8) for size in ("标准尺码", "大件尺码【适合15斤的猫】")}
+        messages = []
+
+        def review(message):
+            messages.append(message)
+            self.assertIn("颜色分类", message)
+            self.assertIn("已有不符颜色", message)
+            self.assertIn("颜色 1", message)
+            self.page.get_by_placeholder("主色(必选)").fill("颜色 1")
+
+        with TemporaryDirectory() as folder:
+            popups = PopupGuard(self.context, self.fail, Path(folder))
+            with VerificationGuard(self.context, self.fail, popup_guard=popups), patch('ecommerce.platforms.qianniu.product_sku.WAIT_MS', 3500):
+                create_layered_specifications(self.page, combinations, on_manual=review)
+                create_layered_specifications(self.page, combinations, on_manual=self.fail)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(self.page.evaluate("[creations, additions]"), [1, 7])
+        self.assertEqual(self.page.locator(".sku-table-row").count(), 14)
+
+    def test_layered_extra_combination_prompts_then_checks_corrected_table(self):
+        self.page.set_content(LAYERED_HTML)
+        combinations = {"黑 M": ("黑色", "M 码"), "灰 L": ("灰色", "L 码")}
+        messages = []
+
+        def review(message):
+            messages.append(message)
+            self.assertIn("黑色 × L 码", message)
+            self.assertIn("灰色 × M 码", message)
+            self.page.locator(".sku-table-row").nth(2).evaluate("row => row.remove()")
+            self.page.locator(".sku-table-row").nth(1).evaluate("row => row.remove()")
+
+        with VerificationGuard(self.context), patch('ecommerce.platforms.qianniu.product_sku.WAIT_MS', 3500):
+            create_layered_specifications(self.page, combinations, on_manual=review)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(self.page.evaluate("creations"), 1)
 
     def test_layered_rows_use_color_and_size_instead_of_row_order(self):
         self.page.set_content("""

@@ -341,7 +341,10 @@ class _ListingRun:
         return (self.sku_titles or {}).get(name) or (compact_title(guide) if 'sku_mode' in self.preview else guide)
 
     def specifications_wait(self, page, message):
-        self._wait(message, ['continue'], page=page)
+        action = self._wait(f'{message}\n在千牛处理后点击「完成」，程序会重新核对。', ['continue', 'finish'],
+                            page=page, kind='specifications')
+        if action == 'finish':
+            raise TaskStopped('用户已结束分层规格填写任务')
 
     def _read_fields(self, page):
         if self.profile and self.profile.brand_in_editor:
