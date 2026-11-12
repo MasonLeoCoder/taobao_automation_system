@@ -295,17 +295,28 @@
       const box = element('div'); box.className = 'listing-summary-entry'; box.append(element('strong',label),element('span',value)); return box;
     }));
     const videoNote = node('video-preview');
+    videoNote.className = 'listing-video-preview';
     videoNote.hidden = !data.id || !preview.video;
-    if (!videoNote.hidden) {
+    if (videoNote.hidden) {
+      videoNote.replaceChildren();
+    } else {
       const video = preview.video;
       const ratio = video.adapted
         ? `原视频 ${video.source_ratio} → 上传视频 ${video.upload_ratio} · 动态模糊背景`
         : `上传原视频 · ${video.upload_ratio}`;
-      const link = element('a', '预览上传视频');
+      const info = element('span');
+      info.className = 'listing-video-info';
+      const filename = element('strong', files.video?.[0] || '商品视频');
+      filename.id = 'listing-video-filename';
+      const meta = element('small', `${ratio} · ${video.duration} 秒`);
+      meta.className = 'ui-form-note';
+      info.append(filename, meta);
+      const link = element('a', '预览待上传视频');
+      link.className = 'ui-button listing-video-button';
       link.href = `${base}/${data.id}/video`;
       link.target = '_blank';
       link.rel = 'noopener';
-      videoNote.replaceChildren(document.createTextNode(`${ratio} · ${video.duration} 秒 · `), link);
+      videoNote.replaceChildren(info, link);
     }
     node('issues').replaceChildren();
     for (const [label, values] of [['必须修正', errors], ['可跳过或需核对', warnings]]) {
