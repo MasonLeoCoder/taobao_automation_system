@@ -1,9 +1,7 @@
 """网页上架的素材导入和预检；不打开浏览器。"""
 import hashlib
-import os
 from pathlib import Path, PureWindowsPath
 import re
-import subprocess
 import tempfile
 import time
 from uuid import uuid4
@@ -16,6 +14,7 @@ from .assets import load_detail_images, load_main_images, load_portrait_images, 
 from .workbook import LAYERED_SKU, SKU_DIMENSIONS, load_product_workbook
 from .listing_profiles import ATTRIBUTES, BACKPACK, CATEGORY, GROUPS, LINT_ROLLER, MATERIAL_FOLDERS
 from .listing_templates import validate_template
+from .listing_video import ADAPTED_VIDEO, VIDEO_LIMIT, prepare_listing_video
 from ecommerce.platforms.qianniu.product_shop_category import MAX_CATEGORIES
 
 LIMIT = 512 * 1024**2
@@ -38,20 +37,6 @@ def _filename(name):
             or PureWindowsPath(name).is_reserved()):
         raise ValueError('上传文件名无效，请保留普通文件名并重新选择')
     return name
-
-
-def _probe_video(path):
-    """使用项目现有FFmpeg解码首帧；参数：本地MP4；返回：可读时结束。"""
-    from imageio_ffmpeg import get_ffmpeg_exe
-    try:
-        result = subprocess.run([get_ffmpeg_exe(), '-nostdin', '-v', 'error', '-xerror',
-            '-protocol_whitelist', 'file', '-f', 'mov', '-i', str(path), '-map', '0:v:0',
-            '-frames:v', '1', '-progress', 'pipe:1', '-f', 'null', '-'], capture_output=True, timeout=25,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ValueError('视频无法读取或解码超时') from error
-    if result.returncode or not re.search(rb'^frame=[1-9]\d*\s*$', result.stdout, re.M):
-        raise ValueError('视频没有可解码的画面')
 
 
 def title_width(value):
@@ -183,7 +168,7 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                         raise ValueError('同一分组中存在重名文件')
                     names.add(name.casefold())
                     path = directory / name
-                    limit = {'excel': 16, 'video': 256, 'detail': 6}.get(group, 20) * 1024**2
+                    limit = VIDEO_LIMIT if group == 'video' else {'excel': 16, 'detail': 6}.get(group, 20) * 1024**2
                     size = 0
                     with path.open('xb') as target:
                         while chunk := stream.read(1024**2):
@@ -196,9 +181,7 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                         raise ValueError('文件为空')
                     if group == 'excel':
                         preview.update(_book(path, profile, preview['category']))
-                    elif group == 'video':
-                        _probe_video(path)
-                    else:
+                    elif group != 'video':
                         with Image.open(path) as image:
                             if image.format != IMAGE_TYPES[suffix]:
                                 raise ValueError('图片实际格式与扩展名不符')
@@ -209,6 +192,8 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     hashes[f'{group}/{name}'] = digest(path)
                 except (ValueError, OSError, BadZipFile, InvalidFileException, Image.DecompressionBombError, KeyError, ParseError) as error:
                     errors.append(f'{label} / {raw_name}：{error}')
+                    if group == 'video':
+                        preview['video_error'] = True
             if len(files[group]) != len(items):
                 continue
             loader = {'main': load_main_images, 'portrait': load_portrait_images, 'detail': load_detail_images}.get(group)
@@ -241,6 +226,16 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     warnings.append(f'Excel 未指定{label}；如果千牛使用默认项，入仓前需要人工核对')
             if not preview['guide']:
                 warnings.append(NO_GUIDE_WARNING)
+        if not errors and files['video']:
+            filename = files['video'][0]
+            adapted = bundle / 'video_adapted' / ADAPTED_VIDEO
+            try:
+                preview['video'] = prepare_listing_video(bundle / 'video' / filename, adapted)
+                if preview['video']['adapted']:
+                    hashes[f'video_adapted/{ADAPTED_VIDEO}'] = digest(adapted)
+            except ValueError as error:
+                errors.append(f'视频 / {filename}：{error}')
+                preview['video_error'] = True
         result = {'id': None if errors else identifier, 'preview': preview, 'files': files,
                   'errors': errors, 'warnings': warnings, 'skipped': skipped}
         if not errors:

@@ -56,7 +56,7 @@ class WebListingTests(TestCase):
         self.headers = {'X-Collection-Token': self.app.config['COLLECTION_TOKEN']}
         self.open_publish = self.enterContext(patch('ecommerce.modules.product.web_listing.open_publish'))
 
-    def preflight(self, *, bad_image=False, excel=None):
+    def preflight(self, *, bad_image=False, excel=None, video=None):
         """走真实导入接口；参数：是否破坏图片内容；返回：HTTP响应。"""
         images = [(BytesIO(b'fake' if bad_image and p.stem == '2' else p.read_bytes()), p.name)
                   for p in sorted((self.folder / '1-1主图').iterdir())]
@@ -64,7 +64,28 @@ class WebListingTests(TestCase):
             excel = BytesIO((self.folder / '任意表名.xlsx').read_bytes())
         return self.client.post('/api/listing/preflight', headers=self.headers, data={
             'keyword': '粘毛器', 'brand': '无品牌/无注册商标', 'category': CATEGORY,
-            'excel': (excel, '任意表名.xlsx'), 'main': images})
+            'excel': (excel, '任意表名.xlsx'), 'main': images,
+            **({'video': (BytesIO(video), '商品视频.mp4')} if video is not None else {})})
+
+    def test_adapted_video_preview_and_worker_use_the_same_sealed_copy(self):
+        def prepare(source, adapted):
+            adapted.parent.mkdir()
+            adapted.write_bytes(b'confirmed adapted video')
+            return {'source_ratio': '16:9', 'upload_ratio': '1:1', 'duration': 6, 'adapted': True}
+
+        with patch('ecommerce.modules.product.web_materials.prepare_listing_video', side_effect=prepare):
+            result = self.preflight(video=b'original video')
+        self.assertEqual(result.status_code, 201)
+        identifier = result.json['id']
+        self.assertEqual(result.json['preview']['video']['upload_ratio'], '1:1')
+        with self.client.get(f'/api/listing/{identifier}/video') as response:
+            self.assertEqual(response.data, b'confirmed adapted video')
+        self.open_publish.return_value = '已填写'
+        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+        self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        video_path = Path(self.open_publish.call_args.kwargs['video_file'])
+        self.assertEqual(video_path.read_bytes(), b'confirmed adapted video')
+        self.assertEqual(video_path.parent.parent.joinpath('video', '商品视频.mp4').read_bytes(), b'original video')
 
     def test_download_bundle_and_validate_filled_template(self):
         response = self.client.get('/api/listing/template', query_string={'category': CATEGORY})
@@ -470,6 +491,24 @@ class WebListingTests(TestCase):
                     self.assertEqual(final['message'], '已继续填写')
                 self.assertIsNone(final['prompt'])
                 self.assertFalse(final['submit_attempted'])
+
+    def test_video_ratio_review_offers_three_choices_and_stops(self):
+        identifier = self.preflight().json['id']
+        page = MagicMock(is_closed=lambda: False)
+        page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(.01)
+
+        def fake_open(*args, **kwargs):
+            kwargs['web_review'].video_ratio_review(page, '千牛仍提示视频比例不符')
+            self.fail('结束任务后不得继续填写')
+
+        self.open_publish.side_effect = fake_open
+        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+        paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
+        self.assertEqual(paused['prompt']['kind'], 'video_ratio')
+        self.assertEqual(paused['prompt']['actions'], ['continue', 'skip_video', 'finish'])
+        self.assertEqual(self.send(identifier, paused, 'finish').status_code, 200)
+        ended = self.state(identifier, lambda state: state['phase'] == 'cancelled')
+        self.assertFalse(ended['submit_attempted'])
 
     def test_confirmed_receipt_keeps_platform_item_id(self):
         data = self.preflight().json

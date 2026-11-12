@@ -68,7 +68,8 @@
     seenPrompt = prompt.id;
     const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异', titles:'请修正千牛标题',
       receipt:'请核对提交结果', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对',
-      video:'请核对商品视频', specifications:'请核对分层规格', main_image:'请核对当前主图', manual:'需要人工处理'};
+      video:'请核对商品视频', video_ratio:'视频比例需要处理', specifications:'请核对分层规格',
+      main_image:'请核对当前主图', manual:'需要人工处理'};
     node('manual-dialog-title').textContent = titles[prompt.kind] || titles.manual;
     node('manual-message').textContent = task.message + (terminal && !task.prompt ? '\n当前任务已结束，不能从该步骤自动继续。' : '');
     const diff = node('manual-differences');
@@ -81,8 +82,8 @@
     buttons.replaceChildren();
     for (const action of prompt.actions) {
       const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',approve:'确认差异并提交到仓库',
-        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',
-        finish:['specifications','main_image'].includes(prompt.kind) ? '结束本次任务' :
+        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',skip_video:'跳过视频',
+        finish:['specifications','main_image','video_ratio'].includes(prompt.kind) ? '结束本次任务' :
           task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
       const button = element('button',words[action]);
       button.className = `ui-button ${['approve','continue','confirm','recheck_titles'].includes(action) ? 'ui-primary' : 'ui-secondary'}`;
@@ -293,11 +294,36 @@
     node('summary').replaceChildren(...summary.filter(([, value]) => value).map(([label,value]) => {
       const box = element('div'); box.className = 'listing-summary-entry'; box.append(element('strong',label),element('span',value)); return box;
     }));
+    const videoNote = node('video-preview');
+    videoNote.hidden = !data.id || !preview.video;
+    if (!videoNote.hidden) {
+      const video = preview.video;
+      const ratio = video.adapted
+        ? `原视频 ${video.source_ratio} → 上传视频 ${video.upload_ratio} · 动态模糊背景`
+        : `上传原视频 · ${video.upload_ratio}`;
+      const link = element('a', '预览上传视频');
+      link.href = `${base}/${data.id}/video`;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      videoNote.replaceChildren(document.createTextNode(`${ratio} · ${video.duration} 秒 · `), link);
+    }
     node('issues').replaceChildren();
     for (const [label, values] of [['必须修正', errors], ['可跳过或需核对', warnings]]) {
       if (!values.length) continue;
       const list = element('ul'); list.append(...values.map(value => element('li',value)));
       node('issues').append(element('strong',label),list);
+    }
+    if (preview.video_error && fileMap.size) {
+      const skip = element('button', '跳过视频并重新自检');
+      skip.type = 'button';
+      skip.className = 'ui-button ui-secondary';
+      skip.addEventListener('click', () => {
+        const choice = node('mapping').querySelector('[data-listing-role="video"]');
+        choice.value = '-';
+        choice.dispatchEvent(new Event('change', {bubbles:true}));
+        node('import').requestSubmit();
+      });
+      node('issues').append(skip);
     }
     node('files').querySelector('dl').replaceChildren(...Object.entries(files).flatMap(([group,names]) => [element('dt',labels[group]),element('dd',names.join('、') || '未提供')]));
     renderSkus(data, preview);
@@ -487,7 +513,9 @@
       else for (const file of groupFiles(selection)) form.append(role,file,file.name);
     }
     busy = true; resetReview(); node('import-fields').disabled = true;
-    node('import-note').textContent = '正在导入资料并自检，尚未打开千牛…';
+    node('import-note').textContent = form.has('video')
+      ? '正在导入资料并检查视频。比例不符时会在本地适配，请等待…'
+      : '正在导入资料并自检，尚未打开千牛…';
     try {
       const data = await api(root.dataset.api,form);
       remember(data.id); busy = false;

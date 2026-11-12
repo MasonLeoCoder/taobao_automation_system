@@ -58,7 +58,7 @@ class WebListingBrowserTests(TestCase):
                         image.save(folder / group / f'{name}.png')
                 video = folder / '商品视频.mp4'
                 subprocess.run([get_ffmpeg_exe(), '-nostdin', '-v', 'error', '-f', 'lavfi',
-                    '-i', 'color=c=white:s=32x32', '-frames:v', '1', '-c:v', 'mpeg4', str(video)],
+                    '-i', 'color=c=white:s=32x32', '-t', '5', '-c:v', 'libx264', str(video)],
                     check=True, capture_output=True, timeout=15)
 
                 picker = page.locator('#listing-folder')
@@ -70,6 +70,7 @@ class WebListingBrowserTests(TestCase):
                         expect(summary).to_contain_text(text)
                     expect(page.locator('#listing-mapping')).to_be_hidden()
                     expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
+                    expect(page.get_by_role('link', name='预览上传视频')).to_be_visible()
                     expect(page.locator('#listing-issues')).to_contain_text('SKU 图 / 长柄款')
 
                     shutil.copyfile(video, folder / '备选视频.mp4')
@@ -81,6 +82,13 @@ class WebListingBrowserTests(TestCase):
                     expect(summary).to_contain_text('商品视频.mp4')
                     page.get_by_role('button', name='导入并自检').click()
                     expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
+                    (folder / '备选视频.mp4').unlink()
+                    video.write_bytes(b'invalid video')
+                    picker.set_input_files(str(folder))
+                    expect(page.locator('#listing-issues')).to_contain_text('视频无法读取或解码')
+                    page.get_by_role('button', name='跳过视频并重新自检').click()
+                    expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
+                    expect(page.get_by_role('link', name='预览上传视频')).to_have_count(0)
                     publish.assert_not_called()
                 self.assertEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
                 browser.close()

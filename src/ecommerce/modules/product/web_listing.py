@@ -22,6 +22,7 @@ from .listing_logs import log_page
 from .listing_logs import local_log
 from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
 from .listing_profiles import PROFILES, support
+from .listing_video import ADAPTED_VIDEO
 
 _ID = re.compile('[0-9a-f]{32}')
 _ACTIVE = {'queued', 'running', 'waiting'}
@@ -45,6 +46,15 @@ def check_binding(settings, manifest):
         previous = manifest.get('category_binding')
         if not previous or previous != category_binding(settings, manifest['preview']['category']):
             raise ListingConflict('类目或上架方案已变化，请保留文件选择并重新自检')
+
+
+def _video_path(path, manifest):
+    names = manifest['files']['video']
+    if not names:
+        return None
+    if manifest['preview'].get('video', {}).get('adapted'):
+        return path / 'video_adapted' / ADAPTED_VIDEO
+    return path / 'video' / names[0]
 
 
 class ListingWorkbench:
@@ -189,6 +199,16 @@ class ListingWorkbench:
         if not evidence.is_file():
             raise LookupError('当前没有可查看的截图')
         return evidence
+
+    def video_preview(self, identifier):
+        path = self._bundle(identifier)
+        manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+        video = _video_path(path, manifest)
+        if (not video or not manifest['preview'].get('video') or not video.is_file()
+                or video.resolve().parent != path.resolve() / video.parent.name
+                or video.parent.name not in {'video', 'video_adapted'}):
+            raise LookupError('这份商品资料没有可预览的视频')
+        return video
 
     def logs(self, identifier, *, after=None, before=None):
         """仅查询当前导入绑定的任务事件；参数：导入编号和游标；返回：日志页。"""
@@ -335,6 +355,12 @@ class _ListingRun:
         self._wait(f'请在千牛发品页播放商品视频，核对是否为「{filename}」。'
                    '确认商品页只保留这个视频后，点击「完成」继续填写。',
                    ['continue'], page=page, kind='video')
+
+    def video_ratio_review(self, page, message):
+        action = self._wait(message, ['continue', 'skip_video', 'finish'], page=page, kind='video_ratio')
+        if action == 'finish':
+            raise TaskStopped('用户已结束本次视频填写任务')
+        return action
 
     def main_image_wait(self, page, message):
         action = self._wait(f'{message}\n在千牛核对或重新打开这个图位的素材库，再点击「完成」。',
@@ -518,12 +544,17 @@ class _ListingRun:
                     file = directory / name
                     if file.resolve().parent != directory.resolve() or digest(file) != self.manifest['hashes'][f'{key}/{name}']:
                         raise NeedsAttention(f'已确认的文件发生变化：{name}；请重新自检')
+            video = _video_path(self.path, self.manifest)
+            if self.preview.get('video', {}).get('adapted'):
+                if (not video or not video.is_file() or video.resolve().parent != self.path.resolve() / 'video_adapted'
+                        or digest(video) != self.manifest['hashes'].get(f'video_adapted/{ADAPTED_VIDEO}')):
+                    raise NeedsAttention('已确认的视频上传副本发生变化，请重新导入并自检')
             return open_publish(self.settings, keyword=self.preview['keyword'], category=self.preview['category'],
                 brand=self.preview['brand'], main_images_dir=str(self.path / 'main'),
                 portrait_images_dir=str(self.path / 'portrait') if files['portrait'] else None,
                 detail_images_dir=str(self.path / 'detail') if files['detail'] else None,
                 sku_images_dir=str(self.path / 'sku'), product_info_file=str(self.path / 'excel' / files['excel'][0]),
-                video_file=str(self.path / 'video' / files['video'][0]) if files['video'] else None,
+                video_file=str(video) if video else None,
                 submit=self.state['submit'], on_attention=self.attention,
                 on_submit_attention=self.submission_attention, web_review=self,
                 **({'sku_titles': self.sku_titles} if self.sku_titles is not None else {}),

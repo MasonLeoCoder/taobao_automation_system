@@ -234,7 +234,8 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         if video_path is not None:
             from ecommerce.platforms.qianniu.product_video import upload_product_video
             if web_review:
-                upload_product_video(page, video_path, on_cover_review=web_review.video_review)
+                upload_product_video(page, video_path, on_cover_review=web_review.video_review,
+                                     on_ratio_review=web_review.video_ratio_review)
             else:
                 upload_product_video(page, video_path)
             if web_review:

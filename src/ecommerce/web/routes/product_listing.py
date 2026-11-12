@@ -198,3 +198,8 @@ def feedback(identifier):
 def evidence(identifier, version):
     """展示本任务的当前证据；参数：任务和证据版本；返回：PNG。"""
     return send_file(workbench().evidence(identifier, version), mimetype='image/png')
+
+
+@product_listing.get('/api/listing/<identifier>/video')
+def video_preview(identifier):
+    return send_file(workbench().video_preview(identifier), mimetype='video/mp4', conditional=True, max_age=0)

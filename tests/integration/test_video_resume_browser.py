@@ -37,6 +37,52 @@ function confirmed(){
 
 @unittest.skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器测试')
 class VideoResumeBrowserTests(unittest.TestCase):
+    def test_ratio_warning_uses_manual_confirmation_or_verified_skip(self):
+        picker = PICKER_HTML.replace('比例不符，请人工检查', '视频存在比例不符 1 个问题项')
+        with tempfile.TemporaryDirectory() as folder, sync_playwright() as playwright:
+            file = Path(folder) / 'local.mp4'
+            file.write_bytes(b'isolated-video-fixture')
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                for skip in (False, True):
+                    with self.subTest(skip=skip):
+                        context = browser.new_context()
+                        context.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=picker))
+                        page = context.new_page()
+                        page.goto('https://qianniu.test/editor')
+                        page.set_content('''<div id="sell-field-auctionVideos"><button onclick="openPicker()">上传视频</button></div>
+                            <script>
+                            window.uploadCount=0; window.confirmCount=0;
+                            function openPicker(){let frame=document.createElement('iframe'); frame.id='picker';
+                              frame.src='https://qianniu.test/videoSelector.htm'; document.body.append(frame)}
+                            </script>''')
+                        messages = []
+
+                        def review(editor, message):
+                            self.assertIs(editor, page)
+                            messages.append(message)
+                            if len(messages) == 1:
+                                self.assertIn('千牛仍提示视频比例不符', message)
+                                if skip:
+                                    return 'skip_video'
+                                page.locator('#picker').evaluate('element => element.remove()')
+                            else:
+                                self.assertTrue(skip)
+                                self.assertIn('移除', message)
+                                page.locator('#picker').evaluate('element => element.remove()')
+                                page.locator('img.cover').evaluate('element => element.remove()')
+                            return 'continue'
+
+                        with VerificationGuard(context), patch.object(product_video, 'WAIT_MS', 2000):
+                            actual = product_video.upload_product_video(page, file, on_ratio_review=review)
+                        self.assertIs(actual, not skip)
+                        self.assertEqual(len(messages), 2 if skip else 1)
+                        self.assertEqual(page.locator('img.cover').count(), 0 if skip else 1)
+                        self.assertEqual(page.evaluate('[uploadCount, confirmCount]'), [1, 1])
+                        context.close()
+            finally:
+                browser.close()
+
     def test_changed_poster_continues_after_one_video_review(self):
         picker = PICKER_HTML.replace(
             '<img class="cover" src="https://qianniu.test/poster.png">',

@@ -2,6 +2,7 @@
 import logging
 import re
 from pathlib import Path
+from time import monotonic
 from uuid import uuid4
 from playwright.sync_api import Error as PlaywrightError, Page, expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
@@ -11,6 +12,7 @@ VIDEO_GROUP = "#sell-field-auctionVideos"
 VIDEO_PICKER = 'iframe[src*="videoSelector.htm"]:visible'
 VIDEO_TILE = 'div[class*="VideoList--videoItem--"]'
 WAIT_MS = 30000
+RATIO_WARNING = re.compile(r"视频存在比例不符|视频比例不符")
 
 
 def _open_picker(page: Page) -> None:
@@ -27,7 +29,46 @@ def _open_picker(page: Page) -> None:
     expect(page.locator(VIDEO_PICKER)).to_have_count(1, timeout=WAIT_MS)
 
 
-def _select_video(page: Page, asset_name: str, *, on_cover_review=None) -> None:
+def _review_video_ratio(page, on_review):
+    """按用户的明确选择核对实际发品页，复用同一个已上传素材。"""
+    group = page.locator(VIDEO_GROUP)
+    picker = page.locator(VIDEO_PICKER)
+    message = "千牛仍提示视频比例不符。你可以在千牛处理并添加这条视频，或选择跳过视频。"
+    skipping = False
+    while True:
+        action = on_review(page, message)
+        skipping = skipping or action == "skip_video"
+        covers = group.locator("img.cover").evaluate_all("images => images.map(image => image.getAttribute('src'))")
+        if skipping:
+            if not picker.count() and not covers and group.get_by_text("上传视频", exact=True).first.is_visible():
+                logging.getLogger(__name__).info("已按用户选择跳过商品视频，继续填写")
+                return False
+            message = "请关闭千牛素材选择窗口。如果商品页已经添加视频，请移除后再点「完成」。"
+        elif picker.count():
+            message = "视频仍在千牛素材选择窗口。请完成处理并添加到商品页，再点「完成」。"
+        elif len(covers) != 1 or not covers[0]:
+            message = "商品页尚未核对到唯一的视频，请在千牛确认已添加正确的视频。"
+        elif group.get_by_text("详情页不展示", exact=True).count():
+            message = "千牛仍提示视频在详情页不展示，请核对或选择跳过视频。"
+        else:
+            logging.getLogger(__name__).info("已人工确认并回读商品页视频，继续填写")
+            return True
+
+
+def _wait_video_picker(page, on_ratio_review):
+    if on_ratio_review is not None:
+        deadline = monotonic() + WAIT_MS / 1000
+        while page.locator(VIDEO_PICKER).count() and monotonic() < deadline:
+            picker = page.frame_locator(VIDEO_PICKER)
+            if picker.get_by_text(RATIO_WARNING).first.is_visible() or page.get_by_text(RATIO_WARNING).first.is_visible():
+                return _review_video_ratio(page, on_ratio_review)
+            checkpoint("等待视频窗口关闭")
+            page.wait_for_timeout(350)
+    expect(page.locator(VIDEO_PICKER), "等待视频窗口关闭").to_have_count(0, timeout=WAIT_MS)
+    return None
+
+
+def _select_video(page: Page, asset_name: str, *, on_cover_review=None, on_ratio_review=None):
     """选择本次唯一素材并核对商品封面；参数：编辑页、素材名；返回：无。"""
     picker = page.frame_locator(VIDEO_PICKER)
     tile = picker.locator(VIDEO_TILE).filter(has=picker.get_by_text(asset_name, exact=True))
@@ -43,7 +84,12 @@ def _select_video(page: Page, asset_name: str, *, on_cover_review=None) -> None:
     expect(checkbox).to_be_checked(timeout=WAIT_MS)
     expect(picker.locator('input[type="checkbox"]:checked')).to_have_count(1, timeout=WAIT_MS)
     page_step(lambda: picker.get_by_role("button", name=re.compile(r"^确认上传\s*\(\s*1\s*\)$")).click(timeout=WAIT_MS), completed=lambda: page.locator(VIDEO_PICKER).count() == 0 or page.locator(VIDEO_GROUP).locator("img.cover").count() == 1)
-    expect(page.locator(VIDEO_PICKER), "等待视频窗口关闭").to_have_count(0, timeout=WAIT_MS)
+    result = _wait_video_picker(page, on_ratio_review)
+    if result is not None:
+        return result
+    group = page.locator(VIDEO_GROUP)
+    if on_ratio_review is not None and group.get_by_text("详情页不展示", exact=True).count():
+        return _review_video_ratio(page, on_ratio_review)
     cover = page.locator(VIDEO_GROUP).locator("img.cover")
     if on_cover_review is None:
         expect(cover).to_have_count(1, timeout=WAIT_MS)
@@ -59,14 +105,13 @@ def _select_video(page: Page, asset_name: str, *, on_cover_review=None) -> None:
             if len(sources) != 1 or not sources[0]:
                 raise NeedsAttention("人工确认后仍未看到唯一的视频，请核对千牛发品页") from None
             logging.getLogger(__name__).info("已按人工确认核对发品页视频：%s", asset_name)
-    group = page.locator(VIDEO_GROUP)
     if group.get_by_text("详情页不展示", exact=True).count():
         logging.getLogger(__name__).warning("视频已填入，但平台提示当前比例在详情页不展示")
     logging.getLogger(__name__).info("商品视频核验完成：%s", asset_name)
 
 
 @qianniu_operation
-def upload_product_video(page: Page, file: Path, *, on_cover_review=None) -> None:
+def upload_product_video(page: Page, file: Path, *, on_cover_review=None, on_ratio_review=None):
     """上传一个MP4视频并加入商品页；已有视频则停止，不重复上传或发布商品。"""
     if not file.is_file() or file.suffix.lower() != ".mp4" or not file.stat().st_size:
         raise ValueError("请提供存在且非空的MP4商品视频")
@@ -83,4 +128,4 @@ def upload_product_video(page: Page, file: Path, *, on_cover_review=None) -> Non
     # 此处“发布成功”是素材上传组件状态，商品仍未提交。
     page_step(lambda: picker.get_by_role("button", name="完成", exact=True).click(timeout=WAIT_MS), completed=lambda: not picker.get_by_role("button", name="完成", exact=True).is_visible())
     checkpoint("选择已上传商品视频")
-    _select_video(page, asset_name, on_cover_review=on_cover_review)
+    return _select_video(page, asset_name, on_cover_review=on_cover_review, on_ratio_review=on_ratio_review)
