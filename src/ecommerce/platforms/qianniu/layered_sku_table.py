@@ -2,7 +2,7 @@
 
 FIXED_TABLE = '.next-table-fixed, .next-table-fixed-left, .next-table-fixed-right'
 
-READ_LAYERED_TABLE = """(rows, labels) => {
+READ_LAYERED_TABLE = """(rows, {labels, expectedPairs}) => {
     const visible = element => element.getClientRects().length &&
         getComputedStyle(element).visibility === 'visible';
     const text = value => (value || '').replace(/\\s+/g, ' ').trim();
@@ -64,6 +64,32 @@ READ_LAYERED_TABLE = """(rows, labels) => {
         return indexes[0] !== indexes[1] ? indexes : null;
     }
 
+    function columnsFromValues(cells, width) {
+        // 千牛可能将表头独立渲染。此时只接受与 Excel 全部组合精确一致的唯一列对。
+        if (cells.length !== expectedPairs.length) return null;
+        const expected = new Set(expectedPairs.map(pair => JSON.stringify(pair)));
+        if (expected.size !== expectedPairs.length) return null;
+        const allowed = labels.map((_, dimension) => new Set(expectedPairs.map(pair => pair[dimension])));
+        const values = Array.from({length: width}, (_, index) => cells.map(row => {
+            const cell = row[index];
+            return cell && visible(cell) && !cell.querySelector('input, textarea, select, [contenteditable="true"]')
+                ? text(cell.innerText) : '';
+        }));
+        const candidates = allowed.map(valid => values.map((column, index) =>
+            column.every(value => valid.has(value)) ? index : -1).filter(index => index >= 0));
+        const matches = [];
+        for (const first of candidates[0]) {
+            for (const second of candidates[1]) {
+                if (first === second) continue;
+                const observed = new Set(values[first].map((color, index) => JSON.stringify([color, values[second][index]])));
+                if (observed.size === expected.size && [...observed].every(pair => expected.has(pair))) {
+                    matches.push([first, second]);
+                }
+            }
+        }
+        return matches.length === 1 ? matches[0] : null;
+    }
+
     function readPairs(table, entries, group) {
         const cells = bodyCells(entries);
         const width = Math.max(...cells.map(row => row.length));
@@ -81,12 +107,19 @@ READ_LAYERED_TABLE = """(rows, labels) => {
                 }
             }
         }
+        indexes ||= columnsFromValues(cells, width);
         if (!indexes) {
             const displayed = new Set(heads.flatMap(head => Array.from(head.querySelectorAll('th,td')).flatMap(headerNames)));
             const missing = labels.filter(label => !displayed.has(label));
             return {error: missing.length
                 ? '千牛规格表没有读到表头「' + missing.join('、') + '」'
-                : '无法将千牛表头的「颜色分类」和「适用尺码」与数据列对应'};
+                : '无法将千牛表头的「颜色分类」和「适用尺码」与数据列对应',
+                diagnostics: {
+                    rowCount: entries.length, expectedCount: expectedPairs.length, bodyColumns: width,
+                    tableClasses: [...table.classList], containerClasses: [...table.parentElement.classList],
+                    nativeHeads: heads.length, gridHeaders: group.querySelectorAll('[role="columnheader"]').length,
+                    mergedRows: cells.some(row => row.some(cell => cell.rowSpan > 1)),
+                }};
         }
         const pairs = cells.map(row => indexes.map(index => text(row[index]?.innerText)));
         const blank = pairs.findIndex(pair => pair.some(value => !value));

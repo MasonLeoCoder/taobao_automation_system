@@ -109,18 +109,22 @@ def create_sales_specifications(page: Page, names: list[str]) -> list[str]:
 
 def layered_sku_rows(group, combinations, *, only=None):
     """按表头读取组合，兼容同色行合并。核对通过后才返回 Excel 规格到行的映射。"""
-    rows = group.locator(SKU_ROWS)
-    actual = rows.evaluate_all(READ_LAYERED_TABLE, list(LAYERED_DIMENSIONS))
-    if actual.get('error'):
-        raise NeedsAttention(actual['error'])
-    entries = actual['entries']
-    pairs = [tuple(item['pair']) for item in entries]
     expected = {}
     for name, values in combinations.items():
         pair = tuple(" ".join(value.split()) for value in values)
         if pair in expected:
             raise NeedsAttention("Excel 组合的显示文字无法唯一匹配：" + " × ".join(pair))
         expected[pair] = name
+    rows = group.locator(SKU_ROWS)
+    actual = rows.evaluate_all(READ_LAYERED_TABLE, {
+        'labels': list(LAYERED_DIMENSIONS), 'expectedPairs': list(expected),
+    })
+    if actual.get('error'):
+        if actual.get('diagnostics'):
+            getLogger(__name__).warning("千牛分层规格表结构：%s", actual['diagnostics'])
+        raise NeedsAttention(actual['error'])
+    entries = actual['entries']
+    pairs = [tuple(item['pair']) for item in entries]
     unexpected = dict.fromkeys(pair for pair in pairs if pair not in expected)
     missing = [pair for pair in expected if pair not in pairs]
     duplicates = [pair for pair, count in Counter(pairs).items() if count > 1]

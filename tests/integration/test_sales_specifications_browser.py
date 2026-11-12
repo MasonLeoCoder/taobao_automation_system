@@ -192,6 +192,38 @@ class SalesSpecificationsBrowserTests(unittest.TestCase):
         with self.assertRaisesRegex(NeedsAttention, "无法将千牛表头"):
             layered_sku_rows(group, combinations)
 
+    def test_layered_rows_match_all_pairs_when_visual_headers_are_outside_the_table(self):
+        self.page.set_content("""
+          <div id="sell-field-sku">
+            <div class="visual-header"><span>SKU搜索主图</span><span>颜色分类</span><span>适用尺码</span></div>
+            <table><tbody>
+              <tr class="sku-table-row" id="large">
+                <td></td><td rowspan="2">黑色</td><td>L 码</td><td id="L-skuPrice"><input></td>
+                <td id="L-skuStock"><input></td><td id="L-skuOuterId"><input></td></tr>
+              <tr class="sku-table-row" id="medium">
+                <td></td><td>M 码</td><td id="M-skuPrice"><input></td>
+                <td id="M-skuStock"><input></td><td id="M-skuOuterId"><input></td></tr>
+            </tbody></table>
+          </div>
+        """)
+        group = self.page.locator("#sell-field-sku")
+        combinations = {"规格一": ("黑色", "M 码"), "规格二": ("黑色", "L 码")}
+        rows = layered_sku_rows(group, combinations)
+        self.assertEqual(rows["规格一"].get_attribute("id"), "medium")
+        self.assertEqual(rows["规格二"].get_attribute("id"), "large")
+        self.assertEqual(rows["规格一"].locator('td[id$="-skuPrice"]').get_attribute("id"), "M-skuPrice")
+
+        # 同一列对必须覆盖完整的组合，行数相同但有重复或两列均可匹配也要暂停。
+        medium_size = group.locator("#medium td").nth(1)
+        medium_size.evaluate("cell => cell.textContent = 'L 码'")
+        with self.assertRaises(NeedsAttention):
+            layered_sku_rows(group, combinations)
+        medium_size.evaluate("cell => cell.textContent = 'M 码'")
+        group.locator("#large").evaluate("row => row.cells[0].textContent = 'L 码'")
+        group.locator("#medium").evaluate("row => row.cells[0].textContent = 'M 码'")
+        with self.assertRaises(NeedsAttention):
+            layered_sku_rows(group, combinations)
+
     def test_variable_count_order_and_repeat_do_not_add_extra_rows(self):
         for names in (["单规格"], ["规格1", "规格10", "规格2"]):
             with self.subTest(names=names):
