@@ -15,11 +15,26 @@ READ_LAYERED_TABLE = """(rows, {labels, expectedPairs}) => {
     });
     if (!tables.size) return {error: '千牛没有可读取的分层 SKU 行'};
 
-    function grid(rows) {
+    const propertyId = cell => cell.id.match(/-(\\d+)$/)?.[1];
+
+    function grid(rows, {checkMergedDuplicates = false} = {}) {
         const matrix = Array.from(rows, () => []);
-        rows.forEach((row, index) => {
+        for (const [index, row] of rows.entries()) {
             let column = 0;
             for (const cell of row.cells) {
+                // 千牛保留已经被上方合并单元格覆盖的隐藏副本。
+                if (checkMergedDuplicates && cell.matches('td.is-sale-prop.hide') && !visible(cell)) {
+                    const owner = matrix[index][column];
+                    const id = propertyId(cell);
+                    if (!owner?.matches('td.is-sale-prop') || !visible(owner) ||
+                        owner.parentElement === row || !id || propertyId(owner) !== id ||
+                        cell.colSpan !== 1 || owner.colSpan !== 1 ||
+                        text(cell.textContent) !== text(owner.innerText)) {
+                        return {error: '千牛规格表第 ' + (index + 1) + ' 行的隐藏合并属性无法核对'};
+                    }
+                    column++;
+                    continue;
+                }
                 while (matrix[index][column]) column++;
                 const end = cell.rowSpan ? Math.min(index + cell.rowSpan, rows.length) : rows.length;
                 for (let line = index; line < end; line++) {
@@ -29,28 +44,31 @@ READ_LAYERED_TABLE = """(rows, {labels, expectedPairs}) => {
                 }
                 column += cell.colSpan;
             }
-        });
-        return matrix;
+        }
+        return {matrix};
     }
 
     function bodyCells(entries) {
         const sections = new Map();
-        return entries.map(({row}) => {
+        const cells = [];
+        for (const {row} of entries) {
             const section = row.parentElement;
             if (!sections.has(section)) {
                 const physicalRows = Array.from(section.rows);
-                const cells = grid(physicalRows);
-                sections.set(section, new Map(physicalRows.map((item, index) => [item, cells[index]])));
+                const result = grid(physicalRows, {checkMergedDuplicates: true});
+                if (result.error) return {error: result.error};
+                sections.set(section, new Map(physicalRows.map((item, index) => [item, result.matrix[index]])));
             }
-            return sections.get(section).get(row);
-        });
+            cells.push(sections.get(section).get(row));
+        }
+        return {cells};
     }
 
     const headerNames = cell => [cell.innerText, cell.getAttribute('title'), cell.getAttribute('aria-label'),
         ...Array.from(cell.querySelectorAll('[title]'), child => child.title)].map(text);
 
     function columnIndexes(head, width) {
-        const cells = grid(Array.from(head.rows));
+        const {matrix: cells} = grid(Array.from(head.rows));
         if (!cells.length) return null;
         const headerWidth = Math.max(...cells.map(row => row.length));
         const gutter = cells.at(-1)[width];
@@ -91,7 +109,8 @@ READ_LAYERED_TABLE = """(rows, {labels, expectedPairs}) => {
     }
 
     function readPairs(table, entries, group) {
-        const cells = bodyCells(entries);
+        const {cells, error} = bodyCells(entries);
+        if (error) return {error, invalidMerge: true};
         const width = Math.max(...cells.map(row => row.length));
         let heads = [];
         let indexes = table.tHead && columnIndexes(table.tHead, width);
@@ -141,7 +160,7 @@ READ_LAYERED_TABLE = """(rows, {labels, expectedPairs}) => {
     }
     const [table, entries] = candidates[0] || [...tables][0];
     let result = readPairs(table, entries, group);
-    if (!result.pairs && tables.size > 1) {
+    if (!result.pairs && !result.invalidMerge && tables.size > 1) {
         // 固定列与编辑列分属不同表体时，仅通过相同的明确行标识合并。
         const key = row => row.getAttribute('data-row-key') || row.getAttribute('data-sku-id') ||
             row.getAttribute('data-key') || row.id;

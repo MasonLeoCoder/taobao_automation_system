@@ -192,16 +192,18 @@ class SalesSpecificationsBrowserTests(unittest.TestCase):
         with self.assertRaisesRegex(NeedsAttention, "无法将千牛表头"):
             layered_sku_rows(group, combinations)
 
-    def test_layered_rows_match_all_pairs_when_visual_headers_are_outside_the_table(self):
+    def test_layered_rows_match_pairs_with_separate_headers_and_hidden_merged_duplicate(self):
         self.page.set_content("""
           <div id="sell-field-sku">
             <div class="visual-header"><span>SKU搜索主图</span><span>颜色分类</span><span>适用尺码</span></div>
             <table><tbody>
               <tr class="sku-table-row" id="large">
-                <td></td><td rowspan="2">黑色</td><td>L 码</td><td id="L-skuPrice"><input></td>
+                <td></td><td id="L-1627207" class="is-sale-prop" rowspan="2">黑色</td>
+                <td class="is-sale-prop">L 码</td><td id="L-skuPrice"><input></td>
                 <td id="L-skuStock"><input></td><td id="L-skuOuterId"><input></td></tr>
               <tr class="sku-table-row" id="medium">
-                <td></td><td>M 码</td><td id="M-skuPrice"><input></td>
+                <td></td><td id="M-1627207" class="hide is-sale-prop" rowspan="2" style="display:none">黑色</td>
+                <td class="is-sale-prop">M 码</td><td id="M-skuPrice"><input></td>
                 <td id="M-skuStock"><input></td><td id="M-skuOuterId"><input></td></tr>
             </tbody></table>
           </div>
@@ -213,8 +215,21 @@ class SalesSpecificationsBrowserTests(unittest.TestCase):
         self.assertEqual(rows["规格二"].get_attribute("id"), "large")
         self.assertEqual(rows["规格一"].locator('td[id$="-skuPrice"]').get_attribute("id"), "M-skuPrice")
 
+        duplicate = group.locator("#M-1627207")
+        duplicate.evaluate("cell => cell.textContent = '灰色'")
+        with self.assertRaisesRegex(NeedsAttention, "第 2 行的隐藏合并属性无法核对"):
+            layered_sku_rows(group, combinations)
+        duplicate.evaluate("cell => { cell.textContent = '黑色'; cell.id = 'M-122216750'; }")
+        with self.assertRaisesRegex(NeedsAttention, "第 2 行的隐藏合并属性无法核对"):
+            layered_sku_rows(group, combinations)
+        group.locator("#M-122216750").evaluate("cell => cell.id = 'M-1627207'")
+        group.locator("#L-1627207").evaluate("cell => cell.rowSpan = 1")
+        with self.assertRaisesRegex(NeedsAttention, "第 2 行的隐藏合并属性无法核对"):
+            layered_sku_rows(group, combinations)
+        group.locator("#L-1627207").evaluate("cell => cell.rowSpan = 2")
+
         # 同一列对必须覆盖完整的组合，行数相同但有重复或两列均可匹配也要暂停。
-        medium_size = group.locator("#medium td").nth(1)
+        medium_size = group.locator("#medium td").nth(2)
         medium_size.evaluate("cell => cell.textContent = 'L 码'")
         with self.assertRaises(NeedsAttention):
             layered_sku_rows(group, combinations)
