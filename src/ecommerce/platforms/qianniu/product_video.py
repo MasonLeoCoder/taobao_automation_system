@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
-from playwright.sync_api import Error as PlaywrightError, Page, expect as playwright_expect
+from playwright.sync_api import Error as PlaywrightError, Page, TimeoutError as PlaywrightTimeoutError, expect as playwright_expect
 from ecommerce.shared.exceptions import NeedsAttention
 from .verification import checkpoint, qianniu_operation, expect, page_step
 
@@ -12,6 +12,7 @@ VIDEO_GROUP = "#sell-field-auctionVideos"
 VIDEO_PICKER = 'iframe[src*="videoSelector.htm"]:visible'
 VIDEO_TILE = 'div[class*="VideoList--videoItem--"]'
 WAIT_MS = 30000
+UPLOAD_WAIT_MS = 180000
 RATIO_WARNING = re.compile(r"视频存在比例不符|视频比例不符")
 
 
@@ -68,11 +69,47 @@ def _wait_video_picker(page, on_ratio_review):
     return None
 
 
+def _asset_tile(picker, asset_name):
+    return picker.locator(f"{VIDEO_TILE}:visible").filter(has=picker.get_by_text(asset_name, exact=True))
+
+
+def _wait_uploaded_asset(page, asset_name):
+    """按本次素材名确认上传结果，必要时重新打开素材列表。"""
+    picker = page.frame_locator(VIDEO_PICKER)
+    tile = _asset_tile(picker, asset_name)
+    complete = picker.get_by_role("button", name="完成", exact=True)
+    published = picker.get_by_text("发布成功", exact=True)
+    description = f"在千牛素材列表核对本次视频「{asset_name}」"
+
+    def wait_for_result(*, upload_dialog=True):
+        deadline = monotonic() + UPLOAD_WAIT_MS / 1000
+        reopened = False
+        while monotonic() < deadline:
+            checkpoint(description)
+            if not page.locator(VIDEO_PICKER).count():
+                if reopened:
+                    raise AssertionError(f"素材窗口再次关闭，尚未核对「{asset_name}」")
+                _open_picker(page)
+                reopened = True
+                continue
+            if upload_dialog and complete.is_visible() and published.is_visible():
+                return False
+            if tile.count() == 1:
+                return True
+            page.wait_for_timeout(300)
+        raise AssertionError(f"素材列表未能唯一核对「{asset_name}」")
+
+    if not page_step(wait_for_result, description=description):
+        page_step(lambda: complete.click(timeout=WAIT_MS) if complete.is_visible() else None,
+                  completed=lambda: not complete.is_visible(), description="结束本次视频素材上传")
+        page_step(lambda: wait_for_result(upload_dialog=False), description=description)
+
+
 def _select_video(page: Page, asset_name: str, *, on_cover_review=None, on_ratio_review=None):
     """选择本次唯一素材并核对商品封面；参数：编辑页、素材名；返回：无。"""
     picker = page.frame_locator(VIDEO_PICKER)
-    tile = picker.locator(VIDEO_TILE).filter(has=picker.get_by_text(asset_name, exact=True))
-    expect(tile).to_have_count(1, timeout=WAIT_MS)
+    tile = _asset_tile(picker, asset_name)
+    expect(tile, f"核对唯一视频素材「{asset_name}」").to_have_count(1, timeout=WAIT_MS)
     poster = tile.locator("img").get_attribute("src")
     if not poster:
         raise NeedsAttention("视频没有生成封面，请等待素材处理完成后再核对")
@@ -120,12 +157,15 @@ def upload_product_video(page: Page, file: Path, *, on_cover_review=None, on_rat
     # 视频平台会截短过长名称，使用17字符名称，保留完整编号和扩展名。
     asset_name = f"v{uuid4().hex[:12]}.mp4"
     checkpoint("提交本地商品视频")
-    picker.locator('input[type="file"]').set_input_files(
-        {"name": asset_name, "mimeType": "video/mp4", "buffer": file.read_bytes()}, timeout=WAIT_MS)
-    logging.getLogger(__name__).info("开始上传商品视频：%s，素材名：%s", file.name, asset_name)
-    expect(picker.get_by_text("1 个文件已上传", exact=True)).to_be_visible(timeout=180000)
-    expect(picker.get_by_text("发布成功", exact=True)).to_be_visible(timeout=WAIT_MS)
-    # 此处“发布成功”是素材上传组件状态，商品仍未提交。
-    page_step(lambda: picker.get_by_role("button", name="完成", exact=True).click(timeout=WAIT_MS), completed=lambda: not picker.get_by_role("button", name="完成", exact=True).is_visible())
+    logger = logging.getLogger(__name__)
+    logger.info("开始上传商品视频：%s，素材名：%s", file.name, asset_name)
+    try:
+        picker.locator('input[type="file"]').set_input_files(
+            {"name": asset_name, "mimeType": "video/mp4", "buffer": file.read_bytes()}, timeout=WAIT_MS)
+    except PlaywrightTimeoutError:
+        if page.is_closed() or page.locator(VIDEO_PICKER).count():
+            raise
+        logger.info("提交文件时素材窗口已关闭，按素材名核对上传结果：%s", asset_name)
+    _wait_uploaded_asset(page, asset_name)
     checkpoint("选择已上传商品视频")
     return _select_video(page, asset_name, on_cover_review=on_cover_review, on_ratio_review=on_ratio_review)

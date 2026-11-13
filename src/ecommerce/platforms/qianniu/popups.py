@@ -49,6 +49,7 @@ def _business_rules(operation: str) -> dict:
         rules["frame_sources"].append("sucai-selector-ng")
         rules["crop"] = module == "product_details"
     rules["main_upload"] = module == "product_images"
+    rules["video_upload"] = operation == "product_video.upload_product_video"
     if module == "product_sku_media":
         rules["selectors"].extend([".sku-component-sku-detail-drawer", ".batch-fill-sku-image-dialog"])
     if module == "product_video":
@@ -70,6 +71,7 @@ _SCAN = """rules => {
    (rules.main_upload&&rules.in_picker&&e.matches('[class*="UploadDialog_dialog__"]')&&
      Array.from(e.querySelectorAll('button,[role="button"],label,span'))
        .some(b=>visible(b)&&b.innerText.trim()==='点击/拖拽，批量导入文件')) ||
+   (rules.video_upload&&rules.in_picker&&e.matches('[role="alertdialog"].next-dialog.dialog-full-screen.upload-video-dialog')) ||
    (rules.in_picker&&(!!e.querySelector('input[type="file"],[class*="PicList_pic_background"],[class*="VideoList--videoItem--"]')||
      Array.from(e.querySelectorAll('button')).some(b=>/^(本地上传|裁剪|确认全部分割)$/.test(b.innerText.trim()))));
  const result=[];

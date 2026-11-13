@@ -37,6 +37,64 @@ function confirmed(){
 
 @unittest.skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器测试')
 class VideoResumeBrowserTests(unittest.TestCase):
+    def test_upload_recovers_by_asset_name_after_notice_or_picker_disappears(self):
+        picker = PICKER_HTML.replace('<div id="status"></div>', '''
+            <div id="status"></div>
+            <div id="upload" role="alertdialog" class="next-dialog dialog-full-screen upload-video-dialog"
+                 style="width:100px;height:100px" hidden></div>''').replace(
+            "document.querySelector('#status').innerHTML='<span>1 个文件已上传</span><span>发布成功</span>';\n"
+            " document.querySelector('#complete').hidden=false;",
+            """parent.assetName=input.files[0].name;
+ document.querySelector('#upload').hidden=false;
+ if (parent.closeAfterUpload) parent.document.querySelector('#picker').remove();
+ else setTimeout(restoreList, 600);""",
+        ).replace(
+            "document.body.insertAdjacentHTML('beforeend','<p>比例不符，请人工检查</p>');",
+            "parent.document.querySelector('#picker').remove();",
+        ).replace('</script>', '''
+function restoreList(){
+ document.querySelector('#upload').hidden=true;
+ document.querySelector('#name').textContent=parent.assetName;
+ showList();
+}
+if (parent.assetName) restoreList();
+</script>''')
+        with tempfile.TemporaryDirectory() as folder, sync_playwright() as playwright:
+            file = Path(folder) / 'local.mp4'
+            file.write_bytes(b'isolated-video-fixture')
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                for close_after_upload in (False, True):
+                    with self.subTest(close_after_upload=close_after_upload):
+                        context = browser.new_context()
+                        context.route('**/*', lambda route: route.fulfill(
+                            content_type='text/html; charset=utf-8', body=picker))
+                        page = context.new_page()
+                        page.goto('https://qianniu.test/editor')
+                        page.set_content('''<div id="sell-field-auctionVideos"><button onclick="openPicker()">上传视频</button></div>
+                            <input id="next"><script>
+                            window.uploadCount=0; window.confirmCount=0; window.openCount=0;
+                            function openPicker(){window.openCount++; let frame=document.createElement('iframe');
+                              frame.id='picker'; frame.src='https://qianniu.test/videoSelector.htm'; document.body.append(frame)}
+                            </script>''')
+                        page.evaluate('closeAfterUpload => window.closeAfterUpload=closeAfterUpload', close_after_upload)
+
+                        def unexpected_feedback(message):
+                            self.fail(message)
+
+                        guard = PopupGuard(context, unexpected_feedback, Path(folder))
+                        with VerificationGuard(context, unexpected_feedback, popup_guard=guard), \
+                                patch.multiple(product_video, WAIT_MS=2500, UPLOAD_WAIT_MS=5000):
+                            product_video.upload_product_video(page, file)
+                            page.locator('#next').fill('继续填写')
+                        self.assertEqual(page.evaluate('[uploadCount, confirmCount, openCount]'),
+                                         [1, 1, 2 if close_after_upload else 1])
+                        self.assertEqual(page.locator('img.cover').count(), 1)
+                        self.assertEqual(page.locator('#next').input_value(), '继续填写')
+                        context.close()
+            finally:
+                browser.close()
+
     def test_ratio_warning_uses_manual_confirmation_or_verified_skip(self):
         picker = PICKER_HTML.replace('比例不符，请人工检查', '视频存在比例不符 1 个问题项')
         with tempfile.TemporaryDirectory() as folder, sync_playwright() as playwright:
