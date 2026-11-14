@@ -5,7 +5,9 @@ import unittest
 
 from playwright.sync_api import sync_playwright
 
+from ecommerce.platforms.qianniu import login
 from ecommerce.platforms.qianniu.identity import SHOP_INFORMATION_URL, ShopIdentity, read_shop_identity
+from ecommerce.platforms.qianniu.verification import VerificationGuard
 
 
 @unittest.skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器测试')
@@ -61,3 +63,16 @@ class QianniuIdentityBrowserTests(unittest.TestCase):
         self.page.route(SHOP_INFORMATION_URL, lambda route: route.fulfill(
             status=302, headers={'location': 'https://loginmyseller.taobao.com/'}))
         self.assertIsNone(read_shop_identity(self.page, timeout_ms=2_000))
+
+    def test_late_redirect_to_workbench_does_not_wait_for_qrcode(self):
+        self.page.route(login.HOME_URL, lambda route: route.fulfill(
+            content_type='text/html; charset=utf-8', body='<nav>首页</nav><nav>交易</nav>'))
+        self.page.route(login.LOGIN_URL, lambda route: route.fulfill(
+            content_type='text/html; charset=utf-8',
+            body=f'<script>setTimeout(() => location.href = "{login.HOME_URL}", 500)</script>'))
+
+        def unexpected_attention(message):
+            self.fail(message)
+
+        with VerificationGuard(self.page.context, unexpected_attention):
+            self.assertIs(login.login_with_qrcode(self.page), self.page)

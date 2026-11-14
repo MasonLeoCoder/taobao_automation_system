@@ -22,6 +22,7 @@ def page_with(url, visible=()):
         result = MagicMock()
         result.count.return_value = int(selector in visible)
         result.nth.return_value.is_visible.return_value = selector in visible
+        result.all.return_value = [result.nth.return_value] if selector in visible else []
         return result
 
     frame.locator.side_effect = locator
@@ -61,7 +62,7 @@ class LoginTests(unittest.TestCase):
     def test_timeout_does_not_restart_qrcode(self):
         """超时不会自动跳回登录页；参数：无；返回：无。"""
         page = page_with(login.LOGIN_URL)
-        with patch.object(login, "wait_for_selector_any_frame"), patch.object(login, "_wait_for_login_success", side_effect=login.PlaywrightTimeoutError("等待超时")):
+        with patch.object(login, "_wait_for_scan_entry", return_value=(None, MagicMock())), patch.object(login, "_wait_for_login_success", side_effect=login.PlaywrightTimeoutError("等待超时")):
             with self.assertRaises(login.PlaywrightTimeoutError):
                 login.login_with_qrcode(page)
         page.goto.assert_called_once()
@@ -80,10 +81,41 @@ class LoginTests(unittest.TestCase):
                 raise login.PlaywrightTimeoutError('尚未登录')
             self.assertEqual(opened, ['qr', False, True])
             return home
-        with patch.object(login, 'wait_for_selector_any_frame', return_value=button), patch.object(login, '_wait_for_login_success', side_effect=poll):
+        with patch.object(login, '_wait_for_scan_entry', return_value=(None, button)), patch.object(login, '_wait_for_login_success', side_effect=poll):
             self.assertIs(login.login_with_qrcode(page, on_wait=lambda current, retry: opened.append(retry)), home)
         button.click.assert_called_once()
         page.goto.assert_called_once()
+
+    def test_workbench_navigation_while_waiting_for_qrcode(self):
+        """等待扫码按钮时跳转到工作台，应直接返回并交给调用者核验账号。"""
+        page = page_with(login.HOME_URL, ('text="首页"', 'text="交易"'))
+        page.url = login.LOGIN_URL
+        page.wait_for_timeout.side_effect = lambda _ms: setattr(page, 'url', login.HOME_URL)
+        on_wait = MagicMock()
+        self.assertIs(login.login_with_qrcode(page, on_wait=on_wait), page)
+        page.wait_for_timeout.assert_called_once()
+        on_wait.assert_not_called()
+
+    def test_workbench_opens_in_new_tab_during_qrcode_wait(self):
+        page = page_with(login.LOGIN_URL)
+        home = page_with(login.HOME_URL, ('text="首页"', 'text="交易"'))
+        page.wait_for_timeout.side_effect = lambda _ms: page.context.pages.append(home)
+        self.assertIs(login.login_with_qrcode(page), home)
+        page.wait_for_timeout.assert_called_once()
+
+    def test_transition_can_complete_during_qrcode_click(self):
+        page = page_with(login.LOGIN_URL, (login.QRCODE_SELECTOR,))
+        button = page.frames[0].locator(login.QRCODE_SELECTOR).nth.return_value
+        home = page_with(login.HOME_URL, ('text="首页"', 'text="交易"'))
+
+        def interrupted_click():
+            page.context.pages.append(home)
+            raise login.PlaywrightError('扫码入口因页面跳转而消失')
+
+        with patch.object(login, '_wait_for_scan_entry', return_value=(None, button)):
+            button.click.side_effect = interrupted_click
+            self.assertIs(login.login_with_qrcode(page), home)
+        button.click.assert_called_once()
 
     def test_authenticate_verifies_new_tab_and_saves(self):
         """业务在扫码成功页复核并保存会话；参数：无；返回：无。"""

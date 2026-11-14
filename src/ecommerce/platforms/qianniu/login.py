@@ -3,8 +3,7 @@ from .verification import qianniu_operation, checkpoint, page_step
 import time
 from logging import getLogger as get_logger
 from urllib.parse import urlsplit
-from playwright.sync_api import Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
-from ecommerce.infrastructure.browser.actions import wait_for_selector_any_frame
+from playwright.sync_api import Locator, Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 
 LOGIN_URL = "https://loginmyseller.taobao.com/"
 HOME_URL = "https://myseller.taobao.com/home.htm/QnworkbenchHome"
@@ -96,12 +95,23 @@ def check_login(page: Page) -> bool:
 def login_with_qrcode(page: Page, *, on_wait=None) -> Page:
     """显示扫码页；参数：页面、可选人工等待回调；返回：平台已确认登录的页面。"""
     page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
-    # 某些情况下登录入口自动跳回工作台，无需再次寻找二维码按钮。
-    if _is_authenticated(page):
-        return page
-    qrcode_button = page_step(lambda: wait_for_selector_any_frame(page, QRCODE_SELECTOR, state="visible", timeout=PAGE_TIMEOUT_MS))
+    # 登录入口也可能在加载后跳转，等待期间同时检查扫码入口和工作台。
+    entry = page_step(lambda: _wait_for_scan_entry(page),
+                      completed=lambda: _authenticated_tab(page) is not None)
+    if entry is None:
+        return _wait_for_login_success(page)
+    authenticated, qrcode_button = entry
+    if authenticated is not None:
+        return authenticated
     checkpoint("切换扫码登录")
-    page_step(qrcode_button.click, completed=lambda: _is_authenticated(page))
+    if (authenticated := _authenticated_tab(page)) is not None:
+        return authenticated
+    try:
+        page_step(qrcode_button.click, completed=lambda: _authenticated_tab(page) is not None)
+    except PlaywrightError:
+        if (authenticated := _authenticated_tab(page)) is not None:
+            return authenticated
+        raise
     get_logger(__name__).info("请扫码登录，等待识别千牛工作台；超时后不会自动刷新并重复扫码")
     if on_wait is None:
         authenticated = _wait_for_login_success(page)
@@ -121,6 +131,39 @@ def login_with_qrcode(page: Page, *, on_wait=None) -> Page:
     return authenticated
 
 
+def _authenticated_tab(page: Page) -> Page | None:
+    return next((tab for tab in page.context.pages if _is_authenticated(tab)), None)
+
+
+def _wait_for_scan_entry(page: Page) -> tuple[Page | None, Locator | None]:
+    """等待扫码按钮或已登录的工作台，处理当前页跳转和新标签页。"""
+    deadline = time.monotonic() + PAGE_TIMEOUT_MS / 1000
+    while time.monotonic() < deadline:
+        before_check = time.monotonic()
+        checkpoint("显示扫码页")
+        deadline += time.monotonic() - before_check
+        if (authenticated := _authenticated_tab(page)) is not None:
+            return authenticated, None
+        tabs = [tab for tab in page.context.pages if not tab.is_closed()]
+        if not tabs:
+            raise PlaywrightTimeoutError("登录浏览器已关闭，请重新登录")
+        if not page.is_closed():
+            for frame in page.frames:
+                try:
+                    for button in frame.locator(QRCODE_SELECTOR).all():
+                        if button.is_visible():
+                            return None, button
+                except PlaywrightError:
+                    # 页面可能已跳转，下一轮重新检查工作台和扫码按钮。
+                    continue
+        try:
+            tabs[-1].wait_for_timeout(250)
+        except PlaywrightError:
+            if not page.context.pages:
+                raise
+    raise PlaywrightTimeoutError("未找到千牛扫码入口，也未确认已进入千牛工作台")
+
+
 def _wait_for_login_success(page: Page, *, wait_ms=None) -> Page:
     """轮询当前上下文；参数：原扫码页面、复核时限；返回：工作台页面，超时抛出异常。"""
     context = page.context
@@ -130,9 +173,8 @@ def _wait_for_login_success(page: Page, *, wait_ms=None) -> Page:
         checkpoint("等待扫码登录")
         deadline += time.monotonic() - before_check
         candidates = [candidate for candidate in context.pages if not candidate.is_closed()]
-        for candidate in candidates:
-            if _is_authenticated(candidate):
-                return candidate
+        if (authenticated := _authenticated_tab(page)) is not None:
+            return authenticated
         if not candidates:
             raise PlaywrightTimeoutError("登录浏览器已关闭，请重新执行 account login")
         # 用 Playwright 的等待派发导航事件，不等待持续联网页面进入 networkidle。
