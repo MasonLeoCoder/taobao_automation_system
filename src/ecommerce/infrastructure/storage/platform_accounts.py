@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.mysql import insert
 
 from .mysql import MySQLStorageError, safe_error
-from .mysql_migrations.schema_v29 import build_metadata
+from .mysql_migrations.schema_v30 import build_metadata
 from .time_values import database_now
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -18,11 +18,14 @@ class AccountStore:
         self.accounts = tables['platform_accounts']
         self.shops = tables['shops']
         self.links = tables['account_shops']
+        self.cleanup = tables['account_session_cleanup']
 
     def list_accounts(self, account_id=None):
         accounts, shops, links = self.accounts, self.shops, self.links
         query = sa.select(accounts.c.id, accounts.c.login_name, accounts.c.session_id,
+            accounts.c.enabled, accounts.c.login_required, accounts.c.revision,
             accounts.c.verified_at, shops.c.platform_shop_id, shops.c.name.label('shop_name'),
+            sa.exists().where(self.cleanup.c.account_id == accounts.c.id).label('cleanup_pending'),
         ).select_from(accounts).join(links, links.c.account_id == accounts.c.id).join(shops, shops.c.id == links.c.shop_id).where(
             accounts.c.platform == 'qianniu', shops.c.platform == 'taobao',
         ).order_by(accounts.c.login_name, shops.c.name)
@@ -54,12 +57,12 @@ class AccountStore:
                         login_name=identity.login_name, session_id=session_id, verified_at=now))
                 else:
                     account_id = current['id']
-                    updated = connection.execute(accounts.update().where(
-                        accounts.c.id == account_id, accounts.c.session_id == current['session_id'],
-                        accounts.c.login_name == identity.login_name,
-                    ).values(session_id=session_id, verified_at=now))
-                    if updated.rowcount != 1:
-                        raise NeedsAttention('账号会话记录已变化，请刷新后重试')
+                    expected = self._current(current) & accounts.c.enabled.is_(True)
+                    if session_id == current['session_id']:
+                        expected &= accounts.c.login_required.is_(False)
+                    self._update(connection, expected, session_id=session_id, login_required=False, verified_at=now)
+                    if current['session_id'] and session_id != current['session_id']:
+                        self._queue_cleanup(connection, current)
 
                 shop = insert(shops).values(id=uuid4().hex, platform='taobao',
                     platform_shop_id=identity.shop_id, name=identity.shop_name)
@@ -68,5 +71,50 @@ class AccountStore:
                     shops.c.platform == 'taobao', shops.c.platform_shop_id == identity.shop_id))
                 link = insert(links).values(account_id=account_id, shop_id=shop_id, verified_at=now)
                 connection.execute(link.on_duplicate_key_update(verified_at=link.inserted.verified_at))
+        except sa.exc.SQLAlchemyError as error:
+            raise MySQLStorageError(safe_error(error)) from None
+
+    def _current(self, current):
+        accounts = self.accounts
+        return sa.and_(accounts.c.id == current['id'], accounts.c.revision == current['revision'],
+                       accounts.c.session_id == current['session_id'])
+
+    def _update(self, connection, expected, **values):
+        accounts = self.accounts
+        updated = connection.execute(accounts.update().where(expected).values(
+            revision=accounts.c.revision + 1, **values))
+        if updated.rowcount != 1:
+            raise NeedsAttention('账号状态已变化，请刷新列表后重试')
+
+    def _queue_cleanup(self, connection, current):
+        connection.execute(self.cleanup.insert().values(
+            account_id=current['id'], session_id=current['session_id']))
+
+    def change_state(self, current, action):
+        """在删除文件前撤下会话并记录清理目标。"""
+        state = {'disable': {'enabled': False}, 'enable': {'enabled': True},
+                 'require_login': {'login_required': True},
+                 'clear': {'session_id': None, 'login_required': True}}[action]
+        try:
+            with self.engine.begin() as connection:
+                self._update(connection, self._current(current), **state)
+                if action == 'clear' and current['session_id']:
+                    self._queue_cleanup(connection, current)
+        except sa.exc.SQLAlchemyError as error:
+            raise MySQLStorageError(safe_error(error)) from None
+
+    def cleanup_sessions(self, account_id, remove):
+        """处理该账号仍未完成且已撤下的目录，失败时保留待办。"""
+        pending = self.cleanup
+        active = sa.exists().where(self.accounts.c.session_id == pending.c.session_id)
+        try:
+            with self.engine.begin() as connection:
+                identifiers = list(connection.scalars(sa.select(pending.c.session_id)
+                    .where(pending.c.account_id == account_id, ~active).with_for_update()))
+                for identifier in identifiers:
+                    if remove(identifier):
+                        connection.execute(pending.delete().where(
+                            pending.c.account_id == account_id, pending.c.session_id == identifier))
+                return bool(connection.scalar(sa.select(sa.exists().where(pending.c.account_id == account_id))))
         except sa.exc.SQLAlchemyError as error:
             raise MySQLStorageError(safe_error(error)) from None

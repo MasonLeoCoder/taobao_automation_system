@@ -7,7 +7,16 @@
   const cancel = document.getElementById('account-cancel');
   const refresh = document.getElementById('account-refresh');
   const actions = [...root.querySelectorAll('[data-account-action]')];
+  const confirmation = document.getElementById('account-confirm');
+  const impacts = {
+    disable: '停用后，该账号不能打开千牛、检查登录或重新登录。账号登记和已保存的登录资料仍可保留。',
+    enable: '启用后可以继续使用该账号。如果登录资料已清除或失效，需要重新扫码。',
+    clear: '清理此账号在当前环境保存的本机登录资料。下次使用时需要重新扫码，账号登记和店铺关联会保留。',
+    retry_cleanup: '重试清理此账号已经撤下的本机登录资料。当前启用的会话可以继续使用。',
+  };
   let state;
+  let confirmationPayload;
+  let submitted;
   let busy = false;
   let poll;
 
@@ -28,8 +37,9 @@
     cancel.hidden = !['scan', 'waiting', 'open'].includes(state?.phase);
     cancel.textContent = state?.phase === 'open' ? '关闭千牛窗口' : '取消';
     proceed.disabled = cancel.disabled = busy;
-    refresh.hidden = state?.phase !== 'succeeded';
+    refresh.hidden = !['succeeded', 'partial', 'failed'].includes(state?.phase);
     message.textContent = state?.message || '';
+    message.dataset.phase = state?.phase || '';
   }
 
   async function update(url, payload) {
@@ -39,9 +49,16 @@
     let retry = false;
     try {
       state = await request(url, payload);
+      if (url === root.dataset.start) submitted = state.id;
+      if (state?.id === submitted && submitted &&
+          (['succeeded', 'partial'].includes(state.phase) || (state.phase === 'failed' && state.refresh_accounts))) {
+        location.reload();
+        return;
+      }
     } catch (error) {
-      state = {...state, message: error.message};
-      retry = !payload || active(state?.phase) || error instanceof TypeError;
+      const previousState = state;
+      retry = !payload || active(previousState?.phase) || error instanceof TypeError;
+      state = {...previousState, phase: active(previousState?.phase) ? previousState.phase : 'failed', message: error.message};
     } finally {
       busy = false;
       show();
@@ -51,12 +68,34 @@
     }
   }
 
+  confirmation.addEventListener('close', () => {
+    if (confirmation.returnValue === 'confirm' && confirmationPayload && !busy && !active(state?.phase)) {
+      update(root.dataset.start, confirmationPayload);
+    }
+    confirmationPayload = null;
+  });
+
   root.addEventListener('click', event => {
     const button = event.target.closest('[data-account-action]');
     if (!button || busy || active(state?.phase)) return;
     const row = button.closest('[data-account-id]');
     const payload = {action: button.dataset.accountAction};
-    if (row) Object.assign(payload, {account_id: row.dataset.accountId, shop_id: row.dataset.shopId});
+    if (row) Object.assign(payload, {account_id: row.dataset.accountId, shop_id: row.dataset.shopId,
+      revision: Number(row.dataset.revision)});
+    if (Object.hasOwn(impacts, payload.action)) {
+      confirmationPayload = payload;
+      const action = button.textContent.trim();
+      document.getElementById('account-confirm-title').textContent = action;
+      document.getElementById('account-confirm-login').textContent = row.querySelector('[data-login-name]').textContent;
+      document.getElementById('account-confirm-shop').textContent =
+        `${row.querySelector('[data-shop-name]').textContent} · ${row.dataset.shopId}`;
+      document.getElementById('account-confirm-impact').textContent = impacts[payload.action];
+      document.getElementById('account-confirm-submit').textContent = action;
+      button.closest('details').open = false;
+      confirmation.returnValue = '';
+      confirmation.showModal();
+      return;
+    }
     update(root.dataset.start, payload);
   });
   proceed.addEventListener('click', () => update(root.dataset.respond,

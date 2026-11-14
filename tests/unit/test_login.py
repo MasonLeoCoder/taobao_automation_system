@@ -52,6 +52,12 @@ class LoginTests(unittest.TestCase):
         self.assertFalse(login._is_authenticated(page))
         self.assertFalse(login.check_login(page))
 
+    def test_only_confirmed_login_form_marks_session_expired(self):
+        page = page_with(login.LOGIN_URL, ('#login',))
+        self.assertIs(login.inspect_login(page), login.LoginStatus.REQUIRED)
+        page.goto.return_value.status = 503
+        self.assertIs(login.inspect_login(page), login.LoginStatus.UNCONFIRMED)
+
     def test_new_tab_is_returned(self):
         """扫码后新标签页的工作台能被识别；参数：无；返回：无。"""
         original = page_with(login.LOGIN_URL)

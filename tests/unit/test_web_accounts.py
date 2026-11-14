@@ -7,6 +7,7 @@ from unittest.mock import patch
 from ecommerce.modules.account.web_accounts import AccountWorkbench
 from ecommerce.platforms.qianniu.identity import ShopIdentity
 from ecommerce.shared.config import load_settings
+from ecommerce.platforms.qianniu.login import LoginStatus
 from ecommerce.shared.exceptions import NeedsAttention
 
 
@@ -18,6 +19,7 @@ class AccountWorkbenchTests(TestCase):
         self.current = {
             'id': 'a' * 32, 'session_id': 'b' * 32,
             'login_name': 'seller:示例', 'platform_shop_id': '123456789',
+            'enabled': True, 'login_required': False, 'revision': 2,
         }
         old_session = self.workbench._profile(self.current['session_id'])
         old_session.mkdir(parents=True)
@@ -35,6 +37,7 @@ class AccountWorkbenchTests(TestCase):
                 patch('ecommerce.modules.account.web_accounts.read_shop_identity', return_value=identity), \
                 patch('ecommerce.modules.account.web_accounts.save_session', side_effect=save):
             session.return_value.__enter__.return_value = SimpleNamespace(), SimpleNamespace()
+            store.return_value.cleanup_sessions.side_effect = lambda _account_id, remove: not remove(self.current['session_id'])
             self.workbench.state = {'phase': 'running'}
             if failure:
                 with self.assertRaisesRegex(NeedsAttention, failure):
@@ -59,3 +62,40 @@ class AccountWorkbenchTests(TestCase):
     def test_verified_account_can_replace_session(self):
         self.login_with_identity(ShopIdentity('123456789', '示例店铺', '示例-运营', 'seller:示例'))
         self.assertFalse(self.saved.exists())
+
+    def test_stale_request_and_disabled_account_cannot_open_browser(self):
+        with patch('ecommerce.modules.account.web_accounts.AccountStore') as store, \
+                patch('ecommerce.modules.account.web_accounts.Thread') as thread:
+            self.current['enabled'] = False
+            store.return_value.list_accounts.return_value = [self.current]
+            with self.assertRaisesRegex(NeedsAttention, '状态已变化'):
+                self.workbench.start('clear', self.current['id'], self.current['platform_shop_id'], 1)
+            with self.assertRaisesRegex(NeedsAttention, '账号已停用'):
+                self.workbench.start('login', self.current['id'], self.current['platform_shop_id'], 2)
+            thread.assert_not_called()
+
+    def test_login_check_records_only_explicit_expiration(self):
+        for status in (LoginStatus.UNCONFIRMED, LoginStatus.REQUIRED):
+            with self.subTest(status=status), patch('ecommerce.modules.account.web_accounts.AccountStore') as store, \
+                    patch('ecommerce.modules.account.web_accounts.browser_session') as session, \
+                    patch('ecommerce.modules.account.web_accounts.inspect_login', return_value=status):
+                self.workbench.state = {}
+                session.return_value.__enter__.return_value = SimpleNamespace(), SimpleNamespace()
+                with self.assertRaises(NeedsAttention):
+                    self.workbench._inspect('check', self.current)
+                if status is LoginStatus.REQUIRED:
+                    store.return_value.change_state.assert_called_once_with(self.current, 'require_login')
+                else:
+                    store.return_value.change_state.assert_not_called()
+
+    def test_incomplete_cleanup_keeps_retry_available(self):
+        with patch('ecommerce.modules.account.web_accounts.AccountStore') as store:
+            self.workbench.state = {}
+            store.return_value.cleanup_sessions.return_value = True
+            message, pending = self.workbench._manage('clear', self.current)
+            self.assertTrue(pending)
+            self.assertIn('重试', message)
+            store.return_value.change_state.assert_called_once_with(self.current, 'clear')
+            store.return_value.cleanup_sessions.return_value = False
+            self.assertEqual(self.workbench._manage('retry_cleanup', self.current), ('已清理本机登录资料', False))
+            store.return_value.change_state.assert_called_once()

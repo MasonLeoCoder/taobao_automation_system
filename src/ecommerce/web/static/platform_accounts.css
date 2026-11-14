@@ -26,3 +26,132 @@
 #account-operation-message:empty {
   margin: 0;
 }
+#platform-accounts .account-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(9rem, .7fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--control-border);
+  border-radius: 12px;
+  background: var(--control-surface-soft);
+}
+#platform-accounts .account-filters .ui-field {
+  margin: 0;
+  min-width: 0;
+}
+#platform-accounts .account-result-count {
+  margin: 14px 0 8px;
+  font-size: 13px;
+}
+#platform-accounts .account-empty {
+  padding: 20px;
+  border: 1px dashed var(--control-border);
+  border-radius: 10px;
+}
+#platform-accounts .account-open {
+  --action-bg: #e7f5eb;
+  --action-text: #216446;
+  --action-border: #b7ddc3;
+  --action-hover: #d8efdf;
+}
+#platform-accounts .account-state {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+#platform-accounts .account-badge {
+  padding: 2px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+#platform-accounts .is-enabled,
+#account-operation-message[data-phase='succeeded'] {
+  background: #e7f5eb;
+  color: #216446;
+}
+#platform-accounts .is-disabled {
+  background: #eef1f4;
+  color: #4d5864;
+}
+#platform-accounts .is-login-required,
+#account-operation-message[data-phase='scan'],
+#account-operation-message[data-phase='waiting'] {
+  background: #fff4d8;
+  color: #714b00;
+}
+#platform-accounts .is-cleanup,
+#account-operation-message[data-phase='partial'] {
+  background: #fff0e2;
+  color: #83431d;
+}
+#account-operation-message[data-phase='failed'] {
+  background: #fff0ed;
+  color: #a53026;
+}
+#platform-accounts .account-actions details > div {
+  position: static;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+@media (max-width: 700px) {
+  #platform-accounts .table-wrap table,
+  #platform-accounts .table-wrap tbody,
+  #platform-accounts .table-wrap tr {
+    display: block;
+  }
+  #platform-accounts .table-wrap thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  #platform-accounts .table-wrap td {
+    display: grid;
+    grid-template-columns: minmax(5.4rem, auto) minmax(0, 1fr);
+    gap: 8px;
+    max-width: none;
+    padding: 8px 12px;
+    border: 0;
+  }
+  #platform-accounts .table-wrap td::before {
+    content: attr(data-label);
+    font-weight: 400;
+    color: var(--control-label);
+  }
+  #platform-accounts .table-wrap tr + tr {
+    border-top: 1px solid var(--control-border);
+  }
+  #platform-accounts .table-wrap td:last-child {
+    grid-template-columns: minmax(0, 1fr);
+    padding-bottom: 14px;
+  }
+}
+#platform-accounts .account-confirm-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+}
+#platform-accounts .account-confirm-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+#account-operation-message:not(:empty) {
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+@media (max-width: 1100px) {
+  #platform-accounts .account-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 540px) {
+  #platform-accounts .account-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

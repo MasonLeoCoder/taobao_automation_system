@@ -2,6 +2,7 @@
 from .verification import qianniu_operation, checkpoint, page_step
 import time
 from logging import getLogger as get_logger
+from enum import Enum
 from urllib.parse import urlsplit
 from playwright.sync_api import Locator, Page, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 
@@ -21,6 +22,12 @@ HOME_HINT_SELECTORS = (
 )
 HOME_NAV_SELECTORS = ('text="首页"',)
 TRADE_NAV_SELECTORS = ('text="交易"',)
+
+
+class LoginStatus(Enum):
+    AUTHENTICATED = 'authenticated'
+    REQUIRED = 'required'
+    UNCONFIRMED = 'unconfirmed'
 
 
 def _visible(page: Page, selectors: tuple[str, ...]) -> bool:
@@ -60,16 +67,21 @@ def _safe_location(page: Page) -> str:
     return f"{url.scheme}://{url.netloc}{url.path}"
 
 
-@qianniu_operation
 def check_login(page: Page) -> bool:
-    """访问工作台确认会话；参数：页面；返回：是否已登录。"""
+    """访问工作台，返回是否已登录。"""
+    return inspect_login(page) is LoginStatus.AUTHENTICATED
+
+
+@qianniu_operation
+def inspect_login(page: Page) -> LoginStatus:
+    """检查登录状态；区分要求登录和暂时无法确认。"""
     logger = get_logger(__name__)
     for attempt in range(1, MAX_RETRY + 1):
         try:
             response = page.goto(HOME_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
             if response is not None and response.status >= 400:
                 logger.warning("工作台返回 HTTP %s，未确认登录", response.status)
-                return False
+                return LoginStatus.UNCONFIRMED
             deadline = time.monotonic() + PAGE_TIMEOUT_MS / 1000
             while time.monotonic() < deadline:
                 before_check = time.monotonic()
@@ -77,18 +89,22 @@ def check_login(page: Page) -> bool:
                 deadline += time.monotonic() - before_check
                 if _is_authenticated(page):
                     logger.info("已确认千牛工作台登录：%s", _safe_location(page))
-                    return True
-                if _visible(page, LOGIN_FORM_SELECTORS):
+                    return LoginStatus.AUTHENTICATED
+                location = urlsplit(page.url)
+                if (location.scheme == 'https' and location.hostname == 'loginmyseller.taobao.com'
+                        and _visible(page, LOGIN_FORM_SELECTORS)):
                     logger.info("检测到登录表单，需要扫码登录")
-                    return False
+                    return LoginStatus.REQUIRED
+                if _visible(page, LOGIN_FORM_SELECTORS):
+                    return LoginStatus.UNCONFIRMED
                 page.wait_for_timeout(300)
             logger.warning("工作台登录状态未能识别：%s", _safe_location(page))
-            return False
+            return LoginStatus.UNCONFIRMED
         except PlaywrightTimeoutError:
             if checkpoint("访问工作台超时，检查验证状态"):
                 raise
             logger.warning("工作台访问超时，第 %s/%s 次", attempt, MAX_RETRY)
-    return False
+    return LoginStatus.UNCONFIRMED
 
 
 @qianniu_operation
