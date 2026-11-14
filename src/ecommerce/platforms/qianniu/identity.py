@@ -16,7 +16,8 @@ _READ_IDENTITY = r"""() => {
     const visible = element => element.getClientRects().length > 0 &&
         getComputedStyle(element).visibility === 'visible';
     const matching = selector => [...document.querySelectorAll(selector)].filter(visible);
-    const shopIdLabels = matching('[class*="label--"]').filter(label =>
+    const labels = matching('[class*="label--"]');
+    const shopIdLabels = labels.filter(label =>
         /^店铺\s*ID\s*[：:]?$/.test(label.innerText.trim()));
     const accounts = matching('[class*="accountWrap--"]');
     if (shopIdLabels.length !== 1 || accounts.length !== 1) return null;
@@ -31,17 +32,30 @@ _READ_IDENTITY = r"""() => {
     const shopNameText = shopName.innerText.split('\n')[0].trim();
     const loginParts = loginName.innerText.trim().split(/\s+/);
     if (!shopId || !shopNameText || !loginParts[0] || loginParts.length > 2) return null;
-    return {shopId, shopName: shopNameText, loginDisplayName: loginParts.join('-')};
+    const ownerLabels = labels.filter(label =>
+        /^淘宝账号名\s*[：:]?$/.test(label.innerText.trim()));
+    const shopLoginName = ownerLabels.length === 1
+        ? ownerLabels[0].parentElement.innerText.match(/^\s*淘宝账号名\s*[：:]?\s*([^\s:：]+)\s*$/)?.[1]
+        : null;
+    const nickname = loginParts[0];
+    let fullLoginName = null;
+    if (shopLoginName && loginParts.length === 1 && nickname === shopLoginName) {
+        fullLoginName = shopLoginName;
+    } else if (shopLoginName && loginParts.length === 2 && nickname !== shopLoginName && !/[:：]/.test(nickname)) {
+        fullLoginName = shopLoginName + ':' + nickname;
+    }
+    return {shopId, shopName: shopNameText, loginDisplayName: loginParts.join('-'), fullLoginName};
 }"""
 
 
 @dataclass(frozen=True)
 class ShopIdentity:
-    """店铺信息页核对到的店铺编号及显示文字。"""
+    """店铺信息页核对到的店铺和登录者，完整登录名可用于后续比对。"""
 
     shop_id: str
     shop_name: str
     login_display_name: str
+    login_name: str | None = None
 
 
 @qianniu_operation
@@ -67,6 +81,9 @@ def read_shop_identity(page: Page, timeout_ms: int = IDENTITY_TIMEOUT_MS) -> Sho
         if current.path.rstrip("/") == target.path:
             identity = page.evaluate(_READ_IDENTITY)
             if identity is not None:
-                return ShopIdentity(identity['shopId'], identity['shopName'], identity['loginDisplayName'])
+                return ShopIdentity(
+                    identity['shopId'], identity['shopName'], identity['loginDisplayName'],
+                    identity['fullLoginName'],
+                )
         page.wait_for_timeout(250)
     return None

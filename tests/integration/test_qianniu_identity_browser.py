@@ -17,7 +17,7 @@ class QianniuIdentityBrowserTests(unittest.TestCase):
         self.addCleanup(browser.close)
         self.page = browser.new_page()
 
-    def serve_shop(self, account, shop_rows=None):
+    def serve_shop(self, account, shop_rows=None, owner='tb1234567890'):
         if shop_rows is None:
             shop_rows = '<div><div class="label--sample">店铺ID</div><div>123456789<button aria-label="复制"></button></div></div>'
         html = f'''<meta charset="utf-8">
@@ -26,17 +26,28 @@ class QianniuIdentityBrowserTests(unittest.TestCase):
                 <div class="nameWrap--sample">{account}</div>
             </div></header>
             <main>
-                <div><div class="label--sample">淘宝账号名</div><div>tb1234567890</div></div>
+                <div><div class="label--sample">淘宝账号名</div><div>{owner}</div></div>
                 {shop_rows}
             </main>'''
         self.page.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=html))
 
     def test_main_account(self):
         self.serve_shop('tb1234567890')
-        self.assertEqual(read_shop_identity(self.page), ShopIdentity('123456789', '示例店铺', 'tb1234567890'))
+        self.assertEqual(read_shop_identity(self.page),
+                         ShopIdentity('123456789', '示例店铺', 'tb1234567890', 'tb1234567890'))
 
     def test_subaccount_is_read_from_header(self):
         self.serve_shop('<div>示例</div><div>运营</div>')
+        self.assertEqual(read_shop_identity(self.page),
+                         ShopIdentity('123456789', '示例店铺', '示例-运营', 'tb1234567890:示例'))
+
+    def test_subaccount_role_does_not_change_login_name(self):
+        self.serve_shop('<div>示例</div><div>客服</div>')
+        self.assertEqual(read_shop_identity(self.page),
+                         ShopIdentity('123456789', '示例店铺', '示例-客服', 'tb1234567890:示例'))
+
+    def test_missing_shop_login_name_does_not_guess_subaccount(self):
+        self.serve_shop('<div>示例</div><div>运营</div>', owner='')
         self.assertEqual(read_shop_identity(self.page), ShopIdentity('123456789', '示例店铺', '示例-运营'))
 
     def test_ambiguous_shop_id_is_not_accepted(self):

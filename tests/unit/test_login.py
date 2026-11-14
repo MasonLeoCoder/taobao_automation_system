@@ -104,13 +104,15 @@ class LoginTests(unittest.TestCase):
         settings = MagicMock()
         with patch.object(service, 'browser_session') as session, \
                 patch.object(service, 'authenticate') as authenticate, \
-                patch.object(service, 'read_shop_identity', return_value=ShopIdentity('123456789', '示例店铺', '示例-运营')) as identity:
+                patch.object(service, 'read_shop_identity', return_value=ShopIdentity(
+                    '123456789', '示例店铺', '示例-运营', 'tb1234567890:示例')) as identity:
             context, page = MagicMock(), MagicMock()
             session.return_value.__enter__.return_value = context, page
             result = service.check(settings)
         authenticate.assert_called_once_with(context, page, settings, allow_login=False)
         identity.assert_called_once_with(authenticate.return_value)
-        self.assertEqual(result, '店铺登录状态有效，店铺：示例店铺（店铺ID 123456789），当前登录者：示例-运营')
+        self.assertEqual(result, '店铺登录状态有效，店铺：示例店铺（店铺ID 123456789），'
+                                 '当前登录者：示例-运营，完整登录名：tb1234567890:示例')
 
     def test_account_check_reports_unavailable_identity(self):
         with patch.object(service, 'browser_session') as session, \
