@@ -90,12 +90,51 @@
   background: #fff0ed;
   color: #a53026;
 }
-#platform-accounts .account-actions details > div {
+#platform-accounts .account-actions .ui-action-menu > summary {
+  justify-content: flex-start;
+  gap: 5px;
+  min-height: var(--control-height);
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--control-label);
+  font: 400 var(--control-font-size)/1.5 var(--control-font);
+  white-space: nowrap;
+}
+#platform-accounts .account-actions .ui-action-menu > summary:hover,
+#platform-accounts .account-actions .ui-action-menu[open] > summary {
+  background: var(--control-selected);
+  color: var(--control-text);
+}
+#platform-accounts .account-actions .ui-action-menu > summary span {
+  font-size: .85em;
+}
+#platform-accounts .account-actions .ui-action-menu[open] > summary span {
+  transform: rotate(180deg);
+}
+#platform-accounts .account-actions .ui-action-menu > div {
   position: static;
+  min-width: 0;
   margin-top: 6px;
+  padding: 4px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px #172a3810;
+}
+#platform-accounts .account-actions .ui-action-menu > div .ui-button {
+  --action-bg: transparent;
+  --action-border: transparent;
+  --action-text: var(--control-text);
+  --action-hover: var(--control-selected);
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 9px;
+  border-radius: 5px;
+}
+#platform-accounts .account-actions .ui-action-menu > div .ui-danger {
+  --action-text: var(--control-error);
+  --action-hover: #fff0ed;
 }
 @media (max-width: 700px) {
   #platform-accounts .table-wrap table,
