@@ -3,6 +3,7 @@ from ecommerce.infrastructure.tasks.events import notify as print
 from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.platforms.qianniu.login import check_login, login_with_qrcode
+from ecommerce.platforms.qianniu.identity import read_shop_identity
 from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -33,7 +34,11 @@ def login(settings: Settings, on_attention=None) -> str:
 
 
 def check(settings: Settings, on_attention=None) -> str:
-    """在线检查已存会话；参数：配置；返回：结果说明。"""
+    """在线检查已存会话并读取当前店铺和登录者。"""
     with browser_session(settings, on_attention=on_attention) as (context, page):
-        authenticate(context, page, settings, allow_login=False)
-    return "店铺登录状态有效"
+        page = authenticate(context, page, settings, allow_login=False)
+        identity = read_shop_identity(page)
+    if identity is None:
+        return "店铺登录状态有效，暂未读到完整的店铺和登录者信息"
+    return (f"店铺登录状态有效，店铺：{identity.shop_name}（店铺ID {identity.shop_id}），"
+            f"当前登录者：{identity.login_display_name}")

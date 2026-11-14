@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from ecommerce.platforms.qianniu import login
+from ecommerce.platforms.qianniu.identity import ShopIdentity
 from ecommerce.modules.account import service
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -98,3 +99,21 @@ class LoginTests(unittest.TestCase):
             with self.assertRaises(NeedsAttention):
                 service.authenticate(MagicMock(), MagicMock(), MagicMock(headless=False))
             save.assert_not_called()
+
+    def test_account_check_displays_shop_and_current_operator(self):
+        settings = MagicMock()
+        with patch.object(service, 'browser_session') as session, \
+                patch.object(service, 'authenticate') as authenticate, \
+                patch.object(service, 'read_shop_identity', return_value=ShopIdentity('123456789', '示例店铺', '示例-运营')) as identity:
+            context, page = MagicMock(), MagicMock()
+            session.return_value.__enter__.return_value = context, page
+            result = service.check(settings)
+        authenticate.assert_called_once_with(context, page, settings, allow_login=False)
+        identity.assert_called_once_with(authenticate.return_value)
+        self.assertEqual(result, '店铺登录状态有效，店铺：示例店铺（店铺ID 123456789），当前登录者：示例-运营')
+
+    def test_account_check_reports_unavailable_identity(self):
+        with patch.object(service, 'browser_session') as session, \
+                patch.object(service, 'authenticate'), patch.object(service, 'read_shop_identity', return_value=None):
+            session.return_value.__enter__.return_value = MagicMock(), MagicMock()
+            self.assertEqual(service.check(MagicMock()), '店铺登录状态有效，暂未读到完整的店铺和登录者信息')
