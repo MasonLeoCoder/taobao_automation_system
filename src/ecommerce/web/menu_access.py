@@ -16,10 +16,11 @@ BLUEPRINTS = {'ledger': 'ledger', 'analysis': 'analysis', 'favorites': 'favorite
               'review_analysis': 'catalog', 'question_analysis': 'catalog', 'composite_analysis': 'catalog',
               'image_analysis': 'catalog', 'image_modules': 'catalog',
               'image_tools': 'tools', 'video_tools': 'tools', 'bilibili_tools': 'tools', 'youtube_tools': 'tools',
-              'product_listing': 'listing', 'publish_categories': 'publish-categories', 'sycm_search': 'sycm-search'}
+              'product_listing': 'listing', 'publish_categories': 'publish-categories', 'sycm_search': 'sycm-search',
+              'platform_accounts': 'platform-accounts'}
 SAFE_STATUS = {'collection_jobs.job_status', 'collection_jobs.status', 'collection_jobs.active',
                'collection_jobs.recent', 'collection_jobs.history', 'collection_jobs.check_update_submission',
-               'review_analysis.status', 'publish_categories.status', 'sycm_search.status'}
+               'review_analysis.status', 'publish_categories.status', 'sycm_search.status', 'platform_accounts.status'}
 CONTROLS = {'collection_jobs.control', 'collection_jobs.job_control'}
 VIDEO_JOBS = {'video_tools.job', 'bilibili_tools.job', 'youtube_tools.job'}
 
@@ -38,6 +39,8 @@ def task_safety_request():
         return set(body) <= {'action', 'prompt_id'} and isinstance(body.get('action'), str) and body['action'] in {'stop', 'pause'}
     if endpoint in VIDEO_JOBS:
         return set(body) == {'action'} and isinstance(body['action'], str) and body['action'] in {'pause', 'cancel'}
+    if endpoint == 'platform_accounts.respond':
+        return body.get('action') == 'cancel'
     return endpoint == 'collection_jobs.retry_queue' and body == {'action': 'pause'}
 
 

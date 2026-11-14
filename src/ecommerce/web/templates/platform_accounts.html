@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% import 'form_controls.html' as ui %}
+{% block title %}账号管理{% endblock %}
+{% block breadcrumb %}工具与系统 / 账号管理{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='platform_accounts.css') }}">{% endblock %}
+{% block content %}
+<section id="platform-accounts" data-start="{{ url_for('platform_accounts.start') }}"
+    data-status="{{ url_for('platform_accounts.status') }}" data-respond="{{ url_for('platform_accounts.respond') }}">
+  <h1>账号管理</h1>
+  <div class="ui-tool-card">
+    <div class="account-toolbar">
+      <h2>千牛账号</h2>
+      {{ ui.control_button('添加账号', {'type':'button', 'data-account-action':'add'}, 'primary') }}
+    </div>
+    {% if accounts %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>完整登录名</th><th>店铺</th><th>店铺 ID</th><th>最近核验</th><th>操作</th></tr></thead>
+        <tbody>
+          {% for account in accounts %}
+          <tr data-account-id="{{ account.id }}" data-shop-id="{{ account.platform_shop_id }}">
+            <td>{{ account.login_name }}</td>
+            <td>{{ account.shop_name }}</td>
+            <td>{{ account.platform_shop_id }}</td>
+            <td>{{ account.verified_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td><div class="account-actions">
+              {{ ui.control_button('打开千牛', {'type':'button', 'data-account-action':'open'}, 'secondary') }}
+              {{ ui.control_button('检查登录', {'type':'button', 'data-account-action':'check'}, 'secondary') }}
+              {{ ui.control_button('重新登录', {'type':'button', 'data-account-action':'login'}, 'secondary') }}
+            </div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p>添加账号后，可以用对应账号打开千牛、检查登录或重新扫码。</p>
+    {% endif %}
+    <p id="account-operation-message" role="status"></p>
+    <div class="account-actions">
+    {{ ui.control_button('已处理，继续', {'type':'button','id':'account-continue','hidden':true}, 'secondary') }}
+    {{ ui.control_button('取消', {'type':'button','id':'account-cancel','hidden':true}, 'secondary') }}
+    <a id="account-refresh" class="ui-button ui-secondary" href="{{ url_for('platform_accounts.index') }}" hidden>刷新账号列表</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block extra_scripts %}
+<script defer src="{{ url_for('static', filename='platform_accounts.js') }}"></script>
+{% endblock %}

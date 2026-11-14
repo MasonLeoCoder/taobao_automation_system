@@ -1,0 +1,28 @@
+#platform-accounts {
+  padding-block: 28px;
+}
+#platform-accounts .account-toolbar,
+#platform-accounts .account-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#platform-accounts .account-toolbar {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+#platform-accounts .account-toolbar h2 {
+  margin: 0;
+}
+#platform-accounts td:first-child {
+  font-weight: 650;
+}
+#account-operation-message {
+  margin-top: 14px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+#account-operation-message:empty {
+  margin: 0;
+}

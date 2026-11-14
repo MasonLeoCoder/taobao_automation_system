@@ -113,6 +113,7 @@ GROUPS = (
                 '退款与售后记录、买家反馈、商品规格和处理结果。', ('catalog',)),
     )),
     dict(key='system', label='工具与系统', items=(
+        existing('platform-accounts', '账号管理', 'platform_accounts.index'),
         existing('tools', '工具箱', 'image_tools.index'),
         existing('tasks', '任务记录', 'pages.tasks'),
         existing('logs', '运行日志', 'pages.logs'),

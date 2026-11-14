@@ -53,6 +53,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(ai)
     import secrets
     app.config['COLLECTION_TOKEN']=secrets.token_hex(32)
+    from ecommerce.modules.account.web_accounts import AccountWorkbench
+    from ecommerce.web.routes.platform_accounts import platform_accounts
+    app.extensions['platform_accounts'] = AccountWorkbench(settings)
+    app.register_blueprint(platform_accounts)
     from ecommerce.modules.product.web_listing import ListingWorkbench
     from ecommerce.web.routes.product_listing import product_listing
     app.extensions['product_listing'] = ListingWorkbench(settings)
