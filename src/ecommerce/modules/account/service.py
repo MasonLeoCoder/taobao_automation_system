@@ -40,8 +40,6 @@ def check(settings: Settings, on_attention=None) -> str:
         identity = read_shop_identity(page)
     if identity is None:
         return "店铺登录状态有效，暂未读到完整的店铺和登录者信息"
-    result = (f"店铺登录状态有效，店铺：{identity.shop_name}（店铺ID {identity.shop_id}），"
-              f"当前登录者：{identity.login_display_name}")
-    if identity.login_name and identity.login_name != identity.login_display_name:
-        result += f"，完整登录名：{identity.login_name}"
-    return result
+    login_label = identity.login_name or f"{identity.login_display_name}（完整登录名未确认）"
+    return (f"店铺登录状态有效，店铺：{identity.shop_name}（店铺ID {identity.shop_id}），"
+            f"当前登录者：{login_label}")
