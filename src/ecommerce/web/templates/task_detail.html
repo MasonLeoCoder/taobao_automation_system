@@ -32,6 +32,16 @@
   {% endif %}
 </section>
 {% endif %}
+{% if task.name.startswith('collection.taobao.') %}
+<section class="panel">
+  <h2>淘宝采集账号</h2>
+  <dl>
+    <dt>所选账号</dt><dd>{{ taobao_requested.login_name if taobao_requested else '未知' }}</dd>
+    <dt>实际核验昵称</dt><dd>{{ taobao_verified.login_name if taobao_verified else '未记录' if taobao_requested else '未知' }}</dd>
+    {% if taobao_verified %}<dt>核验时间</dt><dd>{{ taobao_verified.verified_at | full_local_time }}</dd>{% endif %}
+  </dl>
+</section>
+{% endif %}
 {% if qianniu_source and not sycm_job and not listing_job %}
 <section class="panel">
   <h2>千牛任务归属</h2>

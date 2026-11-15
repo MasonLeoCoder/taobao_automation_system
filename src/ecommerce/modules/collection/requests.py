@@ -9,7 +9,7 @@ from ecommerce.infrastructure.tasks.ownership import execution_key, process_star
 from ecommerce.infrastructure.tasks.runner import TaskResult
 
 
-def execute(settings, name, action, options, *, runner, resume_task_id=None, resume_revision=None):
+def execute(settings, name, action, options, *, runner, resume_task_id=None, resume_revision=None, taobao_account=None):
     """登记后同步执行或排队；参数：配置、名称、动作、固定参数及执行器；返回：任务结果。"""
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
         return runner(settings,name,action)
@@ -25,14 +25,22 @@ def execute(settings, name, action, options, *, runner, resume_task_id=None, res
          'config':settings_payload(settings)}
     if resume_task_id:
         row.update(resume_task_id=resume_task_id,resume_revision=resume_revision)
+    if taobao_account:
+        row['taobao_account']=taobao_account
     store=CollectionJobStore(settings)
     job_id=store.submit(row,submission_key=uuid4().hex,origin='cli')
     claimed=None if active_local_tasks(settings) else store.claim(execution_key(settings),job_id,manual=bool(resume_task_id))
     if claimed is None:
         return TaskResult(job_id,'queued','采集申请已入库排队；可在网页查看或继续队列',0)
     store.bind_process(job_id,claimed['claim_token'],os.getpid(),process_started_at(os.getpid()))
-    result=runner(settings,name,action,task_id=job_id,job_claim_token=claimed['claim_token'])
+    from ecommerce.modules.account.buyers import run
+    result=run(settings,name,action,buyer=taobao_account,runner=runner,task_id=job_id,job_claim_token=claimed['claim_token'])
     if result.task_id is None:
-        store.fail_start(job_id,claimed['claim_token'],result.message)
-        store.pause(execution_key(settings),True,'命令行采集未能启动，等待核对')
+        if result.account_blocked:
+            store.hold_buyer(job_id,claimed['claim_token'],result.message)
+            from ecommerce.modules.collection.dispatch import dispatch_next
+            dispatch_next(settings)
+        else:
+            store.fail_start(job_id,claimed['claim_token'],result.message)
+            store.pause(execution_key(settings),True,'命令行采集未能启动，等待核对')
     return result

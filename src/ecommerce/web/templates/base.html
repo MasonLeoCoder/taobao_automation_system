@@ -1,5 +1,5 @@
 <!doctype html>
-{% from 'form_controls.html' import back_to_top with context %}
+{% from 'form_controls.html' import back_to_top, select_control, control_button with context %}
 {% set is_test_environment = environment_database() == 'taobao_automation_test' %}
 <html lang="zh-CN">
 <head>
@@ -45,6 +45,23 @@
   <p id="collection-attention-feedback" role="status"></p>
 </dialog>
 <div id="collection-client" data-token="{{ config.COLLECTION_TOKEN }}"></div>
+{% if config.COLLECTION_BUYER_SELECTION %}
+<dialog id="collection-buyer-dialog" class="ui-modal ui-confirm-panel" aria-labelledby="collection-buyer-title">
+  <header class="ui-modal-header"><h2 id="collection-buyer-title">选择淘宝买家账号</h2></header>
+  <form method="dialog" class="ui-confirm-form">
+    <div class="ui-confirm-body">
+      <label for="collection-buyer-select">淘宝账号</label>
+      {% call select_control({'id':'collection-buyer-select','required':true}) %}<option value="">请选择账号</option>{% endcall %}
+      <p id="collection-buyer-status" role="status"></p>
+      <a class="ui-button ui-secondary" href="{{ url_for('platform_accounts.index', platform='taobao') }}" target="_blank" rel="noopener">账号管理</a>
+    </div>
+    <div class="ui-confirm-footer"><div class="ui-confirm-buttons">
+      {{ control_button('取消', {'value':'cancel','formnovalidate':true}, 'secondary') }}
+      {{ control_button('确认账号并提交', {'id':'collection-buyer-confirm','value':'confirm','disabled':true}, 'primary') }}
+    </div></div>
+  </form>
+</dialog>
+{% endif %}
 <div id="parameter-copy-feedback" class="parameter-copy-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 <dialog id="image-preview" class="image-preview" aria-labelledby="image-preview-title" aria-describedby="image-preview-hint">
   <div class="image-preview-toolbar">

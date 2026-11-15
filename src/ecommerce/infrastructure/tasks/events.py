@@ -328,7 +328,7 @@ class TaskEvents:
         if reported:
             self.emit('storage_resumed','数据库连接及待入库记录已恢复',step=step,state='running')
 
-    def finish(self,status,message):
+    def finish(self,status,message,*,account_blocked=False):
         """持久保存真实结论并等待提交；参数：结果；返回：数据库是否已确认。"""
         previous=getattr(self,'finish_operation',None)
         if previous and (previous['state']!=status or previous['message']!=sanitize(message)):
@@ -336,6 +336,8 @@ class TaskEvents:
         self.closing=True
         if previous is None:
             operation=self.operation('finish','task_finished',message,state=status,level='ERROR' if status=='failed' else 'INFO')
+            if account_blocked:
+                operation['account_blocked']=True
             # 仅新生成的结束事件启用；旧流水重放不会自动修复历史详情。
             if self.settings.collection_backend=='mysql' and self.name.startswith('collection.taobao.'):
                 operation['close_collection_runs']=True

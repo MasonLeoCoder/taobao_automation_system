@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 
 from flask import Blueprint,abort,current_app,jsonify,request,url_for
 from ecommerce.modules.collection import web_collection as service
-from ecommerce.shared.exceptions import TaskBusy
+from ecommerce.shared.exceptions import BuyerUnavailable, TaskBusy
 
 collection_jobs=Blueprint('collection_jobs',__name__)
 
@@ -26,6 +26,7 @@ def protect_request():
 
 @collection_jobs.errorhandler(ValueError)
 @collection_jobs.errorhandler(TaskBusy)
+@collection_jobs.errorhandler(BuyerUnavailable)
 def invalid_request(error):
     """返回可显示的输入或任务冲突；参数：异常；返回：409 JSON。"""
     return jsonify(error=str(error)),409
@@ -35,6 +36,17 @@ def invalid_request(error):
 def missing(error):
     """拒绝商品任务错配；参数：异常；返回：404 JSON。"""
     return jsonify(error=str(error)),404
+
+
+@collection_jobs.get('/api/collection-buyer-accounts')
+def buyer_accounts():
+    from ecommerce.modules.account.buyers import choices
+    return jsonify(accounts=choices(current_app.config['SETTINGS']))
+
+
+def selected_buyer(body):
+    from ecommerce.modules.account.buyers import target
+    return target(current_app.config['SETTINGS'],body.get('account_id'))
 
 
 def present(state):
@@ -81,9 +93,10 @@ def retry_module(identifier):
     """手动排队补采失败模块；参数：来源任务、商品和模块；返回：队列编号。"""
     from ecommerce.modules.collection import dispatch
     body=request.get_json()
-    if not isinstance(body,dict) or set(body)!={'product_id','module'}:
+    if not isinstance(body,dict) or set(body)!={'product_id','module','account_id'}:
         raise ValueError('请指定原任务对应的商品和模块')
-    return jsonify(dispatch.retry(current_app.config['SETTINGS'],identifier,body['product_id'],body['module'])),202
+    return jsonify(dispatch.retry(current_app.config['SETTINGS'],identifier,body['product_id'],body['module'],
+                                  account_id=body['account_id'],submission_key=request.headers.get('X-Submission-Id'))),202
 
 
 @collection_jobs.route('/api/collection-queue',methods=['GET','POST'])
@@ -125,8 +138,13 @@ def history():
 @collection_jobs.post('/api/collection-jobs')
 def create():
     """派发关键词或任意商品采集；参数：JSON配置；返回：202任务描述。"""
-    return jsonify(present(service.start_configured(current_app.config['SETTINGS'],request.get_json(),
-        submission_key=request.headers.get('X-Submission-Id')))),202
+    body=request.get_json()
+    if not isinstance(body,dict):
+        raise ValueError('请填写采集范围并选择淘宝账号')
+    account=selected_buyer(body)
+    options={key:value for key,value in body.items() if key!='account_id'}
+    return jsonify(present(service.start_configured(current_app.config['SETTINGS'],options,
+        submission_key=request.headers.get('X-Submission-Id'),taobao_account=account))),202
 
 
 @collection_jobs.get('/api/collection-jobs/<identifier>')
@@ -199,30 +217,33 @@ def check_update_submission(product_id,module):
 def update_module(product_id,module):
     """唯一模块确认更新；参数：模块和确认范围；返回：新申请或原在途申请。"""
     body=request.get_json()
-    if not isinstance(body,dict) or set(body)-{'confirm','unlimited'} or body.get('confirm') is not True:
+    if not isinstance(body,dict) or set(body)-{'confirm','unlimited','account_id'} or body.get('confirm') is not True:
         raise ValueError('请明确确认更新范围')
     return jsonify(present(service.start_module_update(current_app.config['SETTINGS'],product_id,module,
-        unlimited=body.get('unlimited',False),submission_key=request.headers.get('X-Submission-Id')))),202
+        unlimited=body.get('unlimited',False),submission_key=request.headers.get('X-Submission-Id'),
+        taobao_account=selected_buyer(body)))),202
 
 
 @collection_jobs.post('/api/collections/products/<product_id>/sku-update')
 def update_skus(product_id):
     """明确确认后只采集本商品全部SKU；参数：商品及confirm=true；返回：新申请或已有在途申请。"""
     body=request.get_json()
-    if not isinstance(body,dict) or set(body)!={'confirm'} or body['confirm'] is not True:
+    if not isinstance(body,dict) or set(body)-{'confirm','account_id'} or body.get('confirm') is not True:
         raise ValueError('请确认更新本商品全部SKU信息')
     return jsonify(present(service.start_sku_update(current_app.config['SETTINGS'],product_id,
-        submission_key=request.headers.get('X-Submission-Id')))),202
+        submission_key=request.headers.get('X-Submission-Id'),taobao_account=selected_buyer(body)))),202
 
 
 @collection_jobs.post('/api/collections/products/<product_id>/jobs')
 def start(product_id):
     """派发单模块或补齐剩余模块；参数：商品及 JSON 请求；返回：202任务描述。"""
     body=request.get_json()
-    if isinstance(body,dict) and body=={'mode':'remaining'}:
-        state=service.start_remaining(current_app.config['SETTINGS'],product_id,submission_key=request.headers.get('X-Submission-Id'))
-    elif isinstance(body,dict) and set(body)=={'module'} and isinstance(body['module'],str):
-        state=service.start(current_app.config['SETTINGS'],product_id,body['module'],submission_key=request.headers.get('X-Submission-Id'))
+    if isinstance(body,dict) and set(body)-{'account_id'}=={'mode'} and body['mode']=='remaining':
+        state=service.start_remaining(current_app.config['SETTINGS'],product_id,submission_key=request.headers.get('X-Submission-Id'),
+                                      taobao_account=selected_buyer(body))
+    elif isinstance(body,dict) and set(body)-{'account_id'}=={'module'} and isinstance(body['module'],str):
+        state=service.start(current_app.config['SETTINGS'],product_id,body['module'],submission_key=request.headers.get('X-Submission-Id'),
+                            taobao_account=selected_buyer(body))
     else:
         raise ValueError('请指定唯一采集模块或补齐剩余模块模式')
     return jsonify(present(state)),202

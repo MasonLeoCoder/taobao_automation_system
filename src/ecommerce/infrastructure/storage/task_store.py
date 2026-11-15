@@ -140,7 +140,8 @@ class MySQLTaskStore:
                     if operation['op']=='finish':
                         change.update(status=operation['state'],finished_at=database_time(operation['time']),message=operation.get('message'))
                         from ecommerce.infrastructure.storage.collection_jobs import finish_execution
-                        finish_execution(connection,self.tables,task_id,operation['state'])
+                        finish_execution(connection,self.tables,task_id,operation['state'],
+                                         account_blocked=bool(operation.get('account_blocked')))
                     elif operation['op']=='progress' and task['finished_at'] is None:
                         change.update(status=operation['state'],message=operation.get('message'))
                     connection.execute(tasks.update().where(tasks.c.id==task_id).values(**change))

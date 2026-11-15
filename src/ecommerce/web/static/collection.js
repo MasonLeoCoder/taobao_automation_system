@@ -6,6 +6,7 @@
   const workspace = document.querySelector('[data-collection-workspace]');
   const bar = document.getElementById('collection-task-bar');
   const dialog = document.getElementById('collection-attention');
+  const buyerDialog = document.getElementById('collection-buyer-dialog');
   const labels = {list:'列表采集',basic_info:'基本信息',video:'视频',main_images:'主图',skus:'SKU',parameters:'商品参数',detail_images:'详情图片',review_summary:'评价概览',reviews:'评价明细',questions:'问大家'};
   const states = {queued:'等待执行',paused:'队列已暂停',starting:'启动中',stopping:'正在停止',running:'采集中',waiting:'等待采集',not_run:'本次未执行',skipped:'已跳过',needs_attention:'需要人工处理',storage_pending:'等待入库',succeeded:'采集完成',failed:'采集失败',cancelled:'已停止',interrupted:'进程已退出',unverified:'进程待核实',verification_pending:'结果待核对'};
   const tracked = new Map();
@@ -35,7 +36,8 @@
   const pendingSubmissions = new Map();
   const endpoint = job => job.status_url || `/api/collection-jobs/${job.id}`;
   const targetLabel = job => job.mode === 'keyword' ? `关键词“${job.options.keyword}”` : `商品 ${job.product_id}`;
-  const stateLabel = job => job.failures?.length && job.done ? '已结束，存在模块错误' : job.done && job.state === 'needs_attention' && (job.task_status === 'succeeded' || job.history_status === 'completed') ? '已结束（结果待核对）' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
+  const stateLabel = job => job.account_wait ? '账号待处理' : job.failures?.length && job.done ? '已结束，存在模块错误' : job.done && job.state === 'needs_attention' && (job.task_status === 'succeeded' || job.history_status === 'completed') ? '已结束（结果待核对）' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
+  let choosingBuyer = false;
 
   async function api(url, body) {
     const submission = body === undefined ? null : `${url}:${JSON.stringify(body)}`;
@@ -49,6 +51,35 @@
     if (!response.ok) { const error=new Error(value.error || (response.status === 403 ? '操作令牌已失效，请刷新页面' : `请求失败（${response.status}），请稍后重试`));error.status=response.status;throw error; }
     if (submission) pendingSubmissions.delete(submission);
     return value;
+  }
+
+  async function buyerBody(body) {
+    if (!buyerDialog) return body;
+    if (choosingBuyer) throw new Error('请先完成当前账号选择');
+    choosingBuyer = true;
+    try {
+      const select = buyerDialog.querySelector('select');
+      const confirm = document.getElementById('collection-buyer-confirm');
+      const note = document.getElementById('collection-buyer-status');
+      const {accounts} = await api('/api/collection-buyer-accounts');
+      select.replaceChildren(new Option('请选择账号', ''));
+      for (const account of accounts) {
+        const option = new Option(account.reason ? `${account.login_name} · ${account.reason}` : account.login_name, account.id);
+        option.disabled = Boolean(account.reason);
+        select.add(option);
+      }
+      note.textContent = accounts.some(item=>!item.reason) ? '' : '请在账号管理添加账号或重新登录。';
+      confirm.disabled = true;
+      select.onchange = () => { confirm.disabled = !select.value || select.selectedOptions[0].disabled; };
+      buyerDialog.returnValue = '';
+      const accepted = new Promise(resolve => buyerDialog.addEventListener('close', resolve, {once:true}));
+      buyerDialog.showModal();
+      await accepted;
+      if (buyerDialog.returnValue !== 'confirm' || !select.value) {
+        const error = new Error('已取消本次采集申请'); error.status = 422; throw error;
+      }
+      return {...body, account_id:select.value};
+    } finally { choosingBuyer = false; }
   }
 
   function link(label, url, color = 'action-history') {
@@ -294,6 +325,7 @@
       recoverySelection = {id:job.id,revision:view.revision};
       const summary = document.createElement('p');
       summary.textContent = `原计划：${view.options.mode === 'keyword' ? `${view.options.keyword}，${view.options.pages} 页；已保存第 ${view.pages.join('、') || '无'} 页` : `商品 ${job.product_id}，${view.options.modules.map(m => labels[m]).join('、')}`}。未开始的商品和模块将继续采集。`;
+      if (buyerDialog) summary.textContent += ` 原淘宝账号：${job.taobao_account?.login_name || '未知'}`;
       content.append(summary);
       const scope = document.createElement('p');
       scope.textContent = view.options.mode === 'keyword'
@@ -312,6 +344,11 @@
         line.textContent = `${item.product_id} · ${labels[item.module]}：${actions[item.action]}${item.cleanup ? `；涉及 ${item.cleanup.batch_count} 个未完成批次、${item.cleanup.file_count} 个批次内文件（共享文件执行前再次核对）` : ''}`;
         content.append(line);
       });
+      if (buyerDialog && !job.taobao_account) {
+        note.textContent = '旧任务的淘宝账号未知。请选择账号新建采集。';
+        recoverySelection = null;
+        return;
+      }
       note.textContent = view.next ? `接下来处理：第 ${view.next.page || '—'} 页，商品 ${view.next.product_id || '待取得列表清单'}，${labels[view.next.module]}` : '执行前会再次核对进度和删除范围。';
       document.getElementById('collection-recovery-confirm').disabled = false;
     } catch (error) { note.textContent = error.message; recoverySelection = null; }
@@ -344,7 +381,7 @@
     queuePaused = Boolean(data.paused);
     list.replaceChildren();
     data.items.forEach(item => {
-      const line = document.createElement('p'); line.textContent = `${item.product_id ? `商品 ${item.product_id}` : `关键词“${item.options?.keyword || '未记录'}”`} · ${labels[item.module] || '所选模块'} · ${{waiting:'等待当前采集结束',paused:'已暂停，等待手动继续',claimed:'已派发'}[item.state] || item.state}`;
+      const line = document.createElement('p'); line.textContent = `${item.product_id ? `商品 ${item.product_id}` : `关键词“${item.options?.keyword || '未记录'}”`} · ${labels[item.module] || '所选模块'}${buyerDialog ? ` · 淘宝账号 ${item.taobao_account?.login_name || '未知'}` : ''} · ${item.account_wait || {waiting:'等待当前采集结束',paused:'已暂停，等待手动继续',claimed:'已派发'}[item.state] || item.state}`;
       list.append(line);
     });
     document.getElementById('collection-queue-status').textContent = `${data.paused ? `队列已暂停：${data.reason || '等待手动继续'}。` : ''}${data.items.length ? `${data.items.length} 项等待执行` : '暂无等待申请'}`;
@@ -403,7 +440,7 @@
     historyData.jobs.map(job => tracked.get(job.id) || job).forEach(job => {
       const article = document.createElement('article'); article.className = 'collection-job'; article.dataset.jobId = job.id;
       const title = document.createElement('h3'); title.textContent = `${targetLabel(job)} · ${stateLabel(job)}`;
-      const progress = document.createElement('p'); progress.textContent = jobLabel(job);
+      const progress = document.createElement('p'); progress.textContent = `${buyerDialog ? `淘宝账号 ${job.taobao_account?.login_name || '未知'} · ` : ''}${jobLabel(job)}`;
       const message = document.createElement(job.message.length > 180 ? 'details' : 'p');
       if (job.message.length > 180) {
         message.dataset.jobNote = job.id;
@@ -448,7 +485,7 @@
         const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'button action-button action-danger'; retry.textContent = '重新采集此模块';
         retry.addEventListener('click',async () => {
           retry.disabled = true;
-          try { const queued = await api(`/api/collection-jobs/${job.id}/retry`,{product_id:item.product_id,module:item.module}); reason.textContent = queued.message; await renderQueue(); }
+          try { const queued = await api(`/api/collection-jobs/${job.id}/retry`,await buyerBody({product_id:item.product_id,module:item.module})); reason.textContent = queued.message; await renderQueue(); }
           catch (error) { reason.textContent = error.message; }
           finally { retry.disabled = false; }
         }); failure.append(retry); article.append(failure);
@@ -601,12 +638,14 @@
     const {resolve,reject,module,unlimited}=event.detail;
     if(!product || !stateKnown || submitting || pendingUpdateCheck){reject(new Error('任务状态尚未确认，请稍后再试。'));return;}
     submitting=true;
-    const url=`/api/collections/products/${product}/module-update/${module}`,body={confirm:true,unlimited};
-    const signature=`${url}:${JSON.stringify(body)}`;
+    const url=`/api/collections/products/${product}/module-update/${module}`;
+    let signature;
     try{
+      const body=await buyerBody({confirm:true,unlimited});
+      signature=`${url}:${JSON.stringify(body)}`;
       const job=await api(url,body);tracked.set(job.id,job);resolve(job);
     }catch(error){
-      if(error.status && error.status<500){pendingSubmissions.delete(signature);reject(error);}
+      if(!signature || (error.status && error.status<500)){pendingSubmissions.delete(signature);reject(error);}
       else{
         pendingUpdateCheck={module,key:pendingSubmissions.get(signature)};
         try{
@@ -624,7 +663,7 @@
     if(!product || !stateKnown || submitting){reject(new Error('任务状态尚未确认，请稍后再试。'));return;}
     submitting=true;render();
     try{
-      const job=await api(`/api/collections/products/${product}/sku-update`,{confirm:true});
+      const job=await api(`/api/collections/products/${product}/sku-update`,await buyerBody({confirm:true}));
       tracked.set(job.id,job);render();resolve(job);
     }catch(error){reject(error);}
     finally{submitting=false;render();await refresh();}
@@ -638,7 +677,7 @@
     const status = (button.closest('[data-overview-row]') || button.closest('[data-collection-module]') || button.closest('.card'))?.querySelector('.module-job-status');
     if (overview && status) status.textContent='正在提交本模块采集申请…';
     try {
-      const job = await api(`/api/collections/products/${id}/jobs`,{module:button.dataset.module});
+      const job = await api(`/api/collections/products/${id}/jobs`,await buyerBody({module:button.dataset.module}));
       tracked.set(job.id,job); render();
       if (overview) {
         button.dataset.busy='true';
@@ -661,7 +700,7 @@
     const note = document.getElementById('collection-plan-status');
     try {
       const id = button.dataset.product || product;
-      const job = await api(`/api/collections/products/${id}/jobs`,{mode:'remaining'});
+      const job = await api(`/api/collections/products/${id}/jobs`,await buyerBody({mode:'remaining'}));
       tracked.set(job.id,job);
       if (note) note.textContent = `本次计划采集 ${job.total_count} 项，跳过已完成的 ${job.skipped_modules.length} 项。任务在后台运行。`;
     } catch (error) {
@@ -724,7 +763,7 @@
         : {mode,input:get('input').value,modules:selected,all_reviews:!get('review-range').disabled && get('review-range').value === 'all',all_questions:!get('question-range').disabled && get('question-range').value === 'all'};
       submitting = true; render(); get('submit-status').textContent = '正在提交采集任务…';
       try {
-        const job = await api('/api/collection-jobs',body); tracked.set(job.id,job);
+        const job = await api('/api/collection-jobs',await buyerBody(body)); tracked.set(job.id,job);
         get('submit-status').textContent = job.can_start
           ? `申请已保存：${stateLabel(job)}。点击任务卡或底部状态栏的“开始本次采集”即可执行。`
           : `申请已保存：${stateLabel(job)}。下方可查看队列、进度和结果。`;

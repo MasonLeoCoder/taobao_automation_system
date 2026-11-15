@@ -89,6 +89,8 @@ def parser() -> argparse.ArgumentParser:
     detail.add_argument("--questions", action="store_true", help="采集问大家，默认最多50个问题，每题采集页面可提供的全部回答，媒体只存链接")
     detail.add_argument("--all", dest="all_reviews", action="store_true", help="取消已启用的评价/问题数量上限；默认全功能模式下同时取消两者上限")
     detail.add_argument("--no-wait", action="store_true", help="所选详情步骤完成后关闭浏览器，默认保留窗口")
+    for buyer_command in (search, collect, detail):
+        buyer_command.add_argument('--account', help='已登记的淘宝买家账号完整昵称')
     product = commands.add_parser("product", help="商品入口导航")
     product.add_argument("action", choices=("open",))
     _qianniu_options(product)
@@ -214,12 +216,13 @@ def main(argv: list[str] | None = None) -> int:
                 return result.exit_code
             if args.action in {"search", "collect", "detail"}:
                 from ecommerce.cli.commands.collection import execute, execute_collect, execute_detail
+                buyer = {'account':args.account} if args.account else {}
                 if args.action == "search":
-                    result = execute(settings, args.keyword, wait=not args.no_wait)
+                    result = execute(settings, args.keyword, wait=not args.no_wait, **buyer)
                 elif args.action == "collect":
-                    result = execute_collect(settings, args.keyword, limit=args.limit, pages=args.page, wait=not args.no_wait, with_details=args.with_details)
+                    result = execute_collect(settings, args.keyword, limit=args.limit, pages=args.page, wait=not args.no_wait, with_details=args.with_details, **buyer)
                 else:
-                    result = execute_detail(settings, args.input, wait=not args.no_wait, basic_info=args.basic_info, video=args.video, main_images=args.main_images, skus=args.skus, parameters=args.parameters, detail_images=args.detail_images, review_summary=args.review_summary, reviews=args.reviews, all_reviews=args.all_reviews, questions=args.questions)
+                    result = execute_detail(settings, args.input, wait=not args.no_wait, basic_info=args.basic_info, video=args.video, main_images=args.main_images, skus=args.skus, parameters=args.parameters, detail_images=args.detail_images, review_summary=args.review_summary, reviews=args.reviews, all_reviews=args.all_reviews, questions=args.questions, **buyer)
                 print(f"[{result.status}] {result.message}")
                 if result.task_id:
                     print(f"任务编号：{result.task_id}")

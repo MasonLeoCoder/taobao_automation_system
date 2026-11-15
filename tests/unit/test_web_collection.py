@@ -61,6 +61,7 @@ class WebCollectionTests(unittest.TestCase):
         self.app.config['SETTINGS']=self.settings
         self.client=self.app.test_client()
         self.headers={'X-Collection-Token':self.app.config['COLLECTION_TOKEN']}
+        self.buyer = {'account_id':'a' * 32, 'login_name':'样例买家甲'}
         self.skip_evidence={}
         self.data={'history':[],'current_ids':[],'product':{'id':1,'platform_product_id':'123'}}
         for target,kwargs in [
@@ -188,7 +189,9 @@ class WebCollectionTests(unittest.TestCase):
         self.assertEqual(self.client.post(url,json=body).status_code,403)
         self.assertEqual(self.client.post(url,json=body,headers={**self.headers,'Origin':'https://foreign.invalid'}).status_code,403)
         self.assertEqual(self.client.post(url,json=body,headers=self.headers,base_url='http://foreign.invalid').status_code,403)
-        response=self.client.post(url,json=body,headers=self.headers)
+        self.assertEqual(self.client.post(url,json=body,headers=self.headers).status_code,409)
+        with patch('ecommerce.modules.account.buyers.target',return_value=self.buyer):
+            response=self.client.post(url,json={**body,'account_id':self.buyer['account_id']},headers=self.headers)
         self.assertEqual(response.status_code,202)
         job=response.get_json();self.assertNotIn('config',job)
         self.assertEqual(self.client.get(job['status_url']).get_json()['id'],job['id'])
@@ -197,6 +200,35 @@ class WebCollectionTests(unittest.TestCase):
         with patch('ecommerce.modules.collection.web_worker.run_collection') as collect:
             self.execute_job(job['id']);collect.assert_not_called()
         self.assertEqual(self.client.get(job['status_url']).get_json()['state'],'cancelled')
+
+    def test_buyer_requests_separate_dedupe_and_hold_only_the_affected_job(self):
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.modules.collection import dispatch
+        store = CollectionJobStore(self.settings)
+        account_b = {'account_id':'b' * 32, 'login_name':'样例买家乙'}
+        body = {'mode':'keyword','keyword':'测试'}
+        original = service.start_configured(self.settings,body,taobao_account=self.buyer)
+        self.assertEqual(service.start_configured(self.settings,body,taobao_account=self.buyer)['id'], original['id'])
+        blocked = service.start_configured(self.settings,body,taobao_account=account_b)
+        next_job = service.start_configured(self.settings,{**body,'keyword':'另外一个任务'},taobao_account=self.buyer)
+        self.assertNotEqual(blocked['id'],original['id'])
+        self.assertEqual(store.read(blocked['id'])['dispatch_state'],'waiting')
+        self.save({**store.read(original['id']),'state':'succeeded'})
+        self.assertEqual(dispatch.dispatch_next(self.settings)['id'],blocked['id'])
+        with patch('ecommerce.modules.collection.web_worker.run_collection',
+                   return_value=TaskResult(None,'needs_attention','样例买家乙 · 待重新登录',3,True)):
+            self.execute_job(blocked['id'])
+        held = store.read(blocked['id'])
+        self.assertEqual((held['dispatch_state'],held['task_id']),('paused',None))
+        self.assertIn('待重新登录',held['account_wait'])
+        self.assertEqual(store.read(next_job['id'])['dispatch_state'],'claimed')
+        key = execution_key(self.settings.for_platform('taobao'))
+        store.pause(key,True,'测试暂停')
+        store.pause(key,False,'测试继续')
+        self.assertEqual(store.read(blocked['id'])['dispatch_state'],'paused')
+        self.save({**store.read(next_job['id']),'state':'succeeded'})
+        self.assertEqual(dispatch.start_job(self.settings,blocked['id'])['taobao_account'],account_b)
+        self.assertIsNone(store.read(blocked['id']).get('account_wait'))
 
     def test_configured_detail_dispatches_only_selected_modules_and_independent_ranges(self):
         """后台任务准确传递所选模块与两个独立范围；参数：无；返回：无。"""
@@ -259,8 +291,9 @@ class WebCollectionTests(unittest.TestCase):
         original=worker.run_collection
         def perform(settings,row):
             result=original(settings,row)
-            updated={**row,'state':result.status,'message':result.message}
-            self.save(updated)
+            if result.task_id is not None:
+                updated={**row,'state':result.status,'message':result.message}
+                self.save(updated)
             return result
         row=jobs.read(self.settings,identifier)
         with patch.object(worker,'run_collection',side_effect=perform):
@@ -290,7 +323,8 @@ class WebCollectionTests(unittest.TestCase):
         self.assertEqual(self.client.get(url).status_code,200)
         self.launch.assert_not_called()
         self.assertEqual(self.client.post(url,json={'module':[]},headers=self.headers).status_code,409)
-        self.assertEqual(self.client.post(url,json={'module':'video'},headers=self.headers).status_code,202)
+        with patch('ecommerce.modules.account.buyers.target',return_value=self.buyer):
+            self.assertEqual(self.client.post(url,json={'module':'video','account_id':self.buyer['account_id']},headers=self.headers).status_code,202)
 
     def test_job_is_bound_to_product_database_and_resource(self):
         job=self.start()

@@ -18,7 +18,7 @@ BLUEPRINTS = {'ledger': 'ledger', 'analysis': 'analysis', 'favorites': 'favorite
               'image_tools': 'tools', 'video_tools': 'tools', 'bilibili_tools': 'tools', 'youtube_tools': 'tools',
               'product_listing': 'listing', 'publish_categories': 'publish-categories', 'sycm_search': 'sycm-search',
               'platform_accounts': 'platform-accounts'}
-SAFE_STATUS = {'collection_jobs.job_status', 'collection_jobs.status', 'collection_jobs.active',
+SAFE_STATUS = {'collection_jobs.job_status', 'collection_jobs.status', 'collection_jobs.active', 'collection_jobs.buyer_accounts',
                'collection_jobs.recent', 'collection_jobs.history', 'collection_jobs.check_update_submission',
                'review_analysis.status', 'publish_categories.status', 'sycm_search.status', 'platform_accounts.status'}
 CONTROLS = {'collection_jobs.control', 'collection_jobs.job_control'}

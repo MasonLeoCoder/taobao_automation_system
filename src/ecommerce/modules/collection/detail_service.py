@@ -10,6 +10,7 @@ from playwright.sync_api import Error as PlaywrightError
 from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.infrastructure.storage.database import now
 from ecommerce.modules.account.taobao_service import authenticate
+from ecommerce.modules.account.buyers import browser_settings
 from ecommerce.modules.collection.detail_report import DetailCollectionReport
 from ecommerce.platforms.taobao.detail import inspect_detail_entry, keep_detail_open, open_detail, resolve_detail_input
 from ecommerce.platforms.taobao.session import browser_session
@@ -29,11 +30,11 @@ def open_detail_input(settings, value, *, wait=True, on_attention=None, on_login
     target = resolve_detail_input(value)
     requested={name:enabled for name,enabled in dict(basic_info=basic_info,video=video,main_images=main_images,skus=skus,
         parameters=parameters,detail_images=detail_images,review_summary=review_summary,reviews=reviews,questions=questions).items() if enabled}
-    tracker=recovery.begin(settings,{'mode':'detail','input':target.canonical_url,'modules':list(requested),
-        'all_reviews':all_reviews,'all_questions':all_reviews if all_questions is None else all_questions},
-        resume_task_id=resume_task_id,cleanup_tasks=cleanup_tasks)
-    with browser_session(settings, on_attention=on_attention) as (context, page):
+    with browser_session(browser_settings(settings), on_attention=on_attention) as (context, page):
         page = authenticate(context, page, settings,on_login_required=on_login_required) if on_login_required else authenticate(context,page,settings)
+        tracker=recovery.begin(settings,{'mode':'detail','input':target.canonical_url,'modules':list(requested),
+            'all_reviews':all_reviews,'all_questions':all_reviews if all_questions is None else all_questions},
+            resume_task_id=resume_task_id,cleanup_tasks=cleanup_tasks)
         result = open_detail(page, target.url if target.input_type == "url" else target.item_id, settings.timeout_ms)
         outcome=collect_detail_page(settings,context,result,wait=wait,basic_info=basic_info,video=video,main_images=main_images,skus=skus,
             parameters=parameters,detail_images=detail_images,review_summary=review_summary,reviews=reviews,

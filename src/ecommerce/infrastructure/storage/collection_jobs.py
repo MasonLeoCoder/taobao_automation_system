@@ -37,6 +37,9 @@ def attach_execution(connection, tables, operation):
             or row['claim_token']!=operation['job_claim_token'] or row['stop_requested_at'] is not None):
         # 创建入库前已取消或领取失效，确认作废流水，不制造tasks；启动方仍须核对关联。
         return False
+    buyer = row['payload'].get('taobao_account')
+    if buyer and (operation['task'].get('account_id') != buyer['account_id'] or operation['task'].get('shop_id')):
+        raise JobConflict('执行账号与排队时确认的淘宝买家账号不一致')
     return True
 
 
@@ -67,7 +70,7 @@ def apply_runtime(connection, tables, operation):
     connection.execute(j.update().where(j.c.id==operation['task_id']).values(**values))
 
 
-def finish_execution(connection, tables, task_id, status):
+def finish_execution(connection, tables, task_id, status, *, account_blocked=False):
     """结论与去重释放、队列暂停同事务；参数：事务、模型、任务、结论；返回：无。"""
     j,q,k=(tables[name] for name in ('collection_jobs','collection_queue_states','collection_job_controls'))
     row=connection.execute(sa.select(j).where(j.c.task_id==task_id).with_for_update()).mappings().first()
@@ -76,7 +79,7 @@ def finish_execution(connection, tables, task_id, status):
     connection.execute(j.update().where(j.c.id==row['id']).values(request_key=None,prompt=None,revision=j.c.revision+1,updated_at=database_now()))
     connection.execute(k.update().where(k.c.job_id==row['id'],k.c.state=='pending').values(
         state=sa.case((k.c.action=='stop','consumed'),else_='rejected'),handled_at=database_now()))
-    if status!='succeeded':
+    if status!='succeeded' and not account_blocked:
         connection.execute(q.update().where(q.c.execution_key==row['execution_key']).values(paused=True,
             reason='采集已停止或需要核对，等待手动继续队列',revision=q.c.revision+1,updated_at=database_now()))
         connection.execute(j.update().where(j.c.execution_key==row['execution_key'],j.c.dispatch_state=='waiting').values(
@@ -118,6 +121,9 @@ class CollectionJobStore:
         if submission_key is not None:
             identifier(submission_key)
         spec = {key:row.get(key) for key in ('product_id','module','mode','modules','options','resume_task_id','resume_revision','cleanup_tasks')}
+        account = (row.get('taobao_account') or {}).get('account_id')
+        if account:
+            spec['account_id'] = account
         digest = fingerprint({**spec,'update_request':row['id']} if reuse_pending_module else spec)
         with self.connection(True) as c:
             queue = self.resource(c, row['execution_key'])
@@ -134,6 +140,8 @@ class CollectionJobStore:
                     j.c.payload['product_id'].as_string()==row['product_id']).order_by(j.c.created_at.desc(),j.c.id.desc())
                 for existing in c.execute(statement).mappings():
                     payload=existing['payload']
+                    if (payload.get('taobao_account') or {}).get('account_id') != account:
+                        continue
                     if payload.get('module')==reuse_pending_module or reuse_pending_module in (payload.get('modules') or []):
                         return existing['id']
             previous = c.scalar(sa.select(j.c.id).where(j.c.execution_key==row['execution_key'],j.c.request_key==digest))
@@ -143,10 +151,11 @@ class CollectionJobStore:
             payload['request_spec'] = spec
             for key in ('state','task_status','result','owner_pid','owner_process_started_at','message','created_at','updated_at'):
                 payload.pop(key, None)
+            timestamp = database_now()
             c.execute(j.insert().values(id=row['id'],execution_key=row['execution_key'],submission_key=submission_key,
                 request_key=digest,origin=origin,dispatch_state='paused' if queue['paused'] else 'waiting',
                 payload=payload,message='队列已暂停，等待手动继续' if queue['paused'] else '采集申请已入库，等待执行',
-                revision=1,created_at=database_time(row['created_at']),updated_at=database_now()))
+                revision=1,created_at=timestamp if account else database_time(row['created_at']),updated_at=timestamp))
         return row['id']
 
     def _statement(self):
@@ -267,7 +276,8 @@ class CollectionJobStore:
         with self.connection(True) as c:
             queue = self.resource(c,key)
             c.execute(q.update().where(q.c.execution_key==key).values(paused=paused,reason=reason,revision=queue['revision']+1,updated_at=database_now()))
-            c.execute(j.update().where(j.c.execution_key==key,j.c.dispatch_state==('waiting' if paused else 'paused')).values(
+            c.execute(j.update().where(j.c.execution_key==key,j.c.dispatch_state==('waiting' if paused else 'paused'),
+                j.c.payload['account_wait'].as_string().is_(None)).values(
                 dispatch_state='paused' if paused else 'waiting',message=reason,revision=j.c.revision+1,updated_at=database_now()))
 
     def claim(self, key, job_id=None, *, manual=False):
@@ -287,10 +297,25 @@ class CollectionJobStore:
             row=c.execute(query.order_by(j.c.created_at,j.c.id).limit(1).with_for_update()).mappings().first()
             if row is None or row['payload'].get('migration_pending'):
                 return None
-            c.execute(j.update().where(j.c.id==row['id']).values(dispatch_state='claimed',claim_token=uuid4().hex,
+            payload = deepcopy(row['payload'])
+            payload.pop('account_wait', None)
+            c.execute(j.update().where(j.c.id==row['id']).values(dispatch_state='claimed',claim_token=uuid4().hex,payload=payload,
                 claimed_at=database_now(),message='后台正在启动',revision=row['revision']+1,updated_at=database_now()))
             selected=row['id']
         return self.read(selected)
+
+    def hold_buyer(self, job_id, token, message):
+        """将账号不可用而尚未建执行的申请保留在队列，等待单独启动。"""
+        j = self.tables['collection_jobs']
+        with self.connection(True) as c:
+            row = c.execute(sa.select(j).where(j.c.id==job_id,j.c.claim_token==token,
+                j.c.dispatch_state=='claimed',j.c.task_id.is_(None),j.c.stop_requested_at.is_(None)).with_for_update()).mappings().first()
+            if row is None:
+                return False
+            c.execute(j.update().where(j.c.id==job_id).values(dispatch_state='paused',claim_token=None,claimed_at=None,
+                owner_pid=None,owner_process_started_at=None,message=message,payload={**row['payload'],'account_wait':message},
+                revision=row['revision']+1,updated_at=database_now()))
+            return True
 
     def bind_process(self, job_id, token, pid, started_at, *, replace_owner=False):
         """核对领取令牌后登记进程；参数：申请、令牌、进程归属；返回：是否绑定。"""

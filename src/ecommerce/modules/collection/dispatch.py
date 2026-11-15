@@ -58,6 +58,10 @@ def resume(settings, identifier, revision, *, submission_key=None):
                 raise ValueError('提交编号与原恢复范围不一致')
             return public_status(settings,previous)
     view = preview(settings, identifier)
+    original = get_job(settings,identifier)
+    account = original.get('taobao_account')
+    if not account:
+        raise ValueError('旧任务缺少淘宝账号归属，请选择账号重新采集')
     if view['revision'] != revision:
         raise ValueError('恢复计划已经变化，请重新查看预览')
     if view['finished']:
@@ -67,10 +71,10 @@ def resume(settings, identifier, revision, *, submission_key=None):
     from ecommerce.platforms.taobao.detail import resolve_detail_input
     product_id = resolve_detail_input(options['input']).item_id if mode == 'detail' else None
     return _start(settings, product_id, 'selected' if product_id else 'list', mode, options, resume_task_id=identifier,
-        resume_revision=revision,submission_key=submission_key,frozen_modules=get_job(settings,identifier).get('modules'))
+        resume_revision=revision,submission_key=submission_key,frozen_modules=original.get('modules'),taobao_account=account)
 
 
-def retry(settings, identifier, product_id, module):
+def retry(settings, identifier, product_id, module, *, account_id=None, submission_key=None):
     """申请单模块重采并沿用原数量范围；参数：来源任务、商品、模块；返回：队列编号。"""
     from ecommerce.modules.collection.web_collection import get_job, normalize_request
     from ecommerce.shared.collection_contract import MODULES
@@ -78,6 +82,9 @@ def retry(settings, identifier, product_id, module):
     if not isinstance(product_id,str) or not re.fullmatch('[1-9][0-9]{0,24}',product_id) or not isinstance(module,str):
         raise ValueError('补采需要有效的商品编号和模块')
     row = get_job(settings, identifier)
+    from ecommerce.modules.account.buyers import target
+    account = target(settings, account_id)
+    original_account = (row.get('taobao_account') or {}).get('account_id')
     if module not in MODULES:
         raise ValueError('补采模块无效')
     persistence = store(settings)
@@ -96,7 +103,9 @@ def retry(settings, identifier, product_id, module):
         'all_reviews':bool(options.get('all_reviews')) if module == 'reviews' else False,
         'all_questions':bool(options.get('all_questions')) if module == 'questions' else False})
     from ecommerce.modules.collection.web_collection import _start
-    result=_start(settings,product_id,'selected','detail',request,cleanup_tasks=cleanup_tasks)
+    result=_start(settings,product_id,'selected','detail',request,taobao_account=account,
+                  cleanup_tasks=cleanup_tasks if account['account_id']==original_account else None,
+                  submission_key=submission_key)
     return {'id':result['id'],'message':'补采申请已入库；等待当前采集结束，暂停队列须手动继续'}
 
 
@@ -108,7 +117,8 @@ def queue(settings):
     rows=persistence.rows(key,pending=True)
     rows=[row for row in reversed(rows) if row['dispatch_state'] in {'waiting','paused','claimed'}]
     return [{'id':r['id'],'state':r['dispatch_state'],'product_id':r['product_id'],'module':r['module'],
-             'mode':r['mode'],'options':r.get('options'),'created_at':r['created_at']} for r in rows]
+             'mode':r['mode'],'options':r.get('options'),'created_at':r['created_at'],
+             'taobao_account':r.get('taobao_account'),'account_wait':r.get('account_wait')} for r in rows]
 
 
 def reconcile(settings):
@@ -210,9 +220,9 @@ def control_queue(settings, action):
     return queue(settings)
 
 
-def after_execution(settings, identifier, status):
+def after_execution(settings, identifier, status, *, account_blocked=False):
     """结论已落库后处理后续派发；参数：任务、结论；返回：无。"""
-    if status!='succeeded':
+    if status!='succeeded' and not account_blocked:
         pause_queue(settings)
     else:
         dispatch_next(settings)

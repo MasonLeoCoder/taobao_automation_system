@@ -20,6 +20,30 @@ def browse(settings, view, **options):
         raise MySQLStorageError(safe_error(error)) from None
 
 
+def buyer_sources(settings, task_ids):
+    """批量读取采集实际核验的账号，历史缺少核验证据时留空。"""
+    ids = {task_id for task_id in task_ids if task_id}
+    if not ids or settings.collection_backend != 'mysql':
+        return {}
+    store = collection_store(settings)
+    try:
+        with store.engine.connect() as connection:
+            return _buyer_sources(connection, store.tables, ids)
+    except sa.exc.SQLAlchemyError as error:
+        raise MySQLStorageError(safe_error(error)) from None
+
+
+def _buyer_sources(connection, tables, ids):
+    tasks, events = tables['tasks'], tables['task_events']
+    rows = connection.execute(sa.select(events.c.task_id, events.c.details, tasks.c.account_id)
+        .join(tasks, tasks.c.id == events.c.task_id)
+        .where(events.c.task_id.in_(ids), events.c.event_type == 'taobao_account_verified',
+               tasks.c.account_id.is_not(None), tasks.c.shop_id.is_(None))
+        .order_by(events.c.task_sequence)).mappings()
+    return {row['task_id']: {key: row['details'].get(key) for key in ('account_id','login_name','verified_at')}
+            for row in rows if (row['details'] or {}).get('account_id') == row['account_id']}
+
+
 def _text(value):
     """校验查询文字；参数：文本；返回：去空白文本。"""
     if not isinstance(value, str) or len(value) > 200:
@@ -234,12 +258,16 @@ def _browse(c, tables, view, **o):
             raise LookupError('任务不存在')
         from ecommerce.infrastructure.storage.collection_lifecycle import task_views
         source = {}
-        if task.get('account_id') and task.get('shop_id'):
+        buyer_requested = {}
+        if task.get('account_id'):
             events = tables['task_events']
             details = c.scalar(sa.select(events.c.details).where(events.c.task_id == task['id'],
                 events.c.task_sequence == 1, events.c.event_type == 'task_started')) or {}
             source = details.get('qianniu_source') or {}
-        return {'task':task_views(c,tables,[task])[0], 'qianniu_source':source}
+            buyer_requested = details.get('taobao_requested') or {}
+        buyer = _buyer_sources(c,tables,{task['id']}).get(task['id']) if buyer_requested else None
+        return {'task':task_views(c,tables,[task])[0], 'qianniu_source':source,
+                'taobao_requested':buyer_requested, 'taobao_verified':buyer}
     if view in {'search','search_records'}:
         task_id = o['task_id']
         if not re.fullmatch(r'[a-f0-9]{32}', task_id):

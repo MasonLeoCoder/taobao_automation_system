@@ -9,6 +9,10 @@ class NeedsAttention(AutomationError):
     """任务需要人工处理后重新执行。"""
 
 
+class BuyerUnavailable(NeedsAttention):
+    """仅本次选定的淘宝买家账号需要处理。"""
+
+
 class TaskBusy(AutomationError):
     """店铺浏览器已被其他进程占用。"""
 

@@ -9,6 +9,7 @@ from playwright.sync_api import Error as PlaywrightError
 from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.infrastructure.storage.database import now
 from ecommerce.modules.account.taobao_service import authenticate
+from ecommerce.modules.account.buyers import browser_settings
 from ecommerce.platforms.taobao.search import canonical_search_url, inspect_search, keep_search_open, open_search, validate_keyword
 from ecommerce.platforms.taobao.session import browser_session
 from ecommerce.platforms.taobao.verification import active_guard
@@ -17,7 +18,7 @@ from ecommerce.shared.exceptions import NeedsAttention
 
 def search_keyword(settings, keyword, *, wait=True, on_attention=None):
     keyword = validate_keyword(keyword)
-    with browser_session(settings, on_attention=on_attention) as (context, home):
+    with browser_session(browser_settings(settings), on_attention=on_attention) as (context, home):
         home = authenticate(context, home, settings)
         result = open_search(context, home, keyword, settings.timeout_ms)
         guard = active_guard()
@@ -201,7 +202,6 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
     validate_limit(limit)
     validate_pages(pages)
     from ecommerce.modules.collection import recovery
-    tracker=recovery.begin(settings,{'mode':'keyword','keyword':keyword,'pages':pages,'limit':limit,'with_details':with_details},resume_task_id=resume_task_id)
     completed = []
     detail_attempts, detail_seen = [], {}
     guard = None
@@ -233,8 +233,10 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
             'unique_product_count', 'stop_reason', 'status')})
         return destination
 
-    with browser_session(settings, on_attention=on_attention) as (context, home):
+    with browser_session(browser_settings(settings), on_attention=on_attention) as (context, home):
         home = authenticate(context, home, settings,**({'on_login_required':on_login_required} if on_login_required else {}))
+        tracker=recovery.begin(settings,{'mode':'keyword','keyword':keyword,'pages':pages,'limit':limit,
+                                        'with_details':with_details},resume_task_id=resume_task_id)
         result = open_search(context, home, keyword, settings.timeout_ms)
         guard = active_guard()
         emit_event('list_collection_requested', '开始逐页采集', details={'requested_page_count': pages, 'per_page_limit': limit})

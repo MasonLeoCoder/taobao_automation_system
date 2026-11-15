@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 from ecommerce.infrastructure.browser.session import browser_session as base_browser_session, restore_missing_session_cookies
 from ecommerce.platforms.taobao.verification import TaobaoGuard
-from ecommerce.shared.exceptions import NeedsAttention
+from ecommerce.shared.exceptions import BuyerUnavailable, NeedsAttention
 
 
 @contextmanager
@@ -22,6 +22,8 @@ def browser_session(settings, on_attention=None, *, hold_on_attention=True):
         with TaobaoGuard(context, settings.log_dir, on_attention, timing=settings.taobao_timing) as guard:
             try:
                 yield context, page
+            except BuyerUnavailable:
+                raise
             except NeedsAttention as error:
                 if hold_on_attention and not settings.headless:
                     guard.hold_without_input(reason=str(error))

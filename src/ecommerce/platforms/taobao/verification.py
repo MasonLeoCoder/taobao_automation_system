@@ -105,6 +105,7 @@ class TaobaoGuard:
         self.paused_seconds = 0.0
         self.failure = None
         self.login_mode = True
+        self.on_account_login_required = None
         self.resume_check = None
         self.watched_responses = []
         self._pending_documents = {}
@@ -577,6 +578,8 @@ class TaobaoGuard:
             if blockage is not None and blockage.kind == "native_done":
                 first = False  # 原生弹窗已经提示过，本次只等待继续，不重复响铃。
             while blockage:
+                if blockage.kind == 'login' and self.on_account_login_required:
+                    self.on_account_login_required()
                 if started is None:
                     started = time.monotonic()
                 self._transition("needs_attention", blockage)

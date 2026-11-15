@@ -10,6 +10,9 @@ from ecommerce.shared.exceptions import NeedsAttention
 
 def authenticate(context, page, settings, allow_login=True, *, on_login_required=None):
     """确认淘宝在线会话，只有复核通过后才保存状态。"""
+    from ecommerce.modules.account import buyers
+    if execution := buyers.current():
+        return buyers.authenticate(execution[0], execution[1], page)
     try:
         authenticated = check_login(page, settings.timeout_ms)
         if not authenticated:

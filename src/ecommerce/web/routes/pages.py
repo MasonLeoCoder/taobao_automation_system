@@ -419,7 +419,11 @@ def collection_product(product_id):
         else:
             from ecommerce.modules.cross_analysis.service import dashboard
             composite_view=dashboard(settings,product_id)
+    from ecommerce.infrastructure.storage.collection_browser import buyer_sources
+    buyer_rows = [selected] if selected else history_rows if module == 'history' else []
+    buyer_accounts = buyer_sources(settings, (row.get('task_id') for row in buyer_rows))
     return render_template('collection_product.html',active='collections',features=FEATURES,shop_name=settings.shop_name,composite_view=composite_view,image_analysis_view=image_analysis_view,image_module_view=image_module_view,analysis_kind=analysis_kind,image_source_origin=image_source_origin,
+        buyer_accounts=buyer_accounts,
         module=module,selected=selected,detail=detail,media=media,history_paging=history_paging,history_rows=history_rows,
         sources=sources,display_history=display_history,context_run=context_run,reviews_view=reviews_view,review_parameters=review_parameters,
         back_url=image_source_origin['return_to'] if image_source_origin else safe_return(request.args.get('return_to'),'/collections/details'),collection_plan=remaining_plan(data),
@@ -433,7 +437,9 @@ def collection_search(task_id):
         since=request.args.get('since',''),until=request.args.get('until',''),batch_id=integer_arg('batch'),
         page=integer_arg('page',1),sort_by=request.args.get('sort'),order=request.args.get('order'))
     settings=current_app.config['SETTINGS']
-    return render_template('collection_search.html',active='collections',features=FEATURES,shop_name=settings.shop_name,pagination=data,**data)
+    from ecommerce.infrastructure.storage.collection_browser import buyer_sources
+    account = buyer_sources(settings, [task_id]).get(task_id)
+    return render_template('collection_search.html',active='collections',features=FEATURES,shop_name=settings.shop_name,pagination=data,taobao_buyer=account,**data)
 
 
 @pages.get('/tasks/<task_id>')
@@ -488,4 +494,7 @@ def collection_batch(batch_id):
     data=collection_query('records',batch_id,numbered=True)
     if data['kind']=='media':
         data['records']=[row for row in data['records'] if row['role'] in {'main_image','detail_image','main_video','sku_image'}]
-    return render_template('collection_batch.html',active='collections',features=FEATURES,shop_name=settings.shop_name,pagination=data,**data)
+    from ecommerce.infrastructure.storage.collection_browser import buyer_sources
+    task_id = data['batch'].get('task_id')
+    return render_template('collection_batch.html',active='collections',features=FEATURES,shop_name=settings.shop_name,
+        pagination=data,taobao_buyer=buyer_sources(settings,[task_id]).get(task_id),**data)

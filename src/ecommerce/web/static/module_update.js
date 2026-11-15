@@ -5,7 +5,7 @@
   const buttons=[...document.querySelectorAll('[data-module-update-open]')],notices=document.querySelector('[data-module-update-notices]');
   const overview=Boolean(document.querySelector('[data-collection-overview]'));
   const one=key=>modal.querySelector(`[data-update-${key}]`),confirm=one('confirm'),error=one('error'),range=document.getElementById('module-update-range');
-  let models=client.moduleUpdates || null,known=Boolean(models),selected=null,sending=false,progress=false,uncertain=false;
+  let models=client.moduleUpdates || null,known=Boolean(models),selected=null,sending=false,progress=false,uncertain=false,otherBuyer=false;
   const text=batch=>batch ? `批次 ${batch.id} · ${batch.time_text || '时间未记录'}` : '暂无有效资料';
   function link(parent,url,label){const a=document.createElement('a');a.className='ui-button ui-secondary';a.textContent=label;a.href=url;parent.append(a);}
   function bind(key,url){const node=one(key);node.hidden=!url;if(url)node.href=url;}
@@ -36,7 +36,7 @@
     }
     if(!selected)return;
     const model=models?.[selected.dataset.moduleUpdateOpen],outcome=model?.outcome;
-    if(model?.active)progress=true;
+    if(model?.active && !otherBuyer)progress=true;
     document.getElementById('module-update-title').textContent=progress ? `${model?.label || ''}更新进度` : `更新${model?.label || ''}`;
     one('latest').textContent=text(model?.latest_valid);
     one('confirm-body').hidden=progress;one('progress').hidden=!progress;
@@ -44,14 +44,15 @@
     one('message').textContent=outcome?.message || '当前资料保留，请通过下方入口查看进度。';
     one('actual-scope').textContent=`已有申请实际范围：${model?.scope || '待核对'}。新的范围选择尚未提交。`;
     bind('result',outcome?.batch?.url);bind('task',outcome?.task_url);bind('queue',model?.queue_url);
-    confirm.hidden=progress;confirm.disabled=!known || sending || uncertain || model?.active;
+    confirm.hidden=progress;confirm.disabled=!known || sending || uncertain || (model?.active && !otherBuyer);
+    if(one('other-buyer')){one('other-buyer').hidden=!progress || !model?.active;one('other-buyer').disabled=sending || uncertain;}
     confirm.textContent=sending ? '正在提交并核对…' : '确认更新';
     modal.querySelectorAll('[data-update-close]').forEach(b=>b.disabled=sending);
   }
   function redraw(){document.querySelectorAll('[data-update-notice]').forEach(n=>n.remove());render();}
   buttons.forEach(button=>button.addEventListener('click',()=>{
     if(!known || sending || document.querySelector('dialog[open]'))return;
-    selected=button;progress=Boolean(models[button.dataset.moduleUpdateOpen]?.active);error.textContent='';
+    selected=button;otherBuyer=false;progress=Boolean(models[button.dataset.moduleUpdateOpen]?.active);error.textContent='';
     one('loaded').textContent=Number(button.dataset.loadedId)>0 ? `批次 ${button.dataset.loadedId} · ${button.dataset.loadedTime}` : '当前未加载该模块批次';
     const code=button.dataset.moduleUpdateOpen,limited=['reviews','questions'].includes(code);
     one('range').hidden=!limited;range.value='limited';
@@ -60,6 +61,7 @@
     modal.showModal();redraw();
   }));
   const close=()=>{if(sending)return;modal.close();selected?.focus({preventScroll:true});};
+  one('other-buyer')?.addEventListener('click',()=>{otherBuyer=true;progress=false;error.textContent='';redraw();});
   modal.querySelectorAll('[data-update-close]').forEach(b=>b.addEventListener('click',close));modal.addEventListener('cancel',e=>{e.preventDefault();close();});
   confirm.addEventListener('click',async()=>{
     if(!known || sending || uncertain || progress)return;
@@ -69,7 +71,7 @@
       const job=await new Promise((resolve,reject)=>document.dispatchEvent(new CustomEvent('collection-module-update-request',{detail:{module,unlimited:['reviews','questions'].includes(module) && range.value==='all',resolve,reject}})));
       models[module]={...models[module],active:!job.done,scope:job.options?.[module==='reviews' ? 'all_reviews':'all_questions'] ? '不限数量' : module==='reviews' ? '默认上限100条有效评价' : module==='questions' ? '默认上限50个问题' : '本商品对应模块',
         outcome:{label:'申请已保存，正在核对结果',message:job.message || '',complete:false,batch:null}};
-      progress=true;
+      otherBuyer=false;progress=true;
     }catch(failure){uncertain=Boolean(failure.uncertain);error.textContent=failure.message;}
     finally{sending=false;redraw();}
   });

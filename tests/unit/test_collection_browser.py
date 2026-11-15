@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 from ecommerce.infrastructure.storage.collection_browser import browse
 from ecommerce.infrastructure.storage.collection_queries import records
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v7 import build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v32 import build_metadata
 from ecommerce.shared.config import load_settings
 from ecommerce.web.app import create_app
 

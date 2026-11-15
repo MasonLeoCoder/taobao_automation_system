@@ -118,7 +118,7 @@ def validate_job(settings,row):
         validate(settings,row['product_id'],None if row.get('mode')=='remaining' else row['module'])
 
 
-def start_configured(settings,body,*,submission_key=None):
+def start_configured(settings,body,*,submission_key=None,taobao_account=None):
     """从配置页新建任务；参数：配置、请求；返回：可恢复的后台任务状态。"""
     options=normalize_request(body)
     product_id=None
@@ -127,40 +127,47 @@ def start_configured(settings,body,*,submission_key=None):
         product_id=resolve_detail_input(options['input']).item_id
     selected=options.get('modules',[])
     validate_job(settings,{'mode':options['mode'],'options':options,'product_id':product_id,'modules':selected})
-    return _start(settings,product_id,'list' if options['mode']=='keyword' else 'selected',options['mode'],options,submission_key=submission_key)
+    return _start(settings,product_id,'list' if options['mode']=='keyword' else 'selected',options['mode'],options,
+                  submission_key=submission_key,taobao_account=taobao_account)
 
 
-def start(settings, product_id, module, *, submission_key=None):
+def start(settings, product_id, module, *, submission_key=None, taobao_account=None):
     """互斥派发单模块；参数：配置、商品、模块；返回：派发描述，相同在途请求复用任务。"""
     data=validate(settings,product_id,module)
     latest=next((item for item in data['history'] if item['module']==module),{})
     sources=[latest['task_id']] if latest.get('task_id') and latest.get('status') not in COMPLETE_STATES else []
-    return _start(settings,product_id,module,'single',cleanup_tasks=sources,submission_key=submission_key)
+    if sources and taobao_account:
+        owner = settings.task_database.get_task(sources[0]) or {}
+        if owner.get('account_id') != taobao_account['account_id']:
+            sources = []
+    return _start(settings,product_id,module,'single',cleanup_tasks=sources,submission_key=submission_key,
+                  taobao_account=taobao_account)
 
 
-def start_remaining(settings,product_id,*,submission_key=None):
+def start_remaining(settings,product_id,*,submission_key=None,taobao_account=None):
     """互斥派发当前商品所有未完成模块；参数：配置、商品；返回：派发，不开启评价问答全量。"""
     validate(settings,product_id)
-    return _start(settings,product_id,'remaining','remaining',submission_key=submission_key)
+    return _start(settings,product_id,'remaining','remaining',submission_key=submission_key,taobao_account=taobao_account)
 
 
-def start_sku_update(settings,product_id,*,submission_key=None):
+def start_sku_update(settings,product_id,*,submission_key=None,taobao_account=None):
     """另开SKU采集并保留旧尝试；参数：配置、商品及提交键；返回：新申请或同商品在途申请。"""
-    return start_module_update(settings,product_id,'skus',submission_key=submission_key)
+    return start_module_update(settings,product_id,'skus',submission_key=submission_key,taobao_account=taobao_account)
 
 
-def start_module_update(settings,product_id,module,*,unlimited=False,submission_key=None):
+def start_module_update(settings,product_id,module,*,unlimited=False,submission_key=None,taobao_account=None):
     """确认后另存单模块结果；参数：商品、白名单模块、范围及提交编号；返回：队列申请。"""
     validate(settings,product_id,module)
     if type(unlimited) is not bool or unlimited and module not in {'reviews','questions'}:
         raise ValueError('不限数量只适用于评价明细或问大家')
     options=normalize_request({'mode':'detail','input':product_id,'modules':[module],
         'all_reviews':unlimited and module=='reviews','all_questions':unlimited and module=='questions'})
-    return _start(settings,product_id,module,'single',options,submission_key=submission_key,reuse_pending_module=module)
+    return _start(settings,product_id,module,'single',options,submission_key=submission_key,reuse_pending_module=module,
+                  taobao_account=taobao_account)
 
 
 def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cleanup_tasks=None,identifier=None,
-           submission_key=None,resume_revision=None,origin='web',frozen_modules=None,reuse_pending_module=None):
+           submission_key=None,resume_revision=None,origin='web',frozen_modules=None,reuse_pending_module=None,taobao_account=None):
     """先入库申请，再尝试领取；参数：配置、固定范围及来源；返回：数据库公开状态。"""
     from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
@@ -172,8 +179,9 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
         if prior:
             if (prior['product_id']!=product_id or prior['module']!=module or prior['mode']!=mode
                     or options is not None and prior.get('options')!=options
-                    or prior.get('resume_task_id')!=resume_task_id or prior.get('resume_revision')!=resume_revision):
-                raise ValueError('同一个提交编号不能改变采集范围')
+                    or prior.get('resume_task_id')!=resume_task_id or prior.get('resume_revision')!=resume_revision
+                    or (prior.get('taobao_account') or {}).get('account_id') != (taobao_account or {}).get('account_id')):
+                raise ValueError('同一个提交编号不能改变采集账号或范围')
             return public_status(settings,prior)
     selected=plan(settings,product_id) if mode=='remaining' else {
         'modules':options.get('modules',[]) if options else [module],'skipped_modules':[]}
@@ -189,6 +197,8 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
          'mode':mode,**selected,'options':options,'execution_key':execution_key(platform),'created_at':now(),'config':config}
     if resume_task_id:
         row.update(resume_task_id=resume_task_id,resume_revision=resume_revision)
+    if taobao_account:
+        row['taobao_account']=taobao_account
     if cleanup_tasks:
         row['cleanup_tasks']=cleanup_tasks
     identifier=persistence.submit(row,submission_key=submission_key,origin=origin,
@@ -252,6 +262,7 @@ def public_status(settings, row):
             'mode':row.get('mode','single'),'created_at':row['created_at'],'updated_at':row.get('updated_at'),
             'origin':row.get('origin'),'task_id':row.get('task_id'),'task_status':row.get('task_status'),'options':row.get('options'),'progress':row.get('progress',{}),
             'history_status':row.get('history_status'),
+            'taobao_account':row.get('taobao_account'),'account_wait':row.get('account_wait'),
             'message':message,'prompt':prompt if prompt.get('prompt_id') and not done and not halted else None,
             'storage_pending':storage_pending,'halted':halted,'batch_id':result.get('batch_id'),'valid':bool(result.get('valid')),
             'skipped':bool(result.get('skipped')),'skip_reason':result.get('reason') if result.get('skipped') else None,
@@ -319,7 +330,7 @@ def saved_result(settings,row):
 
 def saved_module(settings,row,data,module):
     """核对模块资料或同任务跳过依据；参数：配置、派发、商品资料、模块；返回：独立结论。"""
-    result=module_result(data,row['id'],module,current_only=row.get('origin')!='legacy')
+    result=module_result(data,row['id'],module,current_only=row.get('origin')!='legacy' and not row.get('taobao_account'))
     if module=='questions':
         evidence=query(settings,'browse_module_skip',task_id=row['id'],product_id=row['product_id'])
         if evidence.get('skipped'):
@@ -405,7 +416,9 @@ def run_collection(settings, row):
     """在同一资源锁和浏览器中执行所选模块；参数：配置、派发；返回：统一任务结果。"""
     from ecommerce.infrastructure.tasks.runner import run_task
     from ecommerce.modules.collection.detail_service import open_detail_input
+    from ecommerce.modules.account.buyers import run as run_buyer
     browser_settings=replace(settings.for_platform('taobao'),headless=False)
+    run_options = {'buyer':row.get('taobao_account'),'runner':run_task,'task_id':row['id'],'job_claim_token':row['claim_token']}
     def verify_resume():
         """取得执行锁后核对用户确认的恢复版本；参数：无；返回：无。"""
         if row.get('resume_task_id'):
@@ -421,7 +434,7 @@ def run_collection(settings, row):
             return collect_keyword(browser_settings,options['keyword'],pages=options['pages'],limit=options['limit'],
                 with_details=options['with_details'],wait=False,on_attention=web_attention,on_login_required=web_attention,
                 resume_task_id=row.get('resume_task_id'),on_progress=lambda values:keyword_progress(settings,row,values))
-        return run_task(browser_settings,'collection.taobao.collect',keyword_action,task_id=row['id'],job_claim_token=row['claim_token'])
+        return run_buyer(browser_settings,'collection.taobao.collect',keyword_action,**run_options)
     def action():
         """持有浏览器资源锁后复查补采范围，只执行剩余项目；参数：无；返回：采集说明。"""
         verify_resume()
@@ -455,8 +468,7 @@ def run_collection(settings, row):
         return open_detail_input(browser_settings,row['product_id'],wait=False,
                                  on_attention=web_attention,on_login_required=web_attention,cleanup_tasks=row.get('cleanup_tasks'),
                                  on_module_event=lambda module,stage:module_progress(settings,row,module,stage),**flags)
-    return run_task(browser_settings,'collection.taobao.detail.open',
-                    action,task_id=row['id'],job_claim_token=row['claim_token'])
+    return run_buyer(browser_settings,'collection.taobao.detail.open',action,**run_options)
 
 
 def keyword_progress(settings,row,values):

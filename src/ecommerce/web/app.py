@@ -21,6 +21,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app = Flask(__name__)
     app.config.update(SETTINGS=settings, MAX_CONTENT_LENGTH=1024 * 1024,
                       WORKSPACE_MENU_DATABASE=settings.task_backend == 'mysql')
+    app.config['COLLECTION_BUYER_SELECTION'] = settings.task_backend == 'mysql' and settings.collection_backend == 'mysql'
     app.add_template_global(lambda: label(settings), 'environment_label')
     app.add_template_global(lambda: settings.mysql.database, 'environment_database')
     @app.before_request

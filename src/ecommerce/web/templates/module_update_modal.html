@@ -11,5 +11,5 @@
     <div data-update-progress hidden><span class="ui-report-state is-active" data-update-state></span><p class="ui-form-note" data-update-message></p><p class="ui-form-note" data-update-actual-scope></p><div class="module-actions"><a class="ui-button ui-secondary" data-update-result hidden>查看新资料</a><a class="button action-button action-history" data-update-task hidden>查看更新任务</a><a class="ui-button ui-secondary" data-update-queue hidden>查看采集队列</a></div></div>
     <p class="ui-collection-reason" data-update-error role="alert"></p>
   </div>
-  <div class="ui-confirm-footer"><div class="module-actions">{{ control_button('取消',{'type':'button','data-update-close':true},'secondary') }}{{ control_button('确认更新',{'type':'button','data-update-confirm':true,'disabled':true}) }}</div></div>
+  <div class="ui-confirm-footer"><div class="module-actions">{{ control_button('取消',{'type':'button','data-update-close':true},'secondary') }}{% if config.COLLECTION_BUYER_SELECTION %}{{ control_button('另选账号更新',{'type':'button','data-update-other-buyer':true,'hidden':true},'secondary') }}{% endif %}{{ control_button('确认更新',{'type':'button','data-update-confirm':true,'disabled':true}) }}</div></div>
 </dialog>

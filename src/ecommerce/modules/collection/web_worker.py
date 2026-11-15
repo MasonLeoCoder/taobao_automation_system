@@ -43,9 +43,12 @@ def execute(workspace, identifier, claim_token, *, bootstrap=None):
         validate_job(settings,row)
         result=run_collection(settings,row)
         if result.task_id is None:
-            persistence.fail_start(identifier,claim_token,result.message)
+            if result.account_blocked:
+                persistence.hold_buyer(identifier,claim_token,result.message)
+            else:
+                persistence.fail_start(identifier,claim_token,result.message)
         from ecommerce.modules.collection.dispatch import after_execution
-        after_execution(settings,identifier,result.status)
+        after_execution(settings,identifier,result.status,account_blocked=result.account_blocked)
     except Exception:
         logging.getLogger(__name__).exception('采集进程退出，执行记录及待补写流水保留')
         from ecommerce.modules.collection.dispatch import pause_queue
