@@ -454,6 +454,7 @@ def collection_search(task_id):
 @pages.get('/tasks/<task_id>')
 def task_detail(task_id):
     """展示资料关联任务；参数：任务编号；返回：只读任务详情。"""
+    from ecommerce.modules.collection.module_update import LABELS
     settings=current_app.config['SETTINGS']
     if settings.collection_backend != 'mysql':
         job = current_app.extensions['product_listing'].jobs_for_tasks([task_id]).get(task_id)
@@ -468,7 +469,8 @@ def task_detail(task_id):
         from ecommerce.infrastructure.storage.sycm_search import request_status
         sycm_job = request_status(settings, task_id)
     return render_template('task_detail.html',active='tasks',features=FEATURES,shop_name=settings.shop_name,
-        alerts=local_task_alerts(settings,task_id=task_id),listing_job=listing_job,sycm_job=sycm_job,**data)
+        alerts=local_task_alerts(settings,task_id=task_id),listing_job=listing_job,sycm_job=sycm_job,
+        module_labels=LABELS,**data)
 
 
 @pages.get('/collections/files/<int:file_id>')

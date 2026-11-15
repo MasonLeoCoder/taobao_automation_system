@@ -42,7 +42,7 @@
   const submissionSignature = (url, body) => `${url}:${JSON.stringify(body)}`;
   const endpoint = job => job.status_url || `/api/collection-jobs/${job.id}`;
   const targetLabel = job => job.mode === 'keyword' ? `关键词“${job.options.keyword}”` : `商品 ${job.product_id}`;
-  const stateLabel = job => job.account_wait ? '账号待处理' : job.failures?.length && job.done ? '已结束，存在模块错误' : job.done && job.state === 'needs_attention' && (job.task_status === 'succeeded' || job.history_status === 'completed') ? '已结束（结果待核对）' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
+  const stateLabel = job => job.account_wait ? '账号待处理' : job.failures?.length && job.done ? '已结束，存在模块错误' : job.done && job.state === 'needs_attention' && (job.task_status === 'succeeded' || job.history_status === 'completed') ? '已结束（结果待核对）' : job.halted ? '采集已中断（保留现场）' : job.skip_reason==='remaining_already_complete' ? '无需补采' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
   let choosingBuyer = false;
 
   async function api(url, body) {
@@ -261,6 +261,7 @@
     }
     if (job.mode === 'detail') return `详情采集 · 已处理 ${job.processed_count || job.completed_count}/${job.total_count} 项 · 采集成功 ${job.collected_count || 0} 项${job.failures?.length ? ` · 失败待补采 ${job.failures.length} 项` : ''}${job.skipped_count ? ` · 本次跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
     if (job.mode !== 'remaining') return labels[job.module] || job.module;
+    if (job.skip_reason === 'remaining_already_complete') return `执行前跳过 ${job.progress.remaining_scope.skipped.length} 项`;
     return `采集所有 · 已完成 ${job.completed_count}/${job.total_count} 项 · 跳过 ${(job.skipped_modules || []).length} 项${job.skipped_count ? ` · 本次入口缺失跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
   }
 
@@ -793,7 +794,8 @@
   function showRemainingStatus(job){
     const note=document.getElementById('collection-plan-status');
     if(!job || !note)return;
-    note.textContent=[`商品 ${job.product_id}`,submittedLabel(job.state),job.taobao_account?.login_name,`${job.total_count} 个模块`].filter(Boolean).join(' · ');
+    const label=job.skip_reason==='remaining_already_complete' ? job.message : submittedLabel(job.state);
+    note.textContent=[`商品 ${job.product_id}`,label,job.taobao_account?.login_name,job.total_count ? `${job.total_count} 个模块` : ''].filter(Boolean).join(' · ');
   }
 
   const remainingDialog=document.getElementById('collection-remaining-dialog');

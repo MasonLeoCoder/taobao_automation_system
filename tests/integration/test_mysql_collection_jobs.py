@@ -362,6 +362,72 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
         self.assertEqual(queue_before,queue_after)
         self.assertIsNone(self.store.read(second)['task_id'])
 
+    def test_remaining_already_complete_finishes_without_browser_and_exposes_scope(self):
+        from ecommerce.infrastructure.storage.collection_browser import browse
+        from ecommerce.web.app import create_app
+
+        buyer=self.buyer()
+        job=self.submit(mode='remaining',module='remaining',taobao_account=buyer)
+        row=self.claim(job)
+        web_collection.validate_job(self.settings,row)
+        product={'current_ids':[], 'history':[], 'no_entry_modules':['video','questions']}
+        with (patch.object(web_collection,'query',return_value=product),
+              patch('ecommerce.modules.account.buyers.resolve') as resolve,
+              patch('ecommerce.modules.account.buyers.open_browser') as launch):
+            result=web_collection.run_collection(self.settings,row)
+        resolve.assert_not_called()
+        launch.assert_not_called()
+        self.assertEqual(result.status,'succeeded')
+        self.assertIn('排队期间待补模块已全部完成',result.message)
+        stored=self.store.read(job)
+        self.assertEqual(stored['modules'],['video'])
+        public=web_collection.public_status(self.settings,stored)
+        self.assertEqual((public['modules'],public['total_count'],public['completed_count']),([],0,0))
+        self.assertEqual(public['skip_reason'],'remaining_already_complete')
+        self.assertFalse(public['valid'])
+        detail=browse(self.settings,'task',task_id=job)
+        self.assertIsNone(detail['taobao_verified'])
+        self.assertEqual({key:detail['remaining_scope'][key] for key in ('requested_modules','modules','skipped')},
+            {'requested_modules':['video'],'modules':[],'skipped':[{'module':'video','reason':'no_entry'}]})
+        response=create_app(self.settings).test_client().get('/tasks/'+job)
+        self.assertEqual(response.status_code,200)
+        self.assertIn('已确认无入口',response.get_data(as_text=True))
+
+    def test_remaining_recheck_creates_recovery_for_reduced_scope(self):
+        from ecommerce.modules.collection import detail_service
+        from ecommerce.shared.exceptions import TaskStopped
+
+        buyer=self.buyer()
+        options=web_collection.normalize_request({'mode':'detail','input':'123','modules':['video','reviews']})
+        job=self.submit(mode='remaining',module='remaining',modules=options['modules'],options=options,taobao_account=buyer)
+        row=self.claim(job)
+
+        def clean_plan():
+            with self.store.connection(True) as connection:
+                e,p=(self.t[name] for name in ('collection_plan_executions','collection_plans'))
+                connection.execute(e.delete().where(e.c.plan_id==job))
+                connection.execute(p.delete().where(p.c.id==job))
+        self.addCleanup(clean_plan)
+
+        data={'current_ids':[1],'history':[{'id':1,'module':'video','status':'complete'}]}
+        with (patch.object(web_collection,'query',return_value=data),
+              patch('ecommerce.modules.account.buyers.open_browser',return_value=nullcontext((None,None))),
+              patch('ecommerce.modules.account.buyers.probe'),
+              patch.object(detail_service,'browser_session',return_value=nullcontext((None,None))),
+              patch.object(detail_service,'authenticate'),patch.object(detail_service,'open_detail'),
+              patch.object(detail_service,'collect_detail_page',side_effect=TaskStopped('模拟执行中止')) as collect):
+            result=web_collection.run_collection(self.settings,row)
+        self.assertEqual(result.status,'cancelled')
+        self.assertTrue(collect.call_args.kwargs['reviews'])
+        self.assertFalse(collect.call_args.kwargs['video'])
+        view=dispatch.preview(self.settings,job)
+        self.assertEqual(view['options']['modules'],['reviews'])
+        self.assertEqual(view['next']['module'],'reviews')
+        with patch.object(dispatch,'dispatch_next'):
+            resumed=dispatch.resume(self.settings,job,view['revision'])
+        self.assertEqual(resumed['taobao_account'],buyer)
+        self.assertEqual(resumed['modules'],['reviews'])
+
     def test_history_page_uses_mysql_filter_before_limit_and_keeps_all_requests(self):
         """超过一页的申请按资源过滤后分页，历史失败项不会被最新20条截掉。"""
         from datetime import datetime

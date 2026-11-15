@@ -259,15 +259,20 @@ def _browse(c, tables, view, **o):
         from ecommerce.infrastructure.storage.collection_lifecycle import task_views
         source = {}
         buyer_requested = {}
+        remaining_scope = None
+        events = tables['task_events']
         if task.get('account_id'):
-            events = tables['task_events']
             details = c.scalar(sa.select(events.c.details).where(events.c.task_id == task['id'],
                 events.c.task_sequence == 1, events.c.event_type == 'task_started')) or {}
             source = details.get('qianniu_source') or {}
             buyer_requested = details.get('taobao_requested') or {}
         buyer = _buyer_sources(c,tables,{task['id']}).get(task['id']) if buyer_requested else None
+        if task['name'].startswith('collection.taobao.'):
+            remaining_scope = c.scalar(sa.select(events.c.details).where(events.c.task_id == task['id'],
+                events.c.event_type.in_(['collection_remaining_scope_checked','collection_remaining_scope_failed']))
+                .order_by(events.c.task_sequence.desc()).limit(1))
         return {'task':task_views(c,tables,[task])[0], 'qianniu_source':source,
-                'taobao_requested':buyer_requested, 'taobao_verified':buyer}
+                'taobao_requested':buyer_requested, 'taobao_verified':buyer, 'remaining_scope':remaining_scope}
     if view in {'search','search_records'}:
         task_id = o['task_id']
         if not re.fullmatch(r'[a-f0-9]{32}', task_id):

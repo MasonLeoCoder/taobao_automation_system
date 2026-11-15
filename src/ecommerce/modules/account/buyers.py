@@ -34,14 +34,20 @@ def collection_browser(settings, on_attention=None):
     return browser_session(selected, on_attention=on_attention, opened=opened)
 
 
-def run(settings, name, action, *, buyer, runner, **kwargs):
+def run(settings, name, action, *, buyer, runner, before_browser=None, **kwargs):
     """统一使用环境资源锁，锁内取得所选账号的独立浏览器配置。"""
     if buyer is None:
-        return runner(settings, name, action, **kwargs)
+        def work_without_buyer():
+            if before_browser is not None:
+                before_browser()
+            return action()
+        return runner(settings, name, work_without_buyer if before_browser is not None else action, **kwargs)
     execution = None
 
     def prepare(resources):
         nonlocal execution
+        if before_browser is not None and not before_browser():
+            return
         selected, row = resolve(settings, buyer)
         opened = resources.enter_context(open_browser(selected))
         probe(selected, row, opened)

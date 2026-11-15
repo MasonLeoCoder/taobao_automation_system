@@ -9,8 +9,9 @@ from ecommerce.infrastructure.tasks import web_jobs as jobs
 from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import active_local_tasks, execution_key, process_started_at
 from ecommerce.modules.collection.queries import query
-from ecommerce.shared.exceptions import TaskBusy
+from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
 from ecommerce.infrastructure.storage.database import now
+from ecommerce.infrastructure.storage.mysql import MySQLStorageError
 
 MODULES=('basic_info','video','main_images','skus','parameters','detail_images','review_summary','reviews','questions')
 COMPLETE_STATES={'complete','downloaded','no_video','no_images','no_parameters','no_reviews','no_questions'}
@@ -22,11 +23,19 @@ class RemainingPlanChanged(ValueError):
         self.plan = current_plan
 
 
-def remaining_plan(data):
-    """按商品全局有效分区计算剩余模块；参数：不带来源限制的商品资料；返回：有序计划。"""
+def completed_modules(data):
+    """按商品全局有效分区识别已处理模块及其原因。"""
     current=set(data['current_ids'])
-    completed={item['module'] for item in data['history'] if item['id'] in current and item['status'] in COMPLETE_STATES}
-    completed.update(data.get('no_entry_modules',[]))
+    completed={item['module']: 'no_content' if item['status'].startswith('no_') else 'valid_result'
+               for item in data['history'] if item['id'] in current and item['status'] in COMPLETE_STATES}
+    for module in data.get('no_entry_modules', []):
+        completed.setdefault(module, 'no_entry')
+    return completed
+
+
+def remaining_plan(data):
+    """按商品全局有效分区计算剩余模块。"""
+    completed=completed_modules(data)
     return {'modules':[module for module in MODULES if module not in completed],
             'skipped_modules':[module for module in MODULES if module in completed]}
 
@@ -112,16 +121,18 @@ def validate_job(settings,row):
     """按入口验证执行配置；参数：配置、派发；返回：无，新商品无需预先存在。"""
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
         raise ValueError('网页采集需要同时启用 MySQL 任务和采集存储')
-    if row.get('mode') in {'keyword','detail'}:
+    mode=row.get('mode')
+    if mode in {'keyword','detail','remaining'}:
+        expected_mode='detail' if mode=='remaining' else mode
         normalized=normalize_request(row['options'])
-        if normalized!=row['options'] or normalized['mode']!=row['mode']:
+        if normalized!=row['options'] or normalized['mode']!=expected_mode:
             raise ValueError('采集参数与已确认配置不一致')
-        if row['mode']=='detail':
+        if expected_mode=='detail':
             from ecommerce.platforms.taobao.detail import resolve_detail_input
             if resolve_detail_input(normalized['input']).item_id!=row['product_id'] or normalized['modules']!=row['modules']:
                 raise ValueError('商品或模块与派发配置不一致')
     else:
-        validate(settings,row['product_id'],None if row.get('mode')=='remaining' else row['module'])
+        validate(settings,row['product_id'],row['module'])
 
 
 def start_configured(settings,body,*,submission_key=None,taobao_account=None):
@@ -273,7 +284,8 @@ def public_status(settings, row):
             from ecommerce.modules.account.buyers import MISSING_BUYER
             message=MISSING_BUYER
     result={}
-    if row.get('recovery_ready') or row.get('actual_finished'):
+    progress=row.get('progress') or {}
+    if (row.get('recovery_ready') or row.get('actual_finished')) and not progress.get('remaining_scope_error'):
         result=saved_result(settings,row)
         if done and state=='succeeded' and not result.get('satisfied',result.get('valid')):
             state,message='needs_attention','执行已结束，尚未确认完整结果；请核对模块记录和日志'
@@ -281,7 +293,7 @@ def public_status(settings, row):
             message='已结束，存在模块错误；请查看失败项并手动补采'
     return {'id':row['id'],'product_id':row['product_id'],'module':row['module'],'state':state,'done':done,
             'mode':row.get('mode','single'),'created_at':row['created_at'],'updated_at':row.get('updated_at'),
-            'origin':row.get('origin'),'task_id':row.get('task_id'),'task_status':row.get('task_status'),'options':row.get('options'),'progress':row.get('progress',{}),
+            'origin':row.get('origin'),'task_id':row.get('task_id'),'task_status':row.get('task_status'),'options':row.get('options'),'progress':progress,
             'history_status':row.get('history_status'),
             'taobao_account':row.get('taobao_account'),'account_wait':row.get('account_wait'),
             'message':message,'prompt':prompt if prompt.get('prompt_id') and not done and not halted else None,
@@ -299,7 +311,8 @@ def public_status(settings, row):
 
 def startup_retry_available(row, result):
     return bool(row.get('actual_finished') and row.get('task_status')=='needs_attention'
-        and row.get('startup_failure') and row.get('taobao_account') and row.get('options') and not row.get('stop_requested')
+        and (row.get('startup_failure') or (row.get('progress') or {}).get('remaining_scope_error'))
+        and row.get('taobao_account') and row.get('options') and not row.get('stop_requested')
         and not row.get('recovery_ready') and not result.get('batch_id') and not result.get('skipped')
         and not any(item.get('batch_id') or item.get('skipped') for item in result.get('modules', ())))
 
@@ -308,18 +321,27 @@ def bulk_progress(row,result):
     """返回多模块在途或终态进度；参数：派发、已核对结果；返回：公开进度。"""
     progress=row.get('progress') or {}
     results=result.get('modules',progress.get('results',[]))
-    selected=row.get('modules',[row['module']])
-    return {'modules':selected,'skipped_modules':row.get('skipped_modules',[]),'results':results,
+    scope=progress.get('remaining_scope')
+    selected=scope['modules'] if scope else row.get('modules',[row['module']])
+    skipped=row.get('skipped_modules',[])
+    if scope:
+        skipped=[*skipped, *(item['module'] for item in scope['skipped'])]
+    skipped_result=bool(selected and result.get('skipped'))
+    return {'modules':selected,'skipped_modules':skipped,'results':results,
             'current_module':progress.get('current_module'),'started_modules':progress.get('started_modules',[]),
-            'completed_count':sum(bool(item['valid']) or bool(item.get('skipped')) for item in results) if results else int(bool(result.get('valid') or result.get('skipped'))),
+            'completed_count':sum(bool(item['valid']) or bool(item.get('skipped')) for item in results) if results else int(bool(result.get('valid') or skipped_result)),
             'collected_count':sum(bool(item['valid']) for item in results) if results else int(bool(result.get('valid'))),
             'processed_count':sum(bool(item.get('valid') or item.get('skipped') or item.get('failed')) for item in results),
-            'skipped_count':sum(bool(item.get('skipped')) for item in results) or int(bool(result.get('skipped'))),
+            'skipped_count':sum(bool(item.get('skipped')) for item in results) or int(skipped_result),
             'total_count':len(selected)}
 
 
 def saved_result(settings,row):
     """核对本任务已发布模块，不能用旧结果代替；参数：配置和派发；返回：结果定位。"""
+    scope=(row.get('progress') or {}).get('remaining_scope')
+    if scope and not scope['modules']:
+        return {'valid':False,'satisfied':True,'skipped':row.get('task_status')=='succeeded','reason':'remaining_already_complete',
+                'modules':[],'label':'查看已有资料'}
     if row.get('recovery_ready'):
         from ecommerce.infrastructure.storage.collection_recovery import RecoveryStore
         plan=RecoveryStore(settings).read(row['id'])
@@ -351,7 +373,8 @@ def saved_result(settings,row):
     else:
         data=validate(settings,row['product_id'],None if bulk else row['module'])
     if bulk:
-        results=[saved_module(settings,row,data,module) for module in row['modules']]
+        selected=scope['modules'] if scope else row['modules']
+        results=[saved_module(settings,row,data,module) for module in selected]
         return {'batch_id':None,'valid':all(item['valid'] for item in results),
                 'satisfied':all(item['valid'] or item.get('skipped',False) for item in results),
                 'modules':results,'label':'查看商品资料'}
@@ -465,20 +488,37 @@ def run_collection(settings, row):
                 with_details=options['with_details'],wait=False,on_attention=web_attention,on_login_required=web_attention,
                 resume_task_id=row.get('resume_task_id'),on_progress=lambda values:keyword_progress(settings,row,values))
         return run_buyer(browser_settings,'collection.taobao.collect',keyword_action,**run_options)
+    remaining_scope = None
+    remaining_error = None
+
+    def check_remaining_before_browser():
+        nonlocal remaining_scope, remaining_error
+        try:
+            completed=completed_modules(validate(settings,row['product_id']))
+        except (MySQLStorageError,LookupError) as error:
+            remaining_error=f'补采暂停，无法核对商品资料。{error}'
+            return False
+        requested=row['modules']
+        remaining_scope={'requested_modules':requested,'modules':[module for module in requested if module not in completed],
+                         'skipped':[{'module':module,'reason':completed[module]} for module in requested if module in completed]}
+        return bool(remaining_scope['modules'])
+
     def action():
         """持有浏览器资源锁后复查补采范围，只执行剩余项目；参数：无；返回：采集说明。"""
         verify_resume()
         if row.get('mode')=='remaining':
-            selected={key:row[key] for key in ('modules','skipped_modules')}
-            row['progress']={'current_module':None,'started_modules':[],'results':[]}
+            from ecommerce.infrastructure.tasks.events import emit_event
+            if remaining_error:
+                row['progress']={'remaining_scope_error':True}
+                jobs.save(settings,row)
+                emit_event('collection_remaining_scope_failed',remaining_error,details={'requested_modules':row['modules']})
+                raise NeedsAttention(remaining_error)
+            row['progress']={'current_module':None,'started_modules':[],'results':[],'remaining_scope':remaining_scope}
             jobs.save(settings,row)
-            from ecommerce.infrastructure.tasks.events import current_events
-            session=current_events()
-            if session:
-                session.emit('task_progress','已核对当前商品补采范围',details=selected)
-            if not row['modules']:
-                return '该商品九个模块已完成，本次未打开浏览器'
-            flags={module:module in row['modules'] for module in MODULES}
+            emit_event('collection_remaining_scope_checked','已核对当前商品补采范围',details=remaining_scope)
+            if not remaining_scope['modules']:
+                return '排队期间待补模块已全部完成'
+            flags={module:module in remaining_scope['modules'] for module in MODULES}
             return open_detail_input(browser_settings,row['product_id'],wait=False,on_attention=web_attention,
                                      on_login_required=web_attention,resume_task_id=row.get('resume_task_id'),cleanup_tasks=row.get('cleanup_tasks'),
                                      on_module_event=lambda module,stage:module_progress(settings,row,module,stage),**flags)
@@ -498,6 +538,8 @@ def run_collection(settings, row):
         return open_detail_input(browser_settings,row['product_id'],wait=False,
                                  on_attention=web_attention,on_login_required=web_attention,cleanup_tasks=row.get('cleanup_tasks'),
                                  on_module_event=lambda module,stage:module_progress(settings,row,module,stage),**flags)
+    if row.get('mode')=='remaining':
+        run_options['before_browser']=check_remaining_before_browser
     return run_buyer(browser_settings,'collection.taobao.detail.open',action,**run_options)
 
 

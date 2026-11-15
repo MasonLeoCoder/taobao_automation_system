@@ -42,6 +42,17 @@
   </dl>
 </section>
 {% endif %}
+{% if remaining_scope %}
+<section class="panel">
+  <h2>补采范围复核</h2>
+  {% set reasons = {'valid_result':'已有有效资料', 'no_content':'已确认无内容', 'no_entry':'已确认无入口'} %}
+  <dl>
+    <dt>原确认范围</dt><dd>{% for module in remaining_scope.requested_modules %}{{ module_labels[module] }}{% if not loop.last %}、{% endif %}{% endfor %}</dd>
+    <dt>本次执行范围</dt><dd>{% if remaining_scope.modules is not defined %}待核对{% else %}{% for module in remaining_scope.modules %}{{ module_labels[module] }}{% if not loop.last %}、{% endif %}{% else %}无需补采{% endfor %}{% endif %}</dd>
+    {% if remaining_scope.skipped %}<dt>执行前跳过</dt><dd><ul>{% for item in remaining_scope.skipped %}<li>{{ module_labels[item.module] }} · {{ reasons[item.reason] }}</li>{% endfor %}</ul></dd>{% endif %}
+  </dl>
+</section>
+{% endif %}
 {% if qianniu_source and not sycm_job and not listing_job %}
 <section class="panel">
   <h2>千牛任务归属</h2>

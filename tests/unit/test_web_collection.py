@@ -336,6 +336,75 @@ class WebCollectionTests(unittest.TestCase):
         self.assertTrue(retry['can_start'])
         self.launch.assert_not_called()
 
+    def test_remaining_recheck_uses_only_confirmed_pending_modules(self):
+        from contextlib import ExitStack, nullcontext
+
+        confirmed=['video','main_images','questions']
+        self.data['no_entry_modules']=[module for module in service.MODULES if module not in confirmed]
+        job=service.start_remaining(self.settings,'123',taobao_account=self.buyer)
+        row=jobs.read(self.settings,job['id'])
+        self.data.update(history=[{'id':17,'module':'video','status':'no_video'},
+            {'id':18,'module':'main_images','status':'partial'}],current_ids=[17,18],
+            no_entry_modules=[module for module in self.data['no_entry_modules'] if module!='skus'])
+        checked=[]
+
+        def run_locked(settings,name,action,*,prepare,**options):
+            self.assertEqual(options['buyer_scope'],self.buyer)
+            with ExitStack() as resources:
+                prepare(resources)
+                result=action()
+            return result
+
+        def collect(settings, product_id, **flags):
+            checked.append([module for module in service.MODULES if flags[module]])
+            self.assertEqual(product_id,'123')
+            return '模拟采集完成'
+
+        with (patch('ecommerce.infrastructure.tasks.runner.run_task',side_effect=run_locked),
+              patch('ecommerce.modules.account.buyers.resolve',return_value=(self.settings,self.buyer)),
+              patch('ecommerce.modules.account.buyers.open_browser',return_value=nullcontext((None,None))) as launch,
+              patch('ecommerce.modules.account.buyers.probe'),
+              patch('ecommerce.modules.collection.detail_service.open_detail_input',side_effect=collect)):
+            self.assertEqual(service.run_collection(self.settings,row),'模拟采集完成')
+        launch.assert_called_once()
+        self.assertEqual(checked,[['main_images','questions']])
+        stored=jobs.read(self.settings,job['id'])
+        self.assertEqual(stored['modules'],confirmed)
+        self.assertEqual(stored['options']['modules'],confirmed)
+        self.assertEqual(stored['progress']['remaining_scope'],{'requested_modules':confirmed,
+            'modules':['main_images','questions'],'skipped':[{'module':'video','reason':'no_content'}]})
+        public=service.public_status(self.settings,stored)
+        self.assertEqual(public['modules'],['main_images','questions'])
+        self.assertIn('video',public['skipped_modules'])
+        self.assertEqual(public['taobao_account'],self.buyer)
+
+    def test_remaining_recheck_failure_pauses_before_browser_and_can_retry(self):
+        from contextlib import ExitStack
+        from ecommerce.infrastructure.storage.mysql import MySQLStorageError
+        from ecommerce.shared.exceptions import NeedsAttention
+
+        job=service.start_remaining(self.settings,'123',taobao_account=self.buyer)
+        row=jobs.read(self.settings,job['id'])
+
+        def run_locked(settings,name,action,*,prepare,**options):
+            with ExitStack() as resources:
+                prepare(resources)
+                try:
+                    action()
+                except NeedsAttention as error:
+                    self.save({**row,'state':'needs_attention','message':str(error)})
+
+        with (patch('ecommerce.infrastructure.tasks.runner.run_task',side_effect=run_locked),
+              patch.object(service,'validate',side_effect=MySQLStorageError('模拟资料读取失败')),
+              patch('ecommerce.modules.account.buyers.open_browser') as launch):
+            service.run_collection(self.settings,row)
+            public=service.public_status(self.settings,jobs.read(self.settings,job['id']))
+        launch.assert_not_called()
+        self.assertTrue(public['can_retry_startup'])
+        self.assertIn('无法核对商品资料',public['message'])
+        self.assertEqual(public['total_count'],9)
+        self.assertFalse(public['valid'])
+
     def test_configured_detail_dispatches_only_selected_modules_and_independent_ranges(self):
         """后台任务准确传递所选模块与两个独立范围；参数：无；返回：无。"""
         job=service.start_configured(self.settings,{'mode':'detail','input':'456','modules':['reviews','questions'],
