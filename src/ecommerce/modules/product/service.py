@@ -17,11 +17,13 @@ from ecommerce.platforms.qianniu.product_sku_media import fill_sku_media
 from ecommerce.platforms.qianniu.product_details import upload_detail_images
 from ecommerce.platforms.qianniu.product_submit import SubmissionResult, submit_product_to_warehouse, inspect_submission_result
 from ecommerce.platforms.qianniu.session import browser_session
-from ecommerce.modules.account.service import authenticate
-from ecommerce.modules.account.managed import verify_editor_session, verify_session
-from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, click_start_button, continue_to_editor, prepare_publish_search, search_publish_products, select_publish_category, select_brand_and_continue
+from ecommerce.modules.account.managed import check_account_browser, verify_editor_session, verify_session
+from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, continue_to_editor, prepare_publish_search, search_publish_products, select_publish_category, select_brand_and_continue
 from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
+
+
+ACCOUNT_REQUIRED = '请在启用 MySQL 的环境中选择已登记的千牛账号'
 
 
 def submit_with_review(settings: Settings, page, on_review: Callable[[str], None] | None = None,
@@ -182,28 +184,24 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                                         if codes and web_review.preview.get('sku_image_names') else {}))
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
+    target = web_review.target if web_review else qianniu_target
+    if (settings.task_backend != 'mysql' or not isinstance(target, dict)
+            or not all(target.get(key) for key in ('account_id', 'shop_id', 'login_name', 'platform_shop_id'))
+            or not (web_review or callable(on_session_expired))):
+        raise NeedsAttention(ACCOUNT_REQUIRED)
+    check_account_browser(settings)
     verification = {'verification_handler': web_review.verification} if web_review else {}
-    managed = bool(web_review and getattr(web_review, 'target', None))
     brand_in_editor = bool(profile and profile.brand_in_editor)
     with browser_session(settings, on_attention=on_attention, **verification) as (context, page):
         if web_review:
             web_review.progress('正在检查千牛登录状态')
-            if managed:
-                page = web_review.authenticate_managed(page)
-            else:
-                page = authenticate(context, page, settings, on_login_wait=web_review.login_wait)
+            page = web_review.authenticate_managed(page)
             web_review.progress('千牛已登录，正在进入商品发布')
-        elif qianniu_target:
-            verify_session(page, qianniu_target, on_session_expired)
         else:
-            page = authenticate(context, page, settings)
+            verify_session(page, target, on_session_expired)
         page = click_product_nav(context, page)
         page = click_publish_product(context, page)
-        if qianniu_target and (start or keyword is not None):
-            prepare_publish_search(page)
-        elif start:
-            click_start_button(page)
-        elif managed and keyword is not None:
+        if start or keyword is not None:
             prepare_publish_search(page)
         if keyword is not None:
             if brand_in_editor:
@@ -301,11 +299,9 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                 submission_message = submit_with_review(settings, page, on_submit_attention,
                     before_click=web_review.before_click, on_click_intent=web_review.click_intent,
                     on_click_finished=web_review.click_finished, on_result=web_review.result)
-            elif qianniu_target:
-                submission_message = submit_with_review(settings, page, on_submit_attention,
-                    before_click=lambda editor: verify_editor_session(editor, qianniu_target, on_session_expired))
             else:
-                submission_message = submit_with_review(settings, page, on_submit_attention)
+                submission_message = submit_with_review(settings, page, on_submit_attention,
+                    before_click=lambda editor: verify_editor_session(editor, target, on_session_expired))
         if on_ready is not None:
             on_ready()
     sku_media_message = (f"；SKU补充信息已核对{sum(len(fields) for fields in sku_media_result.filled.values())}项，跳过{sum(len(fields) for fields in sku_media_result.skipped.values())}项"

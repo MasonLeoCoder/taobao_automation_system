@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from ecommerce.shared.config import load_settings
 from ecommerce.infrastructure.tasks.runner import run_task
 from ecommerce.web.app import create_app
+from tests.qianniu_fixtures import TARGET, open_managed_publish
 
 
 class AppTests(unittest.TestCase):
@@ -74,18 +75,22 @@ class AppTests(unittest.TestCase):
             yield context, page
             calls.append("close")
 
-        with patch.object(service, "browser_session", session), patch.object(service, "authenticate", side_effect=lambda *a: calls.append("login") or page), patch.object(service, "click_product_nav", side_effect=lambda *a: calls.append("product") or page), patch.object(service, "click_publish_product", side_effect=lambda *a: calls.append("publish") or page), patch.object(service, "click_start_button", side_effect=lambda *a: calls.append("start")):
-            service.open_publish(self.settings, True, lambda: calls.append("ready"))
+        with patch.object(service, "browser_session", session), patch.object(service, "verify_session", side_effect=lambda *a: calls.append("login")), patch.object(service, "click_product_nav", side_effect=lambda *a: calls.append("product") or page), patch.object(service, "click_publish_product", side_effect=lambda *a: calls.append("publish") or page), patch.object(service, "prepare_publish_search", side_effect=lambda *a: calls.append("start")):
+            open_managed_publish(self.settings, True, lambda: calls.append("ready"))
         self.assertEqual(calls, ["open", "login", "product", "publish", "start", "ready", "close"])
 
-    def test_login_failure_never_saves_state(self):
-        """失效会话不会被标记为成功；参数：无；返回：无。"""
-        from ecommerce.modules.account import service
+    def test_default_profile_never_reaches_product_browser(self):
+        """即使直接传入归属，默认资料也不能启动商品操作。"""
+        from dataclasses import replace
+        from ecommerce.modules.product import service
         from ecommerce.shared.exceptions import NeedsAttention
-        with patch.object(service, "check_login", return_value=False), patch.object(service, "save_session") as save:
-            with self.assertRaises(NeedsAttention):
-                service.authenticate(MagicMock(), MagicMock(), self.settings, False)
-            save.assert_not_called()
+        settings = replace(self.settings, task_backend='mysql')
+        with patch.object(service, 'browser_session') as browser:
+            with self.assertRaisesRegex(NeedsAttention, '已登记的千牛账号'):
+                service.open_publish(settings)
+            with self.assertRaisesRegex(NeedsAttention, '独立会话'):
+                service.open_publish(settings, qianniu_target=TARGET, on_session_expired=MagicMock())
+            browser.assert_not_called()
 
     def test_click_failure_is_not_mistaken_for_same_tab(self):
         """点击失败不能被新窗口超时捕获并伪装成功；参数：无；返回：无。"""

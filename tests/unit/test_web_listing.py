@@ -1,4 +1,5 @@
 """商品工作台隔离验证：上传、只填、入仓意图和人工恢复。"""
+from contextlib import contextmanager
 from dataclasses import replace
 from io import BytesIO
 import json
@@ -13,7 +14,10 @@ from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 from PIL import Image
+from ecommerce.infrastructure.tasks.runner import run_task
+from ecommerce.modules.account.managed import verify_editor_session
 from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGORY
+from ecommerce.modules.product.listing_logs import log_page, local_log
 from ecommerce.modules.product.listing_templates import template_for
 from ecommerce.modules.product.web_listing import _ListingRun
 from ecommerce.modules.product.web_materials import CATEGORY, import_materials
@@ -21,12 +25,38 @@ from ecommerce.platforms.qianniu.identity import ShopIdentity
 from ecommerce.shared.config import load_settings
 from ecommerce.shared.exceptions import NeedsAttention
 from ecommerce.web.app import create_app
+from tests.qianniu_fixtures import ACCOUNT, IDENTITY, TARGET, TARGET_FORM, fixture_session_file
 
 
 def fixture_settings(root):
     """构造非验证库专用标识的隔离文件后端；不连接MySQL。"""
     settings = load_settings(root=root)
     return replace(settings, environment='', mysql=replace(settings.mysql, database='listing_isolated'))
+
+
+@contextmanager
+def bind_listing_fixture(app):
+    """保留真实的启动校验，使用测试账号资料及本地任务存储。"""
+    workbench = app.extensions['product_listing']
+    settings = replace(app.config['SETTINGS'], task_backend='mysql')
+    fixture_session_file(settings)
+    account = dict(ACCOUNT)
+
+    def run_locally(config, name, action, *, qianniu_scope):
+        assert qianniu_scope == TARGET
+        return run_task(replace(config, task_backend='sqlite'), name, action)
+
+    with (patch.dict(app.config, {'SETTINGS': settings}),
+          patch.object(workbench, 'settings', replace(workbench.settings, task_backend='mysql')),
+          patch('ecommerce.modules.account.managed.AccountStore') as store,
+          patch('ecommerce.modules.product.web_listing.run_task', side_effect=run_locally),
+          patch('ecommerce.modules.product.web_listing.local_log',
+                side_effect=lambda config, path: local_log(replace(config, task_backend='sqlite'), path)),
+          patch('ecommerce.modules.product.web_listing.log_page',
+                side_effect=lambda config, *args, **kwargs: log_page(replace(config, task_backend='sqlite'), *args, **kwargs)),
+          patch('ecommerce.modules.product.web_listing.verify_editor_session', return_value=IDENTITY)):
+        store.return_value.list_accounts.return_value = [account]
+        yield account
 
 
 def fixture_materials(root):
@@ -56,9 +86,10 @@ class WebListingTests(TestCase):
         self.app = create_app(fixture_settings(self.root))
         self.client = self.app.test_client()
         self.headers = {'X-Collection-Token': self.app.config['COLLECTION_TOKEN']}
+        self.account = self.enterContext(bind_listing_fixture(self.app))
         self.open_publish = self.enterContext(patch('ecommerce.modules.product.web_listing.open_publish'))
 
-    def preflight(self, *, bad_image=False, excel=None, video=None, **target):
+    def preflight(self, *, bad_image=False, excel=None, video=None, offline=False, **target):
         """走真实导入接口；参数：是否破坏图片内容；返回：HTTP响应。"""
         images = [(BytesIO(b'fake' if bad_image and p.stem == '2' else p.read_bytes()), p.name)
                   for p in sorted((self.folder / '1-1主图').iterdir())]
@@ -66,38 +97,45 @@ class WebListingTests(TestCase):
             excel = BytesIO((self.folder / '任意表名.xlsx').read_bytes())
         return self.client.post('/api/listing/preflight', headers=self.headers, data={
             'keyword': '粘毛器', 'brand': '无品牌/无注册商标', 'category': CATEGORY,
-            'excel': (excel, '任意表名.xlsx'), 'main': images, **target,
+            'excel': (excel, '任意表名.xlsx'), 'main': images, **({} if offline else {**TARGET_FORM, **target}),
             **({'video': (BytesIO(video), '商品视频.mp4')} if video is not None else {})})
 
     def test_managed_preflight_seals_account_and_shop_and_rejects_changed_target(self):
-        account_id, shop_id, session_id = ('a' * 32, 'b' * 32, 'c' * 32)
-        row = dict(id=account_id, shop_id=shop_id, session_id=session_id, enabled=True, login_required=False,
-                   login_name='tb123:测试', shop_name='测试店铺', platform_shop_id='123')
-        settings = replace(self.app.config['SETTINGS'], task_backend='mysql')
-        self.app.config['SETTINGS'] = settings
         workbench = self.app.extensions['product_listing']
-        workbench.settings = settings
-        session = settings.workspace / 'storage/managed_accounts/qianniu' / session_id / 'session.json'
-        session.parent.mkdir(parents=True)
-        session.write_text('{}', encoding='utf-8')
-        with patch('ecommerce.modules.account.managed.AccountStore') as store:
-            store.return_value.list_accounts.return_value = [row]
-            other_shop = 'd' * 32
-            self.assertEqual(self.preflight(account_id=account_id, shop_id=other_shop).status_code, 409)
-            result = self.preflight(account_id=account_id, shop_id=shop_id)
+        other_shop = 'd' * 32
+        self.assertEqual(self.preflight(shop_id=other_shop).status_code, 409)
+        result = self.preflight()
+        self.assertEqual(result.status_code, 201)
+        self.assertEqual(result.json['listing_target'], TARGET)
+        identifier = result.json['id']
+        url = f'/api/listing/{identifier}/start'
+        self.assertEqual(self.client.post(url, headers=self.headers, json={'submit': False}).status_code, 409)
+        self.assertEqual(self.start_request(url, json=dict(shop_id=other_shop, submit=False)).status_code, 409)
+        self.assertFalse((workbench.root / identifier / 'state.json').exists())
+        self.account['login_required'] = True
+        self.assertEqual(self.start_request(url, json={'submit': False}).status_code, 409)
+        self.open_publish.assert_not_called()
+
+    def start_request(self, url, *, json):
+        return self.client.post(url, headers=self.headers, json={**TARGET_FORM, **json})
+
+    def test_file_environment_allows_offline_preview_and_existing_history_only(self):
+        workbench = self.app.extensions['product_listing']
+        offline = replace(workbench.settings, task_backend='sqlite')
+        with (patch.dict(self.app.config, {'SETTINGS': offline}), patch.object(workbench, 'settings', offline)):
+            result = self.preflight(offline=True)
             self.assertEqual(result.status_code, 201)
-            self.assertEqual(result.json['listing_target']['login_name'], row['login_name'])
-            self.assertEqual(result.json['listing_target']['shop_id'], shop_id)
             identifier = result.json['id']
-            reply = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers,
-                                     json=dict(account_id=account_id, shop_id=other_shop, submit=False))
+            url = f'/api/listing/{identifier}'
+            reply = self.client.post(url + '/start', headers=self.headers, json={'submit': False})
             self.assertEqual(reply.status_code, 409)
-            self.assertFalse((workbench.root / identifier / 'state.json').exists())
-            row['login_required'] = True
-            reply = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers,
-                                     json=dict(account_id=account_id, shop_id=shop_id, submit=False))
-            self.assertEqual(reply.status_code, 409)
+            self.assertIn('启用 MySQL', reply.json['error'])
+            self.assertEqual(self.start_request(url + '/start', json={'submit': True}).status_code, 409)
+            history = workbench.root / identifier / 'state.json'
+            self.assertFalse(history.exists())
             self.open_publish.assert_not_called()
+            history.write_text(json.dumps({'phase':'succeeded', 'outcome':'filled'}), encoding='utf-8')
+            self.assertEqual(self.client.get(url).json['task']['outcome'], 'filled')
 
     def test_listing_history_filters_and_preserves_attribution(self):
         workbench = self.app.extensions['product_listing']
@@ -125,7 +163,9 @@ class WebListingTests(TestCase):
         page = MagicMock()
         companion = page.context.new_page.return_value
         module = 'ecommerce.modules.account.managed'
-        with (patch(f'{module}.is_login_required', return_value=False),
+        with (patch('ecommerce.modules.product.web_listing.verify_editor_session',
+                    side_effect=verify_editor_session),
+              patch(f'{module}.is_login_required', return_value=False),
               patch(f'{module}.read_shop_identity', return_value=ShopIdentity('123', '测试店铺', '大橘-运营', 'tb123:大橘')),
               patch(f'{module}.read_editor_account', return_value=('测试店铺', 'tb123')) as account):
             with self.assertRaisesRegex(NeedsAttention, '编辑页的账号或店铺'):
@@ -165,7 +205,7 @@ class WebListingTests(TestCase):
         with self.client.get(f'/api/listing/{identifier}/video') as response:
             self.assertEqual(response.data, b'confirmed adapted video')
         self.open_publish.return_value = '已填写'
-        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+        self.start_request(f'/api/listing/{identifier}/start', json={'submit': False})
         self.state(identifier, lambda state: state['phase'] == 'succeeded')
         video_path = Path(self.open_publish.call_args.kwargs['video_file'])
         self.assertEqual(video_path.read_bytes(), b'confirmed adapted video')
@@ -243,7 +283,7 @@ class WebListingTests(TestCase):
             return import_materials(workbench.root, {'excel': [('产品信息.xlsx', stream)], 'main': images,
                                                      'sku': list(sku_images)},
                                     keyword='宠物背包', category=BACKPACK_CATEGORY, brand='无品牌/无注册商标',
-                                    profile=BACKPACK, binding=binding)
+                                    profile=BACKPACK, binding=binding, target=TARGET)
 
         entry['I2'] = None
         self.assertIn('「适用品种」为必填', check()['errors'][0])
@@ -305,7 +345,7 @@ class WebListingTests(TestCase):
 
         self.open_publish.side_effect = open_and_review
         with patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=read):
-            response = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+            response = self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
             self.assertEqual(response.status_code, 202)
             final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
         self.assertTrue(final['submit_attempted'])
@@ -362,11 +402,11 @@ class WebListingTests(TestCase):
         titles = {'title': '猫' * 30, 'guide': '毛' * 15}
         for invalid in ({**titles, 'title': '猫' * 31}, {**titles, 'guide': '毛' * 16},
                         {**titles, 'title': '猫\n毛'}, {**titles, 'guide': '太短'}):
-            response = self.client.post(url, headers=self.headers, json={'submit': False, 'titles': invalid})
+            response = self.start_request(url, json={'submit': False, 'titles': invalid})
             self.assertEqual(response.status_code, 422)
         self.open_publish.assert_not_called()
         self.open_publish.return_value = '填写完成'
-        response = self.client.post(url, headers=self.headers, json={'submit': False, 'titles': titles})
+        response = self.start_request(url, json={'submit': False, 'titles': titles})
         self.assertEqual(response.status_code, 202)
         self.assertEqual({key: response.json['preview'][key] for key in titles}, titles)
         self.state(identifier, lambda state: state['phase'] == 'succeeded')
@@ -376,13 +416,13 @@ class WebListingTests(TestCase):
         identifier = self.preflight().json['id']
         url = f'/api/listing/{identifier}/start'
         for titles in ({'sku-2':'未知规格'}, {'sku-1':'猫' * 15 + 'A'}):
-            response = self.client.post(url, headers=self.headers, json={'submit':False, 'sku_titles':titles})
+            response = self.start_request(url, json={'submit':False, 'sku_titles':titles})
             self.assertEqual(response.status_code, 422)
         self.open_publish.assert_not_called()
         self.open_publish.return_value = '填写完成'
         title = '猫' * 15
         data = {'submit':False, 'sku_titles':{'sku-1':title[:5] + '　' + title[5:]}}
-        response = self.client.post(url, headers=self.headers, json=data)
+        response = self.start_request(url, json=data)
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json['sku_titles'], {'sku-1': title})
         self.state(identifier, lambda state: state['phase'] == 'succeeded')
@@ -404,9 +444,9 @@ class WebListingTests(TestCase):
         self.open_publish.side_effect = fake_open
         identifier = data['id']
         endpoint = f'/api/listing/{identifier}/start'
-        self.assertEqual(self.client.post(endpoint, headers=self.headers, json={'submit': False}).status_code, 202)
+        self.assertEqual(self.start_request(endpoint, json={'submit': False}).status_code, 202)
         paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
-        repeated = self.client.post(endpoint, headers=self.headers, json={'submit': True}).json
+        repeated = self.start_request(endpoint, json={'submit': True}).json
         self.assertFalse(repeated['task']['submit'])
         self.assertEqual(paused['task_id'], repeated['task']['task_id'])
         self.assertEqual(self.send(identifier, paused, 'approve').status_code, 409)
@@ -421,7 +461,7 @@ class WebListingTests(TestCase):
         self.assertEqual(self.client.get(f'/api/listing/{other}/logs').json['events'], [])
         self.open_publish.assert_called_once()
 
-    def test_native_prompt_during_login_restores_pending_login(self):
+    def test_native_prompt_during_verification_restores_pending_step(self):
         identifier = self.preflight().json['id']
         native_requested = Event()
         native_answer = []
@@ -433,14 +473,13 @@ class WebListingTests(TestCase):
                 if native_requested.wait(ms / 1000) and not native_answer:
                     native_answer.append(review.attention('【需要人工决定原生弹窗】'))
 
-            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=pump)
-            page.context = SimpleNamespace(pages=[page])
-            review.login_wait(page)
+            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=pump, frames=[], screenshot=lambda **_: None)
+            review.verification(SimpleNamespace(page=page, step='验证商品编辑页'))
             return '登录完成'
 
         self.open_publish.side_effect = fake_open
-        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
-        login = self.state(identifier, lambda state: state['prompt'] and state['prompt']['kind'] == 'login')
+        self.start_request(f'/api/listing/{identifier}/start', json={'submit': False})
+        login = self.state(identifier, lambda state: state['prompt'] and state['prompt']['kind'] == 'manual')
         native_requested.set()
         native = self.state(identifier, lambda state: state['prompt'] and state['prompt']['kind'] == 'native')
         self.assertEqual(self.send(identifier, login, 'continue').status_code, 409)
@@ -460,7 +499,7 @@ class WebListingTests(TestCase):
         def fake_open(*args, **kwargs):
             review = kwargs['web_review']
             review.sku_media = list(actual['sku_media'])
-            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000),
+            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000), frames=[],
                                    screenshot=lambda **opts: Path(opts['path']).write_bytes(b'fixture'))
             review.before_click(page)
             review.click_intent()
@@ -469,7 +508,7 @@ class WebListingTests(TestCase):
 
         self.open_publish.side_effect = fake_open
         with patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=lambda page: dict(actual)):
-            response = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+            response = self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
             self.assertEqual(response.status_code, 202)
             paused = self.state(identifier, lambda state: state['prompt'] and 'approve' in state['prompt']['actions'])
             self.assertFalse(paused['submit_attempted'])
@@ -496,7 +535,7 @@ class WebListingTests(TestCase):
         def fake_open(*args, **kwargs):
             review = kwargs['web_review']
             review.sku_media = list(actual['sku_media'])
-            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000),
+            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000), frames=[],
                                    screenshot=lambda **opts: Path(opts['path']).write_bytes(b'fixture'))
             review.before_click(page)
             review.click_intent()
@@ -504,7 +543,7 @@ class WebListingTests(TestCase):
 
         self.open_publish.side_effect = fake_open
         with patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=lambda page: dict(actual)):
-            response = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+            response = self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
             self.assertEqual(response.status_code, 202)
             paused = self.state(identifier, lambda state: state['prompt'] and state['prompt']['kind'] == 'titles')
             self.assertFalse(paused['submit_attempted'])
@@ -536,7 +575,7 @@ class WebListingTests(TestCase):
                     self.fail('结束任务后不得继续填写')
 
                 self.open_publish.side_effect = fake_open
-                self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+                self.start_request(f'/api/listing/{identifier}/start', json={'submit': False})
                 paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
                 self.assertEqual(paused['prompt']['kind'], kind)
                 self.assertIn(message, paused['message'])
@@ -561,7 +600,7 @@ class WebListingTests(TestCase):
 
                 self.open_publish.side_effect = fake_open
                 identifier = data['id']
-                self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+                self.start_request(f'/api/listing/{identifier}/start', json={'submit': False})
                 paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
                 self.assertEqual(paused['prompt']['kind'], 'video')
                 self.assertIn('商品视频.mp4', paused['message'])
@@ -586,7 +625,7 @@ class WebListingTests(TestCase):
             self.fail('结束任务后不得继续填写')
 
         self.open_publish.side_effect = fake_open
-        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': False})
+        self.start_request(f'/api/listing/{identifier}/start', json={'submit': False})
         paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
         self.assertEqual(paused['prompt']['kind'], 'video_ratio')
         self.assertEqual(paused['prompt']['actions'], ['continue', 'skip_video', 'finish'])
@@ -604,7 +643,7 @@ class WebListingTests(TestCase):
             return '商品已入仓'
         self.open_publish.side_effect = fake_open
         identifier = data['id']
-        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+        self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
         final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
         self.assertEqual((final['outcome'], final['item_id']), ('warehouse', '123456'))
 
@@ -614,7 +653,7 @@ class WebListingTests(TestCase):
         identifier = self.preflight().json['id']
         path = self.app.extensions['product_listing'].root / identifier / 'main' / '1.png'
         path.write_bytes(b'changed')
-        self.client.post(f'/api/listing/{identifier}/start', headers=self.headers, json={'submit': True})
+        self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
         finished = self.state(identifier, lambda state: state['phase'] == 'needs_attention')
         self.assertIn('文件发生变化', finished['message'])
         self.open_publish.assert_not_called()

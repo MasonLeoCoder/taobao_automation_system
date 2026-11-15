@@ -4,6 +4,7 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from tests.qianniu_fixtures import open_managed_publish
 from ecommerce.modules.product.assets import load_product_video
 from ecommerce.modules.product import service
 from ecommerce.shared.config import load_settings
@@ -27,7 +28,7 @@ class ProductVideoTests(unittest.TestCase):
     def test_bad_path_never_starts_browser(self):
         with tempfile.TemporaryDirectory() as root, patch.object(service, "browser_session") as browser:
             with self.assertRaises(ValueError):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一 > 二",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一 > 二",
                                      brand="无品牌", video_file="missing.mp4")
             browser.assert_not_called()
 
@@ -47,7 +48,7 @@ class ProductVideoTests(unittest.TestCase):
             initial, editor = MagicMock(), MagicMock()
             browser = stack.enter_context(patch.object(service, "browser_session"))
             browser.return_value.__enter__.return_value = (MagicMock(), initial)
-            for name in ("authenticate", "click_product_nav", "click_publish_product"):
+            for name in ("verify_session", "prepare_publish_search", "click_product_nav", "click_publish_product"):
                 stack.enter_context(patch.object(service, name, return_value=initial))
             for name in ("search_publish_products", "select_publish_category"):
                 stack.enter_context(patch.object(service, name))
@@ -55,14 +56,14 @@ class ProductVideoTests(unittest.TestCase):
             calls = []
             upload = stack.enter_context(patch.object(product_video, "upload_product_video", side_effect=lambda *a: calls.append("video")))
             settings = load_settings(root=Path(root))
-            result = service.open_publish(settings, keyword="测试", category="一 > 二", brand="无品牌", video_file="video.mp4", on_ready=lambda: calls.append("ready"))
+            result = open_managed_publish(settings, keyword="测试", category="一 > 二", brand="无品牌", video_file="video.mp4", on_ready=lambda: calls.append("ready"))
             upload.assert_called_once_with(editor, file)
             self.assertEqual(calls, ["video", "ready"])
             self.assertIn("商品视频上传", result)
             ready = MagicMock()
             upload.side_effect = RuntimeError("视频未处理完")
             with self.assertRaises(RuntimeError):
-                service.open_publish(settings, keyword="测试", category="一 > 二", brand="无品牌", video_file="video.mp4", on_ready=ready)
+                open_managed_publish(settings, keyword="测试", category="一 > 二", brand="无品牌", video_file="video.mp4", on_ready=ready)
             ready.assert_not_called()
 
     def test_cli_video_path(self):

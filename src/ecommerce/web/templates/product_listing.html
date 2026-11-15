@@ -5,7 +5,7 @@
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_listing.css') }}">{% endblock %}
 {% block content %}
 <section class="listing-page" id="listing" data-api="{{ url_for('product_listing.preflight') }}" data-tasks="{{ url_for('pages.tasks') }}">
-  <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">{% if use_catalog %}先选择已支持的千牛类目。{% endif %}选择商品文件夹，自检通过后填写商品。</p></header>
+  <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">{% if use_catalog %}先选择已支持的千牛类目。{% endif %}选择商品文件夹{% if managed_accounts %}，自检通过后填写商品{% else %}进行离线预检{% endif %}。</p></header>
   <div class="ui-tool-card listing-card">
     <div class="listing-import-heading">
       <h2>1. 导入商品资料</h2>
@@ -177,13 +177,14 @@
       <table><caption>销售规格</caption><thead><tr><th scope="col">规格</th><th scope="col">价格</th><th scope="col">库存</th><th scope="col">SKU 编码</th><th scope="col">SKU 图</th></tr></thead><tbody></tbody></table>
     </div>
     <div id="listing-action" class="module-actions">
+      {% if not managed_accounts %}<p class="ui-form-note" id="listing-offline-note">{{ account_required }}</p>{% endif %}
       <label class="listing-choice">{{ ui.input_control({'id':'listing-submit','type':'checkbox','checked':can_submit,'disabled':not can_submit,'data-allowed':can_submit|lower}) }} 填写完成后直接提交到仓库</label>
       <p id="listing-submit-note" class="ui-form-note" hidden>该类目当前只开放填写验收。</p>
       {{ ui.control_button('开始填写并提交到仓库' if can_submit else '仅填写',{'id':'listing-start','type':'button','disabled':true}) }}
     </div>
     <ul id="listing-title-errors" class="listing-title-errors" hidden aria-label="填写前需要修正的标题"></ul>
     <p id="listing-start-error" class="listing-ai-issue" role="alert" hidden></p>
-    <p class="ui-form-note">提交到仓库会创建真实商品，但不会立即上架销售。</p>
+    {% if managed_accounts %}<p class="ui-form-note">提交到仓库会创建真实商品，但不会立即上架销售。</p>{% endif %}
   </div>
   <div class="ui-tool-card listing-card" id="listing-task" hidden>
     <h2>3. 千牛任务</h2>

@@ -7,6 +7,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.qianniu_fixtures import open_managed_publish
 from ecommerce.modules.product.assets import load_main_images, load_portrait_images
 from ecommerce.modules.product import service
 from ecommerce.shared.config import load_settings
@@ -45,7 +46,7 @@ class ProductImageTests(unittest.TestCase):
         """文件错误在浏览器启动前报告；参数：无；返回：无。"""
         with patch.object(service, "browser_session") as browser:
             with self.assertRaises(ValueError):
-                service.open_publish(self.settings, keyword="测试", category="一级 > 二级",
+                open_managed_publish(self.settings, keyword="测试", category="一级 > 二级",
                                      brand="测试品牌", main_images_dir="missing")
             browser.assert_not_called()
 
@@ -149,13 +150,13 @@ class ProductImageTests(unittest.TestCase):
             browser = stack.enter_context(patch.object(service, "browser_session"))
             page = MagicMock()
             browser.return_value.__enter__.return_value = (MagicMock(), page)
-            for name in ("authenticate", "click_product_nav", "click_publish_product", "select_brand_and_continue"):
+            for name in ("verify_session", "prepare_publish_search", "click_product_nav", "click_publish_product", "select_brand_and_continue"):
                 stack.enter_context(patch.object(service, name, return_value=page))
             for name in ("search_publish_products", "select_publish_category"):
                 stack.enter_context(patch.object(service, name))
             stack.enter_context(patch.object(service, "upload_main_images", side_effect=lambda *args: calls.append("1:1")))
             portrait = stack.enter_context(patch.object(service, "upload_portrait_images", side_effect=lambda *args: calls.append("3:4")))
-            service.open_publish(self.settings, on_ready=lambda: calls.append("ready"),
+            open_managed_publish(self.settings, on_ready=lambda: calls.append("ready"),
                                  keyword="测试", category="一级 > 二级", brand="测试品牌",
                                  main_images_dir="images", portrait_images_dir="images")
             portrait.assert_called_once_with(page, load_portrait_images(self.folder))
@@ -192,7 +193,7 @@ class ProductImageTests(unittest.TestCase):
                 browser = stack.enter_context(patch.object(service, "browser_session"))
                 page, editor = MagicMock(), MagicMock()
                 browser.return_value.__enter__.return_value = (MagicMock(), page)
-                for name in ("authenticate", "click_product_nav", "click_publish_product"):
+                for name in ("verify_session", "prepare_publish_search", "click_product_nav", "click_publish_product"):
                     stack.enter_context(patch.object(service, name, return_value=page))
                 stack.enter_context(patch.object(service, "search_publish_products"))
                 stack.enter_context(patch.object(service, "select_publish_category"))
@@ -202,11 +203,11 @@ class ProductImageTests(unittest.TestCase):
                 if fail:
                     upload.side_effect = RuntimeError("上传失败")
                     with self.assertRaisesRegex(RuntimeError, "上传失败"):
-                        service.open_publish(self.settings, on_ready=ready, keyword="测试",
+                        open_managed_publish(self.settings, on_ready=ready, keyword="测试",
                                              category="一级 > 二级", brand="测试品牌", main_images_dir="images")
                     ready.assert_not_called()
                 else:
-                    service.open_publish(self.settings, on_ready=ready, keyword="测试",
+                    open_managed_publish(self.settings, on_ready=ready, keyword="测试",
                                          category="一级 > 二级", brand="测试品牌", main_images_dir="images")
                     ready.assert_called_once()
                 upload.assert_called_once_with(editor, load_main_images(self.folder))

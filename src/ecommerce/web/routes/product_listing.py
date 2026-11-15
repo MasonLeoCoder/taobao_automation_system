@@ -7,6 +7,7 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 from werkzeug.exceptions import HTTPException
 from ecommerce.modules.product.web_materials import CATEGORY, GROUPS, LIMIT, MAX_FILES
 from ecommerce.modules.product.web_listing import ListingConflict, category_binding
+from ecommerce.modules.product.service import ACCOUNT_REQUIRED
 from ecommerce.modules.account.managed import shop_choices
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
@@ -82,9 +83,9 @@ def index():
     last_used = workbench().last_used_accounts() if settings.task_backend == 'mysql' else {}
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
-        use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify',
+        use_catalog=use_catalog, choices=choices, can_submit=settings.task_backend == 'mysql' and settings.environment != 'verify',
         title_generation_enabled=use_catalog, managed_accounts=settings.task_backend == 'mysql',
-        listing_shops=shop_choices(settings, last_used))
+        listing_shops=shop_choices(settings, last_used), account_required=ACCOUNT_REQUIRED)
 
 
 @product_listing.get('/api/listing/template')

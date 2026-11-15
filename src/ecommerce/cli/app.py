@@ -92,7 +92,7 @@ def parser() -> argparse.ArgumentParser:
     product = commands.add_parser("product", help="商品入口导航")
     product.add_argument("action", choices=("open",))
     _qianniu_options(product)
-    product.add_argument("--start", action="store_true", help="尝试点击开启按钮，旧定位问题待验证")
+    product.add_argument("--start", action="store_true", help="准备发品搜索，必要时点击「开启」")
     product.add_argument("--no-wait", action="store_true", help="完成后立即关闭浏览器")
     product.add_argument("--submit", action="store_true", help="填写后提交到仓库，失败时提示音并等待人工检查")
     product.add_argument("--keyword", help="进入发布页面后搜索指定关键词")
@@ -229,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(request_control(settings, args.action))
                 return 0
         if args.command == "download":
-            print("旧 download 只有登录骨架，报表下载尚未实现；登录请使用 account login。", file=sys.stderr)
+            print("旧 download 的报表下载尚未实现。首次登记千牛账号请打开网页「账号管理」。", file=sys.stderr)
             return 2
         if args.command == "status":
             from ecommerce.shared.features import FEATURES
@@ -259,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
             from ecommerce.cli.commands.product import execute
             legacy = args.command == "upload"
             if legacy:
-                print("旧命令 upload 对应 product open --start；尚不支持完整上架。", file=sys.stderr)
+                print("旧命令 upload 使用所选店铺和账号打开千牛发布入口。", file=sys.stderr)
             result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None), getattr(args, "video_file", None), getattr(args, "product_info_file", None), submit=getattr(args, "submit", False), sku_images_dir=getattr(args, "sku_images_dir", None), shop_id=args.shop_id, account=args.account)
         print(f"[{result.status}] {result.message}")
         if result.task_id:

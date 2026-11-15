@@ -5,6 +5,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from openpyxl import Workbook, load_workbook
+from tests.qianniu_fixtures import open_managed_publish
 from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGORY
 from ecommerce.modules.product.listing_templates import template_for
 from ecommerce.modules.product.web_materials import _book, sku_specs
@@ -86,7 +87,7 @@ class ProductWorkbookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch.object(service, "browser_session") as browser:
             self.make_file(root, category=None)
             with self.assertRaises(ValueError):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", product_info_file="产品信息.xlsx")
             browser.assert_not_called()
 
@@ -96,7 +97,7 @@ class ProductWorkbookTests(unittest.TestCase):
             page = MagicMock()
             browser = stack.enter_context(patch.object(service, "browser_session"))
             browser.return_value.__enter__.return_value = (MagicMock(),page)
-            for name in ("authenticate", "click_product_nav", "click_publish_product", "select_brand_and_continue"):
+            for name in ("verify_session", "prepare_publish_search", "click_product_nav", "click_publish_product", "select_brand_and_continue"):
                 stack.enter_context(patch.object(service,name,return_value=page))
             for name in ("search_publish_products", "select_publish_category"):
                 stack.enter_context(patch.object(service,name))
@@ -120,7 +121,7 @@ class ProductWorkbookTests(unittest.TestCase):
             submitter = stack.enter_context(patch.object(service,"submit_with_review", return_value="宝贝发布成功"))
             ready = MagicMock()
             with self.assertNoLogs(service.__name__,level="WARNING"):
-                result = service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                result = open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                               brand="无品牌", product_info_file="产品信息.xlsx", on_ready=ready)
             selector.assert_called_once_with(page,["家居清洁"])
             title_writer.assert_called_once_with(page,"测试商品标题")
@@ -156,9 +157,9 @@ class ProductWorkbookTests(unittest.TestCase):
             self.assertIn("店铺分类匹配：已选1项，跳过0项",result)
             submitter.assert_not_called()
             reviewer = MagicMock()
-            submitted = service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+            submitted = open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                              brand="无品牌", product_info_file="产品信息.xlsx", submit=True, on_submit_attention=reviewer)
-            submitter.assert_called_once_with(unittest.mock.ANY, page, reviewer)
+            submitter.assert_called_once_with(unittest.mock.ANY, page, reviewer, before_click=unittest.mock.ANY)
             self.assertIn("商品提交已确认",submitted)
             self.assertNotIn("未提交发布",submitted)
 
@@ -171,7 +172,7 @@ class ProductWorkbookTests(unittest.TestCase):
             book.save(file)
             book.close()
             with self.assertRaisesRegex(ValueError, "宝贝标题"):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", product_info_file="产品信息.xlsx")
             browser.assert_not_called()
 
@@ -185,7 +186,7 @@ class ProductWorkbookTests(unittest.TestCase):
                 book.save(file)
                 book.close()
                 with self.assertRaisesRegex(ValueError, "销售规格"):
-                    service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                    open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                          brand="无品牌", product_info_file="产品信息.xlsx")
                 browser.assert_not_called()
 
@@ -217,7 +218,7 @@ class ProductWorkbookTests(unittest.TestCase):
                 book.save(file)
                 book.close()
                 with self.assertRaisesRegex(ValueError, "规格一"):
-                    service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                    open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                          brand="无品牌", product_info_file="产品信息.xlsx")
                 browser.assert_not_called()
 
@@ -231,7 +232,7 @@ class ProductWorkbookTests(unittest.TestCase):
                 book.save(file)
                 book.close()
                 with self.assertRaisesRegex(ValueError, "一口价"):
-                    service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                    open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                          brand="无品牌", product_info_file="产品信息.xlsx")
                 browser.assert_not_called()
 
@@ -244,7 +245,7 @@ class ProductWorkbookTests(unittest.TestCase):
             book.save(file)
             book.close()
             with self.assertRaisesRegex(ValueError,"商家编码"):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", product_info_file="产品信息.xlsx")
             browser.assert_not_called()
 
@@ -258,7 +259,7 @@ class ProductWorkbookTests(unittest.TestCase):
             book.close()
             browser.side_effect=RuntimeError("已到达浏览器步骤")
             with self.assertLogs(service.__name__,level="WARNING") as logs, self.assertRaisesRegex(RuntimeError,"已到达浏览器步骤"):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", product_info_file="产品信息.xlsx")
             browser.assert_called_once()
             self.assertIn("跳过基础导购标题及每个SKU的搜索标题",logs.output[0])

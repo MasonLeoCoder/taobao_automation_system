@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from ecommerce.platforms.qianniu import login
 from ecommerce.platforms.qianniu.identity import ShopIdentity
-from ecommerce.modules.account import service
+from ecommerce.modules.account import managed
 from ecommerce.shared.exceptions import NeedsAttention
 
 
@@ -131,44 +131,28 @@ class LoginTests(unittest.TestCase):
             self.assertIs(login.login_with_qrcode(page), home)
         button.click.assert_called_once()
 
-    def test_authenticate_verifies_new_tab_and_saves(self):
-        """业务在扫码成功页复核并保存会话；参数：无；返回：无。"""
-        original, home, context, settings = MagicMock(), MagicMock(), MagicMock(), MagicMock(headless=False)
-        with patch.object(service, "check_login", side_effect=[False, True]) as check, patch.object(service, "login_with_qrcode", return_value=home), patch.object(service, "save_session") as save:
-            self.assertIs(service.authenticate(context, original, settings), home)
-            self.assertIs(check.call_args.args[0], home)
-            save.assert_called_once_with(context, settings)
+    def test_managed_verification_reads_only_the_selected_identity(self):
+        page, on_expiry = MagicMock(), MagicMock()
+        identity = ShopIdentity('123456789', '示例店铺', '示例-运营', 'tb1234567890:示例')
+        target = {'platform_shop_id': identity.shop_id, 'login_name': identity.login_name}
+        with (patch.object(managed, 'inspect_login', return_value=login.LoginStatus.AUTHENTICATED),
+              patch.object(managed, 'read_shop_identity', return_value=identity) as read):
+            self.assertEqual(managed.verify_session(page, target, on_expiry), identity)
+            with self.assertRaisesRegex(NeedsAttention, '店铺不符'):
+                managed.verify_session(page, {**target, 'platform_shop_id': '987654321'}, on_expiry)
+        read.assert_called_with(page)
+        on_expiry.assert_not_called()
 
-    def test_scan_timeout_needs_attention_without_save(self):
-        """扫码未确认时不保存错误状态；参数：无；返回：无。"""
-        with patch.object(service, "check_login", return_value=False), patch.object(service, "login_with_qrcode", side_effect=login.PlaywrightTimeoutError("扫码未确认")), patch.object(service, "save_session") as save:
-            with self.assertRaises(NeedsAttention):
-                service.authenticate(MagicMock(), MagicMock(), MagicMock(headless=False))
-            save.assert_not_called()
+    def test_managed_verification_only_marks_explicit_login_requirement(self):
+        for status in (login.LoginStatus.UNCONFIRMED, login.LoginStatus.REQUIRED):
+            with self.subTest(status=status), patch.object(managed, 'inspect_login', return_value=status):
+                on_expiry = MagicMock(side_effect=NeedsAttention('明确需要重新登录'))
+                with self.assertRaises(NeedsAttention):
+                    managed.verify_session(MagicMock(), {}, on_expiry)
+                self.assertEqual(on_expiry.called, status is login.LoginStatus.REQUIRED)
 
-    def test_account_check_displays_shop_and_current_operator(self):
-        settings = MagicMock()
-        with patch.object(service, 'browser_session') as session, \
-                patch.object(service, 'authenticate') as authenticate, \
-                patch.object(service, 'read_shop_identity', return_value=ShopIdentity(
-                    '123456789', '示例店铺', '示例-运营', 'tb1234567890:示例')) as identity:
-            context, page = MagicMock(), MagicMock()
-            session.return_value.__enter__.return_value = context, page
-            result = service.check(settings)
-        authenticate.assert_called_once_with(context, page, settings, allow_login=False)
-        identity.assert_called_once_with(authenticate.return_value)
-        self.assertEqual(result, '店铺登录状态有效，店铺：示例店铺（店铺ID 123456789），'
-                                 '当前登录者：tb1234567890:示例')
-
-    def test_account_check_labels_incomplete_login_name(self):
-        with patch.object(service, 'browser_session') as session, \
-                patch.object(service, 'authenticate'), \
-                patch.object(service, 'read_shop_identity', return_value=ShopIdentity('123456789', '示例店铺', '示例-运营')):
-            session.return_value.__enter__.return_value = MagicMock(), MagicMock()
-            self.assertIn('当前登录者：示例-运营（完整登录名未确认）', service.check(MagicMock()))
-
-    def test_account_check_reports_unavailable_identity(self):
-        with patch.object(service, 'browser_session') as session, \
-                patch.object(service, 'authenticate'), patch.object(service, 'read_shop_identity', return_value=None):
-            session.return_value.__enter__.return_value = MagicMock(), MagicMock()
-            self.assertEqual(service.check(MagicMock()), '店铺登录状态有效，暂未读到完整的店铺和登录者信息')
+    def test_managed_verification_requires_complete_login_name(self):
+        with (patch.object(managed, 'inspect_login', return_value=login.LoginStatus.AUTHENTICATED),
+              patch.object(managed, 'read_shop_identity', return_value=ShopIdentity('123456789', '示例店铺', '示例-运营'))):
+            with self.assertRaisesRegex(NeedsAttention, '无法核实'):
+                managed.verify_session(MagicMock(), {}, MagicMock())

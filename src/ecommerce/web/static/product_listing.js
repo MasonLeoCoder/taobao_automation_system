@@ -365,7 +365,7 @@
     updateStartLabel();
     const validTitles = checkTitles();
     node('start').disabled = !data.id || !!task || busy || !validTitles || !targetMatches();
-    if (!task && data.id && !targetMatches()) {
+    if (!task && data.id && node('shop') && !targetMatches()) {
       startError('这份预检的店铺或账号当前不可用，请选中可用账号后重新预检。');
     }
     node('action').hidden = !!task;
@@ -503,8 +503,8 @@
       (node('shop') && (!node('shop').value || !node('account').value));
   }
   function targetMatches() {
-    return !node('shop') || (node('shop').value === listingTarget?.shop_id &&
-      node('account').value === listingTarget?.account_id);
+    return Boolean(node('shop')?.value && node('account')?.value &&
+      node('shop').value === listingTarget?.shop_id && node('account').value === listingTarget?.account_id);
   }
   function updateAccountOptions(wanted = '') {
     const field = node('account-field');

@@ -1,6 +1,7 @@
 """本机浏览器验证文件夹入口和反馈操作，千牛执行使用脱敏替身。"""
 import os
 import logging
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 from unittest import TestCase, skipUnless
 from unittest.mock import patch
 from zipfile import ZipFile
+from contextlib import ExitStack
 
 from imageio_ffmpeg import get_ffmpeg_exe
 from openpyxl import load_workbook
@@ -18,7 +20,7 @@ from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 from ecommerce.web.app import create_app
-from tests.unit.test_web_listing import fixture_materials, fixture_settings
+from tests.unit.test_web_listing import bind_listing_fixture, fixture_materials, fixture_settings
 
 
 @skipUnless(os.environ.get('QIANNIU_BROWSER_TESTS') == '1', '显式启用本地浏览器验证')
@@ -108,6 +110,9 @@ class WebListingBrowserTests(TestCase):
                     page.get_by_role('button', name='跳过视频并重新自检').click()
                     expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
                     expect(preview).to_have_count(0)
+                    expect(page.locator('#listing-offline-note')).to_have_text('请在启用 MySQL 的环境中选择已登记的千牛账号')
+                    expect(page.get_by_role('button', name='仅填写', exact=True)).to_be_disabled()
+                    expect(page.locator('#listing-submit')).to_be_disabled()
                     publish.assert_not_called()
                 self.assertEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
                 browser.close()
@@ -116,9 +121,10 @@ class WebListingBrowserTests(TestCase):
                 thread.join(5)
 
     def test_folder_preflight_only_fill_and_reload_during_wait(self):
-        with TemporaryDirectory() as root, sync_playwright() as pw:
+        with TemporaryDirectory() as root, sync_playwright() as pw, ExitStack() as stack:
             folder = fixture_materials(Path(root))
             app = create_app(fixture_settings(Path(root)))
+            stack.enter_context(bind_listing_fixture(app))
             server = make_server('127.0.0.1', 0, app, threaded=True)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -128,19 +134,19 @@ class WebListingBrowserTests(TestCase):
                     page = browser.new_page(viewport={'width': 390, 'height': 840})
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
-                    scanned = threading.Event()
+                    confirmed = threading.Event()
                     advanced = threading.Event()
                     closed = threading.Event()
-                    login_page = SimpleNamespace(is_closed=closed.is_set, wait_for_timeout=lambda ms: time.sleep(ms/1000))
-                    login_page.context = SimpleNamespace(pages=[login_page])
+                    verification_page = SimpleNamespace(is_closed=closed.is_set,
+                        wait_for_timeout=lambda ms: time.sleep(ms/1000), frames=[], screenshot=lambda **_: None)
 
                     def fake_open(*args, **kwargs):
                         assert kwargs['submit'] is False
                         review = kwargs['web_review']
-                        review.login_wait(login_page)
-                        if not scanned.is_set():
-                            review.login_wait(login_page, retry=True)
-                        assert scanned.is_set()
+                        review.verification(SimpleNamespace(page=verification_page, step='商品编辑页验证'))
+                        if not confirmed.is_set():
+                            review.verification(SimpleNamespace(page=verification_page, step='验证尚未完成'))
+                        assert confirmed.is_set()
                         advanced.set()
                         review.progress('千牛已登录，正在进入商品发布')
                         logging.getLogger('ecommerce.platforms.qianniu.product_video').warning('模拟视频素材需要人工处理')
@@ -151,6 +157,10 @@ class WebListingBrowserTests(TestCase):
 
                     with patch('ecommerce.modules.product.web_listing.open_publish', side_effect=fake_open) as publish:
                         page.goto(f'http://127.0.0.1:{server.server_port}/plans/listing')
+                        page.get_by_role('button', name=re.compile('^目标店铺，')).click()
+                        page.get_by_role('option', name='测试店铺 · 123', exact=True).click()
+                        page.get_by_role('button', name=re.compile('^千牛账号，')).click()
+                        page.get_by_role('option', name='tb123:测试', exact=True).click()
                         page.locator('#listing-folder').set_input_files(str(folder))
                         expect(page.locator('#listing-import-note')).to_contain_text('自检通过', timeout=10000)
                         expect(page.locator('#listing-submit')).to_be_checked()
@@ -158,14 +168,14 @@ class WebListingBrowserTests(TestCase):
                         self.assertEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
                         page.locator('#listing-submit').uncheck()
                         page.get_by_role('button', name='仅填写', exact=True).click()
-                        dialog = page.get_by_role('dialog', name='等待千牛扫码登录')
+                        dialog = page.get_by_role('dialog', name='需要人工处理')
                         expect(dialog).to_be_visible(timeout=10000)
                         dialog.get_by_role('button', name='完成', exact=True).click()
-                        expect(dialog).to_contain_text('尚未确认登录', timeout=10000)
-                        scanned.set()
+                        expect(dialog).to_contain_text('验证尚未完成', timeout=10000)
+                        confirmed.set()
                         dialog.get_by_role('button', name='关闭人工处理提示').click()
                         self.assertFalse(advanced.wait(.4))
-                        expect(page.locator('#listing-phase')).to_have_text('等待扫码登录')
+                        expect(page.locator('#listing-phase')).to_have_text('等待人工处理')
                         page.reload()
                         expect(dialog).to_be_visible(timeout=10000)
                         self.assertFalse(advanced.is_set())

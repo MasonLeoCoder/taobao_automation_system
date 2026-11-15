@@ -23,7 +23,7 @@ from ecommerce.modules.account.managed import (
 )
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from ecommerce.shared.time import BEIJING
-from .service import open_publish
+from .service import ACCOUNT_REQUIRED, open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
 from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
@@ -201,12 +201,13 @@ class ListingWorkbench:
         with shop_lock(path / 'launch'):
             if (path / 'state.json').exists():
                 return self.snapshot(identifier)
+            if self.settings.task_backend != 'mysql':
+                raise NeedsAttention(ACCOUNT_REQUIRED)
             manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
-            if self.settings.task_backend == 'mysql':
-                target = manifest.get('listing_target')
-                if not target or (account_id, shop_id) != (target['account_id'], target['shop_id']):
-                    raise ListingConflict('所选账号或店铺与预检不一致，请重新预检')
-                account_settings(self.settings, selected_account(self.settings, account_id, shop_id))
+            target = manifest.get('listing_target')
+            if not target or (account_id, shop_id) != (target['account_id'], target['shop_id']):
+                raise ListingConflict('所选账号或店铺与预检不一致，请重新预检')
+            account_settings(self.settings, selected_account(self.settings, account_id, shop_id))
             check_binding(self.settings, manifest)
             binding = manifest.get('category_binding')
             if submit and binding and not PROFILES[binding['profile']].allow_submit:
@@ -334,13 +335,6 @@ class _ListingRun:
         elif self.local_log:
             self.local_log.write(message)
 
-    def login_wait(self, page, *, retry=False):
-        """等待明确扫码反馈；参数：登录页和是否复核失败；返回：收到完成，由平台复核。"""
-        message = ('尚未确认登录。若二维码已过期，请在千牛窗口刷新二维码后扫码。' if retry
-                   else '请用手机千牛 App 扫描已打开的千牛窗口中的二维码。')
-        # 登录二维码仅保留在千牛窗口，不写入截图或网页接口。
-        self._wait(message + ' 完成登录后，回到网页点击「完成」。', ['continue'], kind='login', context=page.context)
-
     def _screenshot(self, *, page=None, message=''):
         """保存当前截图或引用已由千牛守卫生成的证据；返回：版本号或空。"""
         version = uuid4().hex
@@ -359,7 +353,7 @@ class _ListingRun:
             getLogger(__name__).warning('未能保存千牛现场截图，保留人工提示')
         return None
 
-    def _wait(self, message, actions, *, page=None, differences=None, kind='manual', context=None, related_tasks=None):
+    def _wait(self, message, actions, *, page=None, differences=None, kind='manual', related_tasks=None):
         """等待当前提示的专用反馈；返回：明确操作，关闭网页不算反馈。"""
         previous = self.state if self.state['phase'] == 'waiting' else None
         evidence = self._screenshot(page=page, message=message)
@@ -377,16 +371,7 @@ class _ListingRun:
             self.local_log.write(message, 'WARNING', '等待人工处理')
         feedback = self.path / f'feedback-{prompt["id"]}.json'
         while not feedback.exists():
-            if context is not None:
-                pages = [candidate for candidate in context.pages if not candidate.is_closed()]
-                if not pages:
-                    raise NeedsAttention('千牛浏览器已关闭，无法继续扫码登录')
-                try:
-                    pages[-1].wait_for_timeout(250)
-                except PlaywrightError:
-                    if not any(not candidate.is_closed() for candidate in context.pages):
-                        raise NeedsAttention('千牛浏览器已关闭，无法继续扫码登录') from None
-            elif page is not None:
+            if page is not None:
                 if page.is_closed():
                     raise NeedsAttention('千牛页面已关闭，无法继续本次操作')
                 try:
@@ -661,10 +646,8 @@ class _ListingRun:
                 if (not video or not video.is_file() or video.resolve().parent != self.path.resolve() / 'video_adapted'
                         or digest(video) != self.manifest['hashes'].get(f'video_adapted/{ADAPTED_VIDEO}')):
                     raise NeedsAttention('已确认的视频上传副本发生变化，请重新导入并自检')
-            browser_settings = self.settings
-            if self.target:
-                self.managed_account = selected_account(self.settings, self.target['account_id'], self.target['shop_id'])
-                browser_settings = account_settings(self.settings, self.managed_account)
+            self.managed_account = selected_account(self.settings, self.target['account_id'], self.target['shop_id'])
+            browser_settings = account_settings(self.settings, self.managed_account)
             return open_publish(browser_settings, keyword=self.preview['keyword'], category=self.preview['category'],
                 brand=self.preview['brand'], main_images_dir=str(self.path / 'main'),
                 portrait_images_dir=str(self.path / 'portrait') if files['portrait'] else None,
@@ -676,8 +659,11 @@ class _ListingRun:
                 **({'sku_titles': self.sku_titles} if self.sku_titles is not None else {}),
                 **({'title_overrides': self.state['titles']} if 'titles' in self.state else {}))
         try:
+            if self.settings.task_backend != 'mysql' or not self.target:
+                self.update(phase='needs_attention', prompt=None, message=ACCOUNT_REQUIRED)
+                return
             result = run_task(self.settings, 'product.submit' if self.state['submit'] else 'product.open',
-                              work, **({'qianniu_scope': self.target} if self.target else {}))
+                              work, qianniu_scope=self.target)
             message = ('提交结果待核实；请检查千牛仓库，未重复提交' if self.state['outcome'] == 'uncertain'
                        else result.message)
             if self.local_log:

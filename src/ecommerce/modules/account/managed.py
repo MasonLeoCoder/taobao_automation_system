@@ -89,6 +89,18 @@ def account_settings(settings, row):
     return replace(settings, profile_path=directory / 'browser', session_path=session_path)
 
 
+def check_account_browser(settings):
+    """商品执行层拒绝默认或不完整的浏览器会话配置。"""
+    try:
+        directory = account_session_directory(settings.workspace, settings.session_path.parent.name)
+    except ValueError:
+        raise NeedsAttention('千牛商品操作需要所选账号的独立会话') from None
+    if (settings.session_path.resolve() != directory / 'session.json'
+            or settings.profile_path.resolve() != directory / 'browser'
+            or not settings.session_path.is_file()):
+        raise NeedsAttention('千牛商品操作需要所选账号的独立会话')
+
+
 def require_login(settings, row, message='千牛会话已失效，请到账号管理重新登录所选账号'):
     AccountStore(settings).change_state(row, 'require_login')
     raise NeedsAttention(message)

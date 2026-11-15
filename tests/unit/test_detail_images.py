@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from tests.qianniu_fixtures import open_managed_publish
 from ecommerce.modules.product.assets import load_detail_images
 
 
@@ -56,7 +57,7 @@ class DetailImageTests(unittest.TestCase):
         from ecommerce.shared.config import load_settings
         with tempfile.TemporaryDirectory() as root, patch.object(service, "browser_session") as browser:
             with self.assertRaises(ValueError):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", detail_images_dir="missing")
             browser.assert_not_called()
 
@@ -72,14 +73,14 @@ class DetailImageTests(unittest.TestCase):
             initial, editor = MagicMock(), MagicMock()
             browser = stack.enter_context(patch.object(service, "browser_session"))
             browser.return_value.__enter__.return_value = (MagicMock(), initial)
-            for name in ("authenticate", "click_product_nav", "click_publish_product"):
+            for name in ("verify_session", "prepare_publish_search", "click_product_nav", "click_publish_product"):
                 stack.enter_context(patch.object(service, name, return_value=initial))
             for name in ("search_publish_products", "select_publish_category"):
                 stack.enter_context(patch.object(service, name))
             stack.enter_context(patch.object(service, "select_brand_and_continue", return_value=editor))
             calls = []
             upload = stack.enter_context(patch.object(service, "upload_detail_images", side_effect=lambda *args: calls.append("details")))
-            result = service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+            result = open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                           brand="无品牌", detail_images_dir="details", on_ready=lambda: calls.append("ready"))
             upload.assert_called_once_with(editor, [folder / "1.jpg"])
             self.assertEqual(calls, ["details", "ready"])
@@ -87,6 +88,6 @@ class DetailImageTests(unittest.TestCase):
             ready = MagicMock()
             upload.side_effect = RuntimeError("上传未完成")
             with self.assertRaisesRegex(RuntimeError, "上传未完成"):
-                service.open_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
+                open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                      brand="无品牌", detail_images_dir="details", on_ready=ready)
             ready.assert_not_called()
