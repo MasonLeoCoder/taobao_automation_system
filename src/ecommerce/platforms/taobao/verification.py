@@ -25,29 +25,41 @@ from ecommerce.shared.exceptions import NeedsAttention, TaskStopped, ModuleBlock
 
 _ACTIVE = ContextVar("taobao_verification_guard", default=None)
 LOGIN_HOSTS = {"login.taobao.com", "www.taobao.com", "taobao.com"}
+LOGIN_LINK_SELECTOR = '.site-nav-login a[href*="login.taobao.com"]'
+LOGIN_LINK_LABEL = r'(?:亲[，,]?)?(?:请|去|立即|免费)?登录[！!。]?'
+LOGIN_LINK_EVIDENCE = r"""link => {
+ let url;
+ try { url = new URL(link.href); } catch { return false; }
+ return url.protocol==='https:' && url.hostname==='login.taobao.com' && !/logout|signout/i.test(url.pathname)
+     && new RegExp(__LOGIN_LABEL__).test((link.innerText || '').replace(/\s+/g,''));
+}""".replace('__LOGIN_LABEL__', json.dumps('^' + LOGIN_LINK_LABEL + '$'))
 
 # 不扫描输入框值；短信登录中的“验证码”文字本身不属于阻断证据。
-_SCAN = r"""loginMode => {
+_SCAN = r"""({loginMode, managed}) => {
  const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'};
  const challenge='.J_MIDDLEWARE_FRAME_WIDGET,.nc-container .nc_scale,#nocaptcha,.baxia-dialog,.baxia-dialog-content,iframe[src*="captcha"],iframe[src*="punish"],iframe[src*="baxia"]';
  if([...document.querySelectorAll(challenge)].some(visible))return 'verification';
- if(!loginMode&&[...document.querySelectorAll('.site-nav-login a[href*="login.taobao.com"]')].some(visible))return 'login';
  const text=document.body?.innerText||'';
  if(/请拖动.{0,12}滑块|请完成安全验证|访问过于频繁|访问受限|操作过于频繁|请稍后再试.*验证/.test(text))return 'verification';
+ const loginForm='#login,input[type="password"],iframe[src*="login.taobao.com"]';
+ if(!loginMode&&managed&&location.hostname==='login.taobao.com'&&[...document.querySelectorAll(loginForm)].some(visible))return 'login';
  const dialogs='[role="dialog"],[role="alertdialog"],dialog[open],.next-dialog,.ant-modal,.el-dialog';
  for(const e of document.querySelectorAll(dialogs)){
    if(!visible(e))continue;
-   if(loginMode&&e.querySelector('#login,input[type="password"],iframe[src*="login.taobao.com"]'))continue;
+   if(loginMode&&e.querySelector(loginForm))continue;
+   if(!loginMode&&managed&&[...e.querySelectorAll(loginForm)].some(visible))return 'login';
    return 'popup';
  }
  const masks='.next-overlay-backdrop,.next-overlay-mask,.ant-modal-mask,.el-overlay,.modal-backdrop';
  for(const e of document.querySelectorAll(masks)){
    if(!visible(e)||getComputedStyle(e).pointerEvents==='none')continue;
-   if(loginMode&&e.parentElement?.querySelector('#login,input[type="password"],iframe[src*="login.taobao.com"]'))continue;
+   if(loginMode&&e.parentElement?.querySelector(loginForm))continue;
    return 'popup';
  }
+ const signIn=__LOGIN_EVIDENCE__;
+ if(!loginMode&&[...document.querySelectorAll(__LOGIN_SELECTOR__)].some(el=>visible(el)&&signIn(el)))return managed ? 'login_link' : 'login';
  return null;
-}"""
+}""".replace('__LOGIN_EVIDENCE__', LOGIN_LINK_EVIDENCE).replace('__LOGIN_SELECTOR__', json.dumps(LOGIN_LINK_SELECTOR))
 
 
 def safe_location(url):
@@ -106,6 +118,8 @@ class TaobaoGuard:
         self.failure = None
         self.login_mode = True
         self.on_account_login_required = None
+        self._opening_login_probe = False
+        self._ignored_login_links = set()
         self.resume_check = None
         self.watched_responses = []
         self._pending_documents = {}
@@ -243,12 +257,40 @@ class TaobaoGuard:
         page.on("dialog", listener)
         self._listeners[page] = listener
         self._page_times[page] = time.monotonic()
-        if self._expected_rule is not None and page not in self._pages and not self._expected_rule["claimed"]:
+        if self._opening_login_probe:
+            self._pages.add(page)
+        elif self._expected_rule is not None and page not in self._pages and not self._expected_rule["claimed"]:
             self._expected_rule["claimed"] = True
             self._expected_pages[page] = self._expected_rule
         elif not self.login_mode and page not in self._pages:
             self._queue(Blockage("tab", page, "未预期的新标签页，请人工检查并关闭", key="tab:" + uuid4().hex))
         self._flush_network()
+
+    @contextmanager
+    def login_probe_page(self):
+        """只在处理登录提示时登记自己的临时复核页，保留业务标签页。"""
+        self._opening_login_probe = True
+        try:
+            page = self.context.new_page()
+        finally:
+            self._opening_login_probe = False
+        try:
+            yield page
+        finally:
+            page.close()
+
+    def _review_account_login(self, blockage):
+        step = self.step
+        self._record('account_login_signal', blockage)
+        try:
+            self.on_account_login_required()
+        except NeedsAttention as error:
+            self._record('account_login_rechecked', blockage, step=step, outcome=str(error))
+            raise
+        else:
+            self._record('account_login_rechecked', blockage, step=step, outcome='原账号仍已登录')
+        finally:
+            self.step = step
 
     @contextmanager
     def expect_new_page(self, predicate, timeout_ms=60_000):
@@ -366,7 +408,8 @@ class TaobaoGuard:
                     self._pages.add(page)
                     del self._expected_pages[page]
                 elif urlsplit(page.url).hostname == "login.taobao.com":
-                    return Blockage("login", page, "搜索页面需要登录，请人工处理后返回本次搜索结果")
+                    return Blockage("login", page, "搜索页面需要登录，请人工处理后返回本次搜索结果",
+                                    check_details={'surface':'main', 'signal':'login_redirect'})
                 elif page.url == "about:blank" and time.monotonic() - rule["started"] - (self.paused_seconds - rule["paused"]) < rule["timeout"]:
                     continue
                 else:
@@ -379,7 +422,8 @@ class TaobaoGuard:
                 else:
                     return Blockage("tab", page, "未预期的新标签页，请人工检查并关闭")
             if not self.login_mode and urlsplit(page.url).hostname == "login.taobao.com":
-                return Blockage("login", page, "登录状态失效，请人工完成登录")
+                return Blockage("login", page, "当前业务页面要求登录",
+                                check_details={'surface':'main', 'signal':'login_redirect'})
             for frame in page.frames:
                 try:
                     current = frame
@@ -391,10 +435,23 @@ class TaobaoGuard:
                         current = current.parent_frame
                     if not visible:
                         continue
-                    kind = frame.evaluate(_SCAN, self.login_mode)
+                    embedded = frame.parent_frame is not None
+                    kind = frame.evaluate(_SCAN, {'loginMode':self.login_mode,'managed':bool(self.on_account_login_required)})
+                    metadata = {'surface':'embedded' if embedded else 'main','signal':kind}
+                    if kind == 'login_link' and embedded:
+                        location = safe_location(frame.url)
+                        key = (safe_location(page.url), location)
+                        if key not in self._ignored_login_links:
+                            self._ignored_login_links.add(key)
+                            self._record('account_login_signal_ignored', Blockage(kind, page, '嵌入页面有普通登录链接',
+                                frame_location=location,check_details=metadata), outcome='保留当前账号状态')
+                        continue
+                    if kind == 'login_link':
+                        kind = 'login'
                     if kind:
-                        label = {"verification": "检测到安全验证", "login": "登录状态失效，请人工登录", "popup": "未识别的弹窗或遮罩"}[kind]
-                        return Blockage(kind, page, label, frame_location=safe_location(frame.url))
+                        label = {"verification": "检测到安全验证", "login": "页面显示淘宝登录提示", "popup": "未识别的弹窗或遮罩"}[kind]
+                        return Blockage(kind, page, label, frame_location=safe_location(frame.url),
+                                        check_details=metadata if kind=='login' else None)
                 except PlaywrightError:
                     if page.is_closed() or frame.is_detached():
                         continue
@@ -579,7 +636,7 @@ class TaobaoGuard:
                 first = False  # 原生弹窗已经提示过，本次只等待继续，不重复响铃。
             while blockage:
                 if blockage.kind == 'login' and self.on_account_login_required:
-                    self.on_account_login_required()
+                    self._review_account_login(blockage)
                 if started is None:
                     started = time.monotonic()
                 self._transition("needs_attention", blockage)
@@ -612,7 +669,10 @@ class TaobaoGuard:
                     pages[-1].wait_for_timeout(1)
                 if self.failure:
                     raise self.failure
+                previous_blockage = blockage
                 blockage = self._scan()
+                if blockage is None and previous_blockage.kind == 'login' and self.on_account_login_required:
+                    self._review_account_login(previous_blockage)
                 if blockage is None and self.resume_check is not None:
                     try:
                         resumed = self.resume_check()

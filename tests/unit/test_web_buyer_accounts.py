@@ -84,11 +84,24 @@ class BuyerAccountTests(TestCase):
         self.store.change_state.assert_called_once_with(self.current, 'require_login')
         self.assertEqual(self.previous.read_text(encoding='utf-8'), 'old')
 
+    def test_flagged_account_can_check_and_reuse_its_original_session(self):
+        self.current['login_required'] = True
+        self.workbench.state = None
+        with (patch.object(self.workbench, '_account', return_value=self.current),
+              patch('ecommerce.modules.account.web_accounts.Thread') as thread):
+            self.workbench.start('check', self.current['id'], revision=2)
+            thread.return_value.start.assert_called_once()
+        with patch('ecommerce.modules.account.web_buyers.check_login', return_value=True):
+            self.workbench._inspect('check', self.current)
+        self.store.record_buyer.assert_called_once_with(self.current['login_name'], self.current['session_id'], current=self.current)
+        self.scan.assert_not_called()
+        self.assertTrue(self.previous.is_file())
+
     def test_buyer_page_and_requests_do_not_use_seller_store_paths(self):
         app = create_app(self.settings)
         app.config['SETTINGS'] = replace(self.settings, task_backend='mysql')
         client = app.test_client()
-        row = {**self.current, 'verified_at': datetime(2026, 11, 15), 'cleanup_pending': False}
+        row = {**self.current, 'login_required': True, 'verified_at': datetime(2026, 11, 15), 'cleanup_pending': False}
         seller = app.extensions['platform_accounts']
         buyer = app.extensions['taobao_buyer_accounts']
         headers = {'X-Collection-Token': app.config['COLLECTION_TOKEN']}
@@ -99,6 +112,7 @@ class BuyerAccountTests(TestCase):
               patch.object(buyer, 'start', return_value={'phase': 'running'}) as start):
             html = client.get('/accounts?platform=taobao').get_data(as_text=True)
             self.assertIn('测试昵称甲', html)
+            self.assertIn('data-account-action="check"', html)
             self.assertNotIn('data-shop-id', html)
             self.assertEqual(client.post(path, json=payload).status_code, 403)
             self.assertEqual(client.post(path, json={**payload, 'shop_id': '123'}, headers=headers).status_code, 422)

@@ -64,7 +64,7 @@
             <td role="cell" data-label="最近核验">{{ account.verified_at.strftime('%Y-%m-%d %H:%M') }}</td>
             <td role="cell"><div class="account-actions">
               {% if account.enabled %}
-                {% if account.session_id and not account.login_required %}
+                {% if account.session_id and (buyer or not account.login_required) %}
                   {% if not buyer %}{{ ui.control_button('打开千牛', {'type':'button', 'data-account-action':'open', 'class':'account-open'}, 'secondary') }}{% endif %}
                   {{ ui.control_button('检查登录', {'type':'button', 'data-account-action':'check', 'class':'action-history'}, 'secondary') }}
                 {% endif %}

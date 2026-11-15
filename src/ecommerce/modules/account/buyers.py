@@ -109,6 +109,23 @@ def expired(settings, row):
     raise BuyerUnavailable(f'{row["login_name"]} · 淘宝已要求登录，请重新登录原账号')
 
 
+def recheck_login(settings, row, guard):
+    """在原浏览器的临时首页复核账号，避免把局部提示直接标成掉线。"""
+    try:
+        with guard.login_probe_page() as page:
+            logged_in = check_login(page, min(settings.timeout_ms, 10_000), stop_on_login_required=True)
+            login_required = not logged_in and is_login_required(page)
+            nickname = read_buyer_nickname(page) if logged_in else None
+    except (NeedsAttention, PlaywrightError):
+        login_required, nickname = False, None
+    if login_required:
+        expired(settings, row)
+    if not nickname:
+        raise BuyerUnavailable('淘宝登录提示出现后未能复核原账号，本次采集暂停，保留原会话')
+    if nickname != row['login_name']:
+        raise BuyerUnavailable(f'预期账号「{row["login_name"]}」，复核为「{nickname}」，保留原会话')
+
+
 def probe(settings, row):
     """在创建实际执行之前识别明确掉线，保留排队申请。"""
     with browser_session(settings, hold_on_attention=False) as (_, page):
@@ -149,5 +166,5 @@ def authenticate(settings, row, page):
     guard = active_guard()
     if guard:
         guard.login_mode = False
-        guard.on_account_login_required = lambda: expired(settings, row)
+        guard.on_account_login_required = lambda: recheck_login(settings, row, guard)
     return page

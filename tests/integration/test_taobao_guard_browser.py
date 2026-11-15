@@ -44,7 +44,7 @@ class TaobaoBrowserGuardTests(unittest.TestCase):
         def route(request):
             path = urlsplit(request.request.url).path
             status, headers, body = self.responses.get(path, (200, {}, BODY))
-            request.fulfill(status=status, headers=headers, content_type="text/html", body=body)
+            request.fulfill(status=status, headers=headers, content_type="text/html; charset=utf-8", body=body)
         self.context.route("**/*", route)
         self.page = self.context.new_page()
         self.page.goto(HOME)
@@ -90,6 +90,77 @@ class TaobaoBrowserGuardTests(unittest.TestCase):
             self.page.locator('iframe').evaluate("e=>e.style.display='block'")
             with self.assertRaises(NeedsAttention):
                 guard.perform("读取", lambda: self.fail("验证未处理不能执行"))
+
+    def test_managed_account_ignores_a_plain_embedded_login_link(self):
+        self.page.evaluate("""document.body.insertAdjacentHTML('beforeend',
+            `<iframe srcdoc='<div class=site-nav-login><a href=https://login.taobao.com/>亲，请登录</a></div>'></iframe>`)""")
+        with self.guard() as guard:
+            guard.login_mode = False
+            guard.on_account_login_required = lambda: self.fail('普通嵌入链接不能触发掉线复核')
+            guard.perform('填写淘宝搜索关键词', lambda: self.page.get_by_role('button').click())
+            events = [json.loads(line) for line in guard.event_path.read_text(encoding='utf-8').splitlines()]
+        self.assertEqual(self.page.evaluate('window.clicks'), 1)
+        ignored = [row for row in events if row['event'] == 'account_login_signal_ignored']
+        self.assertEqual(len(ignored), 1)
+        self.assertEqual(ignored[0]['check_details']['surface'], 'embedded')
+
+    def test_account_menu_links_to_login_domain_do_not_mean_logout(self):
+        from ecommerce.platforms.taobao.login import is_authenticated, is_login_required
+
+        self.page.evaluate("""document.body.insertAdjacentHTML('beforeend', `<div class=site-nav-login>
+            <a href='https://login.taobao.com/member/account.jhtml'>账号管理</a>
+            <a href='https://login.taobao.com/member/logout.jhtml'>退出</a></div>`)""")
+        with self.guard() as guard:
+            guard.login_mode = False
+            guard.on_account_login_required = lambda: self.fail('账号菜单没有登录证据')
+            self.assertTrue(is_authenticated(self.page))
+            self.assertFalse(is_login_required(self.page))
+            guard.perform('填写淘宝搜索关键词',lambda: self.page.get_by_role('button').click())
+        self.assertEqual(self.page.evaluate('window.clicks'), 1)
+
+    def test_managed_account_keeps_a_real_login_prompt_waiting_for_feedback(self):
+        self.page.evaluate("""document.body.insertAdjacentHTML('beforeend',
+            '<div role=dialog><input type=password></div>')""")
+        messages, checked = [], []
+        def attention(message):
+            messages.append(message)
+            self.assertIsNone(self.page.evaluate('window.clicks'))
+            self.page.locator('[role=dialog]').evaluate('e=>e.remove()')
+            return '继续'
+        with self.guard(attention) as guard:
+            guard.login_mode = False
+            def recheck():
+                with guard.login_probe_page() as probe:
+                    probe.goto(HOME)
+                    checked.append(probe.locator('.site-nav-login-info-nick').inner_text())
+            guard.on_account_login_required = recheck
+            with guard.expect_new_page(lambda page: False):
+                guard.perform('读取结果', lambda: self.page.get_by_role('button').click())
+            self.assertFalse(guard._pending)
+        self.assertEqual(checked, ['测试账号','测试账号'])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(self.page.evaluate('window.clicks'), 1)
+
+    def test_managed_account_marks_only_the_confirmed_main_logout(self):
+        from types import SimpleNamespace
+        from ecommerce.modules.account.buyers import recheck_login
+        from ecommerce.shared.exceptions import BuyerUnavailable
+
+        login_markup = '<div class=site-nav-login><a href=https://login.taobao.com/>亲，请登录</a></div>'
+        self.responses['/'] = (200,{},login_markup)
+        self.page.evaluate('(html) => document.body.insertAdjacentHTML("beforeend",html)', login_markup)
+        settings = SimpleNamespace(timeout_ms=300)
+        account = {'login_name':'测试账号'}
+        with patch('ecommerce.modules.account.buyers.AccountStore') as store, self.guard() as guard:
+            guard.login_mode = False
+            guard.on_account_login_required = lambda: recheck_login(settings, account, guard)
+            with self.assertRaisesRegex(BuyerUnavailable,'已要求登录'):
+                guard.perform('填写淘宝搜索关键词', lambda: self.fail('账号掉线时不能继续'))
+            store.return_value.change_state.assert_called_once_with(account,'require_login')
+            events = [json.loads(line) for line in guard.event_path.read_text(encoding='utf-8').splitlines()]
+            verdict = next(row for row in events if row['event'] == 'account_login_rechecked')
+            self.assertEqual(verdict['step'], '填写淘宝搜索关键词')
+            self.assertEqual(verdict['check_details']['surface'], 'main')
 
     def test_wait_detects_delayed_challenge_and_excludes_manual_time(self):
         self.page.evaluate("setTimeout(()=>document.body.insertAdjacentHTML('beforeend','<div class=J_MIDDLEWARE_FRAME_WIDGET>验证</div>'),20)")

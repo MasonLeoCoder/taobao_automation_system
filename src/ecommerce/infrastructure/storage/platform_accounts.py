@@ -72,7 +72,7 @@ class AccountStore:
                 login_name=login_name, session_id=session_id, verified_at=now))
             return account_id
         expected = self._current(current) & accounts.c.enabled.is_(True) & (accounts.c.platform == platform)
-        if session_id == current['session_id']:
+        if session_id == current['session_id'] and platform == 'qianniu':
             expected &= accounts.c.login_required.is_(False)
         self._update(connection, expected, session_id=session_id, login_required=False, verified_at=now)
         if current['session_id'] and session_id != current['session_id']:

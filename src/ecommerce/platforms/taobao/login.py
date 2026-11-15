@@ -1,18 +1,19 @@
 """淘宝买家端登录，独立于千牛的入口及登录判断。"""
 from ecommerce.infrastructure.tasks.events import notify as print
+import re
 import time
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urljoin, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError, Page, TimeoutError as PlaywrightTimeoutError
 
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
-from ecommerce.platforms.taobao.verification import active_guard, checkpoint, wait
+from ecommerce.platforms.taobao.verification import LOGIN_LINK_LABEL, LOGIN_LINK_SELECTOR, active_guard, checkpoint, wait
 
 HOME_URL = "https://www.taobao.com/"
 LOGIN_URL = "https://login.taobao.com/member/login.jhtml?" + urlencode({"redirectURL": HOME_URL})
 CHECK_TIMEOUT_MS = 10_000
 NICK_SELECTORS = (".site-nav-login-info-nick", ".J_UserMemberNick")
-ANONYMOUS_SELECTOR = '.site-nav-login a[href*="login.taobao.com"]'
+ANONYMOUS_SELECTOR = LOGIN_LINK_SELECTOR
 
 
 def wait_until_browser_closed(context) -> None:
@@ -45,6 +46,20 @@ def _visible_text(page: Page, selector: str) -> bool:
     return False
 
 
+def _visible_login_link(page: Page) -> bool:
+    """账号菜单里的退出和账号管理也可能指向登录域名，按实际链接用途辨认。"""
+    for link in page.locator(ANONYMOUS_SELECTOR).all():
+        if not link.is_visible() or not re.fullmatch(LOGIN_LINK_LABEL, re.sub(r'\s+', '', link.inner_text(timeout=1000))):
+            continue
+        try:
+            url = urlsplit(urljoin(page.url, link.get_attribute('href') or ''))
+        except ValueError:
+            continue
+        if url.scheme == 'https' and url.hostname == 'login.taobao.com' and not re.search('logout|signout',url.path,re.I):
+            return True
+    return False
+
+
 def is_authenticated(page: Page) -> bool:
     """以淘宝首页中的实际账号昵称确认登录，不依赖网址或 Cookie 的存在。"""
     try:
@@ -55,7 +70,7 @@ def is_authenticated(page: Page) -> bool:
             return False
         if url.path not in {"", "/", "/index.php"}:
             return False
-        if _visible_text(page, ANONYMOUS_SELECTOR):
+        if _visible_login_link(page):
             return False
         return any(_visible_text(page, selector) for selector in NICK_SELECTORS)
     except PlaywrightError:
@@ -71,7 +86,7 @@ def is_login_required(page: Page) -> bool:
     if url.scheme != 'https':
         return False
     if url.hostname in {'www.taobao.com', 'taobao.com'} and url.path in {'', '/', '/index.php'}:
-        return _visible_text(page, ANONYMOUS_SELECTOR)
+        return _visible_login_link(page) and not any(_visible_text(page, selector) for selector in NICK_SELECTORS)
     if url.hostname == 'login.taobao.com':
         return any(field.is_visible() for field in page.locator('input[type="password"], #login').all())
     return False
@@ -93,7 +108,7 @@ def check_login(page: Page, timeout_ms: int = CHECK_TIMEOUT_MS, *, stop_on_login
         deadline += checkpoint("识别淘宝首页登录状态")
         if is_authenticated(page):
             return True
-        if stop_on_login_required and is_login_required(page):
+        if stop_on_login_required and urlsplit(page.url).hostname == 'login.taobao.com' and is_login_required(page):
             return False
         deadline += wait(page, 300)
     return False

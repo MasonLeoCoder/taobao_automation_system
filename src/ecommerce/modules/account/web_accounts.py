@@ -60,7 +60,8 @@ class AccountWorkbench:
             if current and action not in MANAGEMENT_ACTIONS:
                 if not current['enabled']:
                     raise NeedsAttention('账号已停用，请先启用')
-                if action != 'login' and current['login_required']:
+                recheck_buyer = self.platform == 'taobao' and action == 'check' and current['session_id']
+                if action != 'login' and current['login_required'] and not recheck_buyer:
                     raise NeedsAttention('此账号需重新登录')
             self.state = {'id': uuid4().hex, 'phase': 'running', 'prompt': None,
                           'message': '正在更新账号状态' if action in MANAGEMENT_ACTIONS else f'正在打开{self.platform_label}浏览器'}

@@ -23,6 +23,7 @@ def page_with(url=login.HOME_URL, nickname="", visible=True, anonymous=False):
         element = MagicMock()
         element.is_visible.return_value = visible
         element.inner_text.return_value = "亲，请登录" if selector == login.ANONYMOUS_SELECTOR else nickname
+        element.get_attribute.return_value = login.LOGIN_URL
         result.all.return_value = [element] if (anonymous if selector == login.ANONYMOUS_SELECTOR else True) else []
         return result
 

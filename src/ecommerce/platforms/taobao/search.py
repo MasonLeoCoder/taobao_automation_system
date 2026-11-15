@@ -9,7 +9,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from ecommerce.platforms.taobao.login import is_authenticated
 from ecommerce.platforms.taobao.cards import CARD_SELECTOR
-from ecommerce.platforms.taobao.verification import active_guard
+from ecommerce.platforms.taobao.verification import LOGIN_LINK_EVIDENCE, LOGIN_LINK_SELECTOR, active_guard
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 
 SEARCH_HOST = "s.taobao.com"
@@ -33,7 +33,8 @@ _PROBE = r"""() => {
    if(!visible(e)||e.children.length)return false;
    return /(?:没有找到|未找到|没有搜索到).{0,15}(?:相关|符合).{0,12}(?:宝贝|商品)|抱歉.{0,12}没有找到.{0,12}(?:宝贝|商品)/.test(e.innerText||'');
  });
- const anonymous=[...document.querySelectorAll('.site-nav-login a[href*="login.taobao.com"]')].some(visible);
+ const signIn=__LOGIN_EVIDENCE__;
+ const anonymous=[...document.querySelectorAll(__LOGIN_SELECTOR__)].some(el=>visible(el)&&signIn(el));
  const visible_cards=[...document.querySelectorAll(__CARD_SELECTOR__)].filter(e=>{
    if(!visible(e))return false;const r=e.getBoundingClientRect();
    return r.bottom>0&&r.top<innerHeight&&r.right>0&&r.left<innerWidth
@@ -41,7 +42,7 @@ _PROBE = r"""() => {
     &&[...e.querySelectorAll('[class*="innerPriceWrapper--"]')].some(n=>visible(n)&&(n.innerText||'').trim());
  }).length;
  return {inputs,visible_items:ids.size,visible_cards,empty,anonymous};
-}""".replace("__CARD_SELECTOR__", json.dumps(CARD_SELECTOR))
+}""".replace("__CARD_SELECTOR__", json.dumps(CARD_SELECTOR)).replace('__LOGIN_EVIDENCE__', LOGIN_LINK_EVIDENCE).replace('__LOGIN_SELECTOR__', json.dumps(LOGIN_LINK_SELECTOR))
 
 
 @dataclass(frozen=True)
