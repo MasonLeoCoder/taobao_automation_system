@@ -313,18 +313,32 @@
   }
 
   let recoverySelection = null;
-  async function showRecovery(job) {
+  function openRecoveryDialog(title, description, label) {
     const modal = document.getElementById('collection-recovery-dialog');
     const content = document.getElementById('collection-recovery-plan');
-    if (!modal || !content) return;
     const note = document.getElementById('collection-recovery-status');
-    note.textContent = '正在核对原计划…'; content.replaceChildren();
+    const confirm = document.getElementById('collection-recovery-confirm');
+    modal.querySelector('h2').textContent = title;
+    document.getElementById('collection-recovery-description').textContent = description;
+    note.textContent = '';
+    content.replaceChildren();
+    confirm.textContent = label;
+    confirm.disabled = true;
     modal.showModal();
-    document.getElementById('collection-recovery-confirm').disabled = true;
+    return {modal, content, note, confirm};
+  }
+
+  async function showRecovery(job) {
+    const {modal, content, note, confirm} = openRecoveryDialog('确认恢复采集',
+      '已完成模块直接复用，未完成模块先清理对应旧结果，再新建批次从头采集。', '按此计划继续');
+    const selection = {id:job.id, action:'resume'};
+    recoverySelection = selection;
+    note.textContent = '正在核对原计划…';
     try {
       const view = await api(`/api/collection-jobs/${job.id}/recovery`);
+      if (!modal.open || recoverySelection !== selection) return;
       if (view.finished) throw new Error('原计划已结束，请对失败项单独补采。');
-      recoverySelection = {id:job.id,revision:view.revision};
+      selection.revision = view.revision;
       const summary = document.createElement('p');
       summary.textContent = `原计划：${view.options.mode === 'keyword' ? `${view.options.keyword}，${view.options.pages} 页；已保存第 ${view.pages.join('、') || '无'} 页` : `商品 ${job.product_id}，${view.options.modules.map(m => labels[m]).join('、')}`}。未开始的商品和模块将继续采集。`;
       if (buyerDialog) summary.textContent += ` 原淘宝账号：${job.taobao_account?.login_name || '未知'}`;
@@ -352,18 +366,40 @@
         return;
       }
       note.textContent = view.next ? `接下来处理：第 ${view.next.page || '—'} 页，商品 ${view.next.product_id || '待取得列表清单'}，${labels[view.next.module]}` : '执行前会再次核对进度和删除范围。';
-      document.getElementById('collection-recovery-confirm').disabled = false;
-    } catch (error) { note.textContent = error.message; recoverySelection = null; }
+      confirm.disabled = false;
+    } catch (error) {
+      if (recoverySelection === selection) { note.textContent = error.message; recoverySelection = null; }
+    }
+  }
+
+  function showStartupRetry(job) {
+    const {content, confirm} = openRecoveryDialog('重试原申请',
+      job.resume_task_id ? '沿用原账号和恢复计划，已保存的进度继续保留。' : '沿用原账号和原采集范围，创建一条新的执行。', '确认重试');
+    const summary = document.createElement('p');
+    summary.textContent = `淘宝账号 ${job.taobao_account.login_name} · ${targetLabel(job)}`;
+    const scope = document.createElement('p');
+    scope.textContent = collectionScope(job);
+    content.append(summary, scope);
+    recoverySelection = {id:job.id, action:'retry-startup'};
+    confirm.disabled = false;
   }
   document.getElementById('collection-recovery-cancel')?.addEventListener('click',() => document.getElementById('collection-recovery-dialog').close());
   document.getElementById('collection-recovery-confirm')?.addEventListener('click',async event => {
-    if (!recoverySelection) return;
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    if (!recoverySelection || button.disabled) return;
+    const selection = recoverySelection;
+    button.disabled = true;
     try {
-      const job = await api(`/api/collection-jobs/${recoverySelection.id}/resume`,{revision:recoverySelection.revision});
-      tracked.set(job.id,job); document.getElementById('collection-recovery-dialog').close(); await refresh();
-    } catch (error) { document.getElementById('collection-recovery-status').textContent = error.message; }
-    finally { event.currentTarget.disabled = false; }
+      const body = selection.action === 'resume' ? {revision:selection.revision} : {};
+      const job = await api(`/api/collection-jobs/${selection.id}/${selection.action}`,body);
+      tracked.set(job.id,job);
+      if (recoverySelection === selection) document.getElementById('collection-recovery-dialog').close();
+      await refresh();
+    } catch (error) {
+      if (recoverySelection === selection) document.getElementById('collection-recovery-status').textContent = error.message;
+    } finally {
+      if (recoverySelection === selection) button.disabled = false;
+    }
   });
   document.querySelectorAll('[data-queue-action]').forEach(button => button.addEventListener('click',async () => {
     button.disabled = true;
@@ -409,6 +445,12 @@
   document.getElementById('collection-history-filter')?.addEventListener('change',event => selectHistory(1,event.target.value));
   document.getElementById('collection-history-prev')?.addEventListener('click',() => selectHistory(historyPage - 1,historyStatus));
   document.getElementById('collection-history-next')?.addEventListener('click',() => selectHistory(historyPage + 1,historyStatus));
+
+  function collectionScope(job) {
+    return job.mode === 'keyword'
+      ? `${job.options.pages} 页 · 每页${job.options.limit === null ? '不限数量' : `最多 ${job.options.limit} 个商品`} · ${job.options.with_details ? '连带九个详情模块' : '仅采集列表'}`
+      : `${job.modules.map(module => labels[module]).join('、')}${job.modules.includes('reviews') ? ` · 评价${job.options.all_reviews ? '不限数量' : '最多 100 条'}` : ''}${job.modules.includes('questions') ? ` · 问大家${job.options.all_questions ? '不限数量' : '最多 50 题'}` : ''}`;
+  }
 
   function renderHistory() {
     const container = document.getElementById('collection-job-list');
@@ -466,7 +508,11 @@
       if (job.done && job.recovery_ready && document.getElementById('collection-recovery-dialog')) {
         const resume = document.createElement('button'); resume.type = 'button'; resume.className = 'button action-button action-primary'; resume.textContent = '查看恢复计划';
         resume.addEventListener('click',() => showRecovery(job)); actions.append(resume);
+      } else if (job.can_retry_startup && document.getElementById('collection-recovery-dialog')) {
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'button action-button action-primary';
+        retry.textContent = '重试原申请'; retry.addEventListener('click',() => showStartupRetry(job)); actions.append(retry);
       }
+      if (job.startup_retry_of) actions.append(link('查看原申请日志',`/logs?task_id=${job.startup_retry_of}`));
       article.append(title,time,progress);
       if (job.counts && Object.keys(job.counts).length) {
         const counts = document.createElement('p');
@@ -494,9 +540,7 @@
       });
       if (job.options) {
         const configuration = document.createElement('p'); configuration.className = 'collection-job-configuration';
-        configuration.textContent = job.mode === 'keyword'
-          ? `本次设置：${job.options.pages} 页 · 每页${job.options.limit === null ? '不限数量' : `最多 ${job.options.limit} 个商品`} · ${job.options.with_details ? '连带九个详情模块' : '仅采集列表'}`
-          : `本次设置：${job.modules.map(module => labels[module]).join('、')}${job.modules.includes('reviews') ? ` · 评价${job.options.all_reviews ? '不限数量' : '最多 100 条'}` : ''}${job.modules.includes('questions') ? ` · 问大家${job.options.all_questions ? '不限数量' : '最多 50 题'}` : ''}`;
+        configuration.textContent = `本次设置：${collectionScope(job)}`;
         article.append(configuration);
       }
       article.append(message);

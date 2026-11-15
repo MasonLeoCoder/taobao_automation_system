@@ -121,6 +121,8 @@ class CollectionJobStore:
         if submission_key is not None:
             identifier(submission_key)
         spec = {key:row.get(key) for key in ('product_id','module','mode','modules','options','resume_task_id','resume_revision','cleanup_tasks')}
+        if row.get('startup_retry_of'):
+            spec['startup_retry_of'] = identifier(row['startup_retry_of'])
         account = (row.get('taobao_account') or {}).get('account_id')
         if account:
             spec['account_id'] = account
@@ -160,11 +162,13 @@ class CollectionJobStore:
 
     def _statement(self):
         """构造实际执行与申请联合查询；参数：无；返回：查询。"""
-        j,t,e = (self.tables[name] for name in ('collection_jobs','tasks','collection_plan_executions'))
+        j,t,e,events = (self.tables[name] for name in ('collection_jobs','tasks','collection_plan_executions','task_events'))
         return sa.select(j,t.c.status.label('actual_status'),t.c.finished_at.label('actual_finished_at'),
             t.c.message.label('actual_message'),t.c.owner_pid.label('actual_pid'),
             t.c.owner_process_started_at.label('actual_process_started_at'),
-            sa.exists(sa.select(e.c.task_id).where(e.c.task_id==j.c.task_id)).label('has_plan')).outerjoin(t,j.c.task_id==t.c.id)
+            sa.exists(sa.select(e.c.task_id).where(e.c.task_id==j.c.task_id)).label('has_plan'),
+            sa.exists(sa.select(events.c.id).where(events.c.task_id==j.c.task_id,
+                events.c.event_type=='taobao_account_start_failed')).label('has_startup_failure')).outerjoin(t,j.c.task_id==t.c.id)
 
     def _public_row(self, record):
         """还原内部兼容描述，执行结论只取任务表；参数：查询行；返回：描述。"""
@@ -178,7 +182,8 @@ class CollectionJobStore:
             created_at=iso_value(record['created_at']),updated_at=iso_value(record['updated_at']),
             message=record['actual_message'] or record['message'] or '',prompt=record['prompt'],
             stop_requested=record['stop_requested_at'] is not None,revision=record['revision'],
-            recovery_ready=bool(record['has_plan']),actual_finished=record['actual_finished_at'] is not None)
+            recovery_ready=bool(record['has_plan']),actual_finished=record['actual_finished_at'] is not None,
+            startup_failure=bool(record['has_startup_failure']))
         row.setdefault('product_id',None)
         row.setdefault('module','selected')
         from ecommerce.shared.collection_contract import MODULES

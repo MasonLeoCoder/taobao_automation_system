@@ -79,12 +79,14 @@ class CollectionBuyerScopeTests(TestCase):
         row = {'id':'a' * 32, 'login_name':'买家甲'}
         with (patch.object(buyers,'is_authenticated',return_value=True), patch.object(buyers,'check_login') as navigate,
               patch.object(buyers,'read_buyer_nickname',return_value='买家乙'),
-              patch.object(buyers,'save_session') as save, patch.object(buyers,'current_events',return_value=session)):
+              patch.object(buyers,'save_session') as save, patch.object(buyers,'current_events',return_value=session),
+              patch.object(buyers,'emit_event') as event):
             with self.assertRaisesRegex(BuyerUnavailable,'实际为「买家乙」'):
                 buyers.authenticate(settings,row,page,reuse_home=True)
         navigate.assert_not_called()
         save.assert_not_called()
         session.append.assert_not_called()
+        event.assert_called_once_with('taobao_account_start_failed','预期账号「买家甲」，实际为「买家乙」，采集未开始')
 
     def test_matching_nickname_creates_barrier_and_sets_login_loss_handler(self):
         settings, page, session, guard = Mock(), Mock(), Mock(), Mock()

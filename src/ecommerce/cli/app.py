@@ -56,7 +56,8 @@ def parser() -> argparse.ArgumentParser:
     account.add_argument("--platform", choices=("qianniu", "taobao"), default="qianniu",
                          help="登录平台：qianniu 千牛（默认），taobao 淘宝买家端；会话独立保存")
     account.add_argument("--no-wait", action="store_true", help="仅淘宝 login：保存会话后自动关闭浏览器，默认保留窗口")
-    _qianniu_options(account)
+    account.add_argument('--shop-id', help='仅千牛需要，填写店铺 ID')
+    account.add_argument('--account', help='已登记的完整千牛登录名或淘宝买家昵称')
     taobao = commands.add_parser("taobao", help="淘宝关键词搜索、列表及详情采集与任务控制")
     taobao_actions = taobao.add_subparsers(dest="action", required=True)
     resume = taobao_actions.add_parser('resume',help='查看或继续已保存的原采集计划')
@@ -166,8 +167,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ('product', 'upload') or args.command == 'account' and args.platform == 'qianniu':
         if not (args.shop_id and args.account):
             cli.error('千牛操作需要 --shop-id 和 --account')
-    if args.command == 'account' and args.platform == 'taobao' and (args.shop_id or args.account):
-        cli.error('淘宝买家端无需指定千牛店铺和账号')
+    if args.command == 'account' and args.platform == 'taobao' and args.shop_id:
+        cli.error('淘宝买家端无需指定店铺 ID')
     try:
         settings = load_settings(args.config)
         from ecommerce.infrastructure.storage.environments import label, assert_writable

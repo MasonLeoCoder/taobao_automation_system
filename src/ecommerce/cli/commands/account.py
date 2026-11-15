@@ -9,6 +9,10 @@ def execute(settings: Settings, action: str, platform: str = "qianniu", wait: bo
             shop_id=None, account=None):
     """提交账号任务；参数：配置、动作名；返回：任务结果。"""
     if platform == "taobao":
+        if settings.task_backend == 'mysql':
+            return _managed_buyer(settings, action, account, wait)
+        if account:
+            raise ValueError('淘宝买家账号管理需要 MySQL')
         from ecommerce.modules.account import taobao_service as service
     elif platform == "qianniu":
         return _managed(settings, action, shop_id, account)
@@ -20,6 +24,26 @@ def execute(settings: Settings, action: str, platform: str = "qianniu", wait: bo
     options = {"wait": wait} if action == "login" else {}
     return run_task(settings, f"account.taobao.{action}",
         lambda: handler(browser_settings, on_attention=None if settings.headless else prompt_taobao_attention, **options))
+
+
+def _managed_buyer(settings, action, account, wait):
+    from ecommerce.modules.account.buyers import named_account
+    from ecommerce.modules.account.web_buyers import BuyerAccountWorkbench
+    from ecommerce.shared.exceptions import NeedsAttention
+
+    platform = settings.for_platform('taobao')
+    if action == 'login' and platform.headless:
+        raise NeedsAttention('淘宝扫码需要可见浏览器，请关闭 headless 后重试')
+    selected = named_account(platform, account)
+
+    def work():
+        workbench = BuyerAccountWorkbench(platform, headless=platform.headless)
+        return workbench.inspect_selected(action, selected, wait=wait,
+            on_attention=None if platform.headless else prompt_taobao_attention,
+            on_scan=lambda: print(f'请在淘宝窗口为「{selected["login_name"]}」扫码。', flush=True))
+
+    scope = {'account_id': selected['id'], 'login_name': selected['login_name']}
+    return run_task(platform, f'account.taobao.{action}', work, buyer_scope=scope)
 
 
 def _managed(settings, action, shop_id, account):

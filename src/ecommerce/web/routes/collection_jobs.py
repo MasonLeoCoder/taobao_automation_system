@@ -99,6 +99,15 @@ def retry_module(identifier):
                                   account_id=body['account_id'],submission_key=request.headers.get('X-Submission-Id'))),202
 
 
+@collection_jobs.post('/api/collection-jobs/<identifier>/retry-startup')
+def retry_startup(identifier):
+    """由原申请固定账号和范围。"""
+    from ecommerce.modules.collection import dispatch
+    if request.get_json() != {}:
+        raise ValueError('重试原申请不能更改账号或采集范围')
+    return jsonify(present(dispatch.retry_startup(current_app.config['SETTINGS'],identifier))),202
+
+
 @collection_jobs.route('/api/collection-queue',methods=['GET','POST'])
 def retry_queue():
     """查看或明确暂停/恢复队列；参数：可选动作；返回：队列。"""

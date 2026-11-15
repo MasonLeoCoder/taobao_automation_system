@@ -1,5 +1,6 @@
 """独立MySQL验证统一申请、事务、互斥、迁移及断库停止；不访问真实平台。"""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import asdict,replace
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from ecommerce.shared.config import load_settings
 from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore,JobConflict
 from ecommerce.infrastructure.storage.collection_job_migration import migrate_dispatch_files
 from ecommerce.infrastructure.storage.database import now
+from ecommerce.infrastructure.storage.time_values import database_now
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError
 from ecommerce.infrastructure.tasks import web_jobs
 from ecommerce.infrastructure.tasks.ownership import execution_key,process_started_at,atomic_json
@@ -34,7 +36,7 @@ class MySQLCollectionJobsTests(unittest.TestCase):
         self.platform=self.settings.for_platform('taobao')
         self.key=execution_key(self.platform)
         self.store=CollectionJobStore(self.settings);self.store.tasks.initialize()
-        self.t=self.store.tables;self.ids=[]
+        self.t=self.store.tables;self.ids=[];self.account_ids=[]
         self.addCleanup(self.clean)
 
     def clean(self):
@@ -46,7 +48,23 @@ class MySQLCollectionJobsTests(unittest.TestCase):
             c.execute(j.delete().where(j.c.id.in_(ids)))
             c.execute(e.delete().where(e.c.task_id.in_(self.ids)))
             c.execute(t.delete().where(t.c.id.in_(self.ids)))
+            accounts = self.t['platform_accounts']
+            c.execute(accounts.delete().where(accounts.c.id.in_(self.account_ids)))
             c.execute(self.t['collection_queue_states'].delete().where(self.t['collection_queue_states'].c.execution_key==self.key))
+
+    def buyer(self):
+        from ecommerce.modules.account.managed import account_session_directory
+
+        account = {'account_id':uuid4().hex, 'login_name':'合成买家-' + uuid4().hex}
+        self.account_ids.append(account['account_id'])
+        session_id = uuid4().hex
+        profile = account_session_directory(self.settings.workspace,session_id,platform='taobao')
+        profile.mkdir(parents=True)
+        (profile/'session.json').write_text('{}',encoding='utf-8')
+        with self.store.connection(True) as c:
+            c.execute(self.t['platform_accounts'].insert().values(id=account['account_id'], platform='taobao',
+                login_name=account['login_name'], session_id=session_id, verified_at=database_now()))
+        return account
 
     def row(self, **changes):
         """生成明确标记的合成申请；参数：覆盖字段；返回：申请。"""
@@ -208,14 +226,14 @@ class MySQLCollectionJobsTests(unittest.TestCase):
         self.assertEqual(web_collection.history(self.settings)['jobs'][0]['id'],job)
 
     def test_background_process_reads_database_configuration(self):
-        job=self.submit();row=self.store.claim(self.key,job)
+        job=self.submit(taobao_account=self.buyer());row=self.store.claim(self.key,job)
         code='''
 import sys
 from unittest.mock import patch
 from ecommerce.modules.collection.web_worker import execute
 from ecommerce.infrastructure.tasks.runner import run_task
 def synthetic(settings,row):
-    return run_task(settings.for_platform('taobao'),'collection.taobao.synthetic',lambda:'isolated synthetic only',task_id=row['id'],job_claim_token=row['claim_token'])
+    return run_task(settings.for_platform('taobao'),'collection.taobao.synthetic',lambda:'isolated synthetic only',task_id=row['id'],job_claim_token=row['claim_token'],buyer_scope=row['taobao_account'])
 with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=synthetic):
     execute(sys.argv[1],sys.argv[2],sys.argv[3])
 '''
@@ -283,8 +301,11 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
     def test_cli_questions_all_keeps_independent_frozen_ranges(self):
         """CLI共享--all转换为独立数量开关，延迟执行和续采参数一致。"""
         from ecommerce.cli.commands.collection import execute_detail
-        with patch('ecommerce.modules.collection.detail_service.open_detail_input',return_value='合成问答命令行') as collect:
-            result=execute_detail(self.settings,'123',questions=True,all_reviews=True,wait=False)
+        buyer = self.buyer()
+        with (patch('ecommerce.modules.account.buyers.open_browser',return_value=nullcontext((None,None))),
+              patch('ecommerce.modules.account.buyers.probe'),
+              patch('ecommerce.modules.collection.detail_service.open_detail_input',return_value='合成问答命令行') as collect):
+            result=execute_detail(self.settings,'123',questions=True,all_reviews=True,wait=False,account=buyer['login_name'])
         self.ids.append(result.task_id)
         self.assertEqual(result.status,'succeeded')
         row=self.store.read(result.task_id)
@@ -325,7 +346,8 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
         """单次启动绑定原申请；不改其他暂停申请或解除资源暂停，重复点击不重复派发。"""
         from types import SimpleNamespace
         self.store.pause(self.key,True,'合成暂停')
-        first=self.submit();second=self.submit(module='skus',modules=['skus'],
+        buyer = self.buyer()
+        first=self.submit(taobao_account=buyer);second=self.submit(module='skus',modules=['skus'],taobao_account=buyer,
             options={'mode':'detail','input':'123','modules':['skus'],'all_reviews':False,'all_questions':False})
         with self.store.connection() as c:
             queue_before=dict(c.execute(sa.select(self.t['collection_queue_states']).where(self.t['collection_queue_states'].c.execution_key==self.key)).mappings().one())
@@ -388,7 +410,7 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
         from unittest.mock import Mock
         from ecommerce.infrastructure.browser import session
         from ecommerce.infrastructure.tasks.events import EventLogHandler
-        job=self.submit();row=self.claim(job)
+        job=self.submit(taobao_account=self.buyer());row=self.claim(job)
         pending=self.submit(module='skus',modules=['skus'],options={'mode':'detail','input':'123','modules':['skus']})
         path=self.platform.session_path;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(b'{"cookies":[],"origins":[],"synthetic":"old"}')
@@ -400,7 +422,8 @@ with patch('ecommerce.modules.collection.web_worker.run_collection',side_effect=
         try:
             def collect(settings,descriptor):
                 return run_task(settings.for_platform('taobao'),'collection.taobao.synthetic',
-                    lambda:session.save_session(context,self.platform),task_id=job,job_claim_token=row['claim_token'])
+                    lambda:session.save_session(context,self.platform),task_id=job,job_claim_token=row['claim_token'],
+                    buyer_scope=descriptor['taobao_account'])
             # 仅拦截当前登录文件替换，不影响任务流水和停止凭据的原子写入。
             original=Path.replace
             def replace_file(source,destination):

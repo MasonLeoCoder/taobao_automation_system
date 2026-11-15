@@ -8,7 +8,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.infrastructure.storage.platform_accounts import AccountStore
-from ecommerce.infrastructure.tasks.events import current_events, storage_checkpoint
+from ecommerce.infrastructure.tasks.events import current_events, emit_event, storage_checkpoint
 from ecommerce.modules.account.managed import account_session_directory
 from ecommerce.platforms.taobao.identity import read_buyer_nickname
 from ecommerce.platforms.taobao.login import check_login, is_authenticated, is_login_required
@@ -18,6 +18,7 @@ from ecommerce.shared.exceptions import BuyerUnavailable, NeedsAttention, TaskSt
 from ecommerce.shared.time import BEIJING
 
 _ACTIVE_BUYER = ContextVar('active_buyer', default=None)
+MISSING_BUYER = '旧采集申请缺少淘宝账号归属，请选择账号新建采集'
 
 
 def current():
@@ -95,10 +96,16 @@ def target(settings, account_id):
     return {'account_id': row['id'], 'login_name': row['login_name']}
 
 
+def named_account(settings, login_name):
+    if login_name:
+        for row in AccountStore(settings).list_buyers():
+            if row['login_name'] == login_name:
+                return row
+    raise ValueError('请用 --account 指定已登记的淘宝买家账号完整昵称')
+
+
 def named_target(settings, login_name):
-    row = next((row for row in AccountStore(settings).list_buyers() if row['login_name'] == login_name), None)
-    if row is None:
-        raise ValueError('请用 --account 指定已登记的淘宝买家账号完整昵称')
+    row = named_account(settings, login_name)
     return target(settings, row['id'])
 
 
@@ -150,20 +157,24 @@ def probe(settings, row, opened):
 def authenticate(settings, row, page, *, reuse_home=False):
     """执行前核对完整昵称并等待账号证据写入数据库。"""
     guard = active_guard()
-    if reuse_home and guard is not None:
-        guard.checkpoint('核对淘宝登录账号')
-    authenticated = reuse_home and is_authenticated(page)
-    if not authenticated and not check_login(page, settings.timeout_ms, stop_on_login_required=True):
-        if is_login_required(page):
-            expired(settings, row)
-        raise BuyerUnavailable('暂未能核对淘宝登录账号，请检查页面后用原账号重试')
     try:
-        nickname = read_buyer_nickname(page)
-    except PlaywrightError:
-        nickname = None
-    if not nickname or nickname != row['login_name']:
-        actual = f'实际为「{nickname}」' if nickname else '未读到完整昵称'
-        raise BuyerUnavailable(f'预期账号「{row["login_name"]}」，{actual}，采集未开始')
+        if reuse_home and guard is not None:
+            guard.checkpoint('核对淘宝登录账号')
+        authenticated = reuse_home and is_authenticated(page)
+        if not authenticated and not check_login(page, settings.timeout_ms, stop_on_login_required=True):
+            if is_login_required(page):
+                expired(settings, row)
+            raise BuyerUnavailable('暂未能核对淘宝登录账号，请检查页面后用原账号重试')
+        try:
+            nickname = read_buyer_nickname(page)
+        except PlaywrightError:
+            nickname = None
+        if not nickname or nickname != row['login_name']:
+            actual = f'实际为「{nickname}」' if nickname else '未读到完整昵称'
+            raise BuyerUnavailable(f'预期账号「{row["login_name"]}」，{actual}，采集未开始')
+    except BuyerUnavailable as error:
+        emit_event('taobao_account_start_failed', str(error))
+        raise
     events = current_events()
     if events is None:
         raise NeedsAttention('账号核验记录缺少所属任务，采集未开始')

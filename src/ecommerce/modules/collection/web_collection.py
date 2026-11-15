@@ -167,7 +167,8 @@ def start_module_update(settings,product_id,module,*,unlimited=False,submission_
 
 
 def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cleanup_tasks=None,identifier=None,
-           submission_key=None,resume_revision=None,origin='web',frozen_modules=None,reuse_pending_module=None,taobao_account=None):
+           submission_key=None,resume_revision=None,origin='web',frozen_modules=None,reuse_pending_module=None,
+           taobao_account=None,startup_retry=None):
     """先入库申请，再尝试领取；参数：配置、固定范围及来源；返回：数据库公开状态。"""
     from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
@@ -180,13 +181,17 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
             if (prior['product_id']!=product_id or prior['module']!=module or prior['mode']!=mode
                     or options is not None and prior.get('options')!=options
                     or prior.get('resume_task_id')!=resume_task_id or prior.get('resume_revision')!=resume_revision
+                    or prior.get('startup_retry_of') != (startup_retry['id'] if startup_retry else None)
                     or (prior.get('taobao_account') or {}).get('account_id') != (taobao_account or {}).get('account_id')):
                 raise ValueError('同一个提交编号不能改变采集账号或范围')
             return public_status(settings,prior)
-    selected=plan(settings,product_id) if mode=='remaining' else {
-        'modules':options.get('modules',[]) if options else [module],'skipped_modules':[]}
-    if mode=='keyword' and options.get('with_details'):
-        selected['modules']=list(frozen_modules if frozen_modules is not None else MODULES)
+    if startup_retry:
+        selected = {'modules': startup_retry['modules'], 'skipped_modules': startup_retry.get('skipped_modules', [])}
+    else:
+        selected=plan(settings,product_id) if mode=='remaining' else {
+            'modules':options.get('modules',[]) if options else [module],'skipped_modules':[]}
+        if mode=='keyword' and options.get('with_details'):
+            selected['modules']=list(frozen_modules if frozen_modules is not None else MODULES)
     if mode!='keyword' and not selected['modules']:
         raise ValueError('该商品九个模块均有有效完成结果，无需采集')
     if options is None:
@@ -199,13 +204,16 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
         row.update(resume_task_id=resume_task_id,resume_revision=resume_revision)
     if taobao_account:
         row['taobao_account']=taobao_account
+    if startup_retry:
+        row['startup_retry_of'] = startup_retry['id']
     if cleanup_tasks:
         row['cleanup_tasks']=cleanup_tasks
     identifier=persistence.submit(row,submission_key=submission_key,origin=origin,
         **({'reuse_pending_module':reuse_pending_module} if reuse_pending_module else {}))
     from ecommerce.modules.collection.dispatch import dispatch_next
     try:
-        dispatch_next(settings,identifier=identifier if resume_task_id else None,manual=bool(resume_task_id))
+        immediate_resume = bool(resume_task_id) and startup_retry is None
+        dispatch_next(settings,identifier=identifier if immediate_resume else None,manual=immediate_resume)
     except TaskBusy:
         pass
     return public_status(settings,persistence.read(identifier))
@@ -234,6 +242,7 @@ def public_status(settings, row):
     prompt=row.get('prompt') or {}
     storage_pending=bool(prompt.get('storage_pending'))
     halted=bool(prompt.get('halted'))
+    unowned_pending = row.get('dispatch_state') in {'waiting','paused'} and not row.get('taobao_account')
     if row.get('dispatch_state') in {'claimed','started'} and not done:
         live=jobs.alive(row)
         from ecommerce.infrastructure.storage.collection_lifecycle import execution_state
@@ -251,6 +260,9 @@ def public_status(settings, row):
             state,message='needs_attention',prompt.get('message') or '采集已中断，保留现场，请停止后续采'
         elif prompt.get('prompt_id'):
             state,message='needs_attention','等待人工处理，请处理浏览器提示后选择继续或停止'
+        elif unowned_pending:
+            from ecommerce.modules.account.buyers import MISSING_BUYER
+            message=MISSING_BUYER
     result={}
     if row.get('recovery_ready') or row.get('actual_finished'):
         result=saved_result(settings,row)
@@ -267,11 +279,20 @@ def public_status(settings, row):
             'storage_pending':storage_pending,'halted':halted,'batch_id':result.get('batch_id'),'valid':bool(result.get('valid')),
             'skipped':bool(result.get('skipped')),'skip_reason':result.get('reason') if result.get('skipped') else None,
             'result_label':result.get('label','查看采集结果'),'recovery_ready':bool(row.get('recovery_ready')),
+            'can_retry_startup':startup_retry_available(row, result),
+            'startup_retry_of':row.get('startup_retry_of'),
             'can_start':row.get('dispatch_state') in {'waiting','paused'} and not row.get('task_id')
-                and not row.get('stop_requested') and not row.get('migration_pending'),
+                and not row.get('stop_requested') and not row.get('migration_pending') and not unowned_pending,
             'resume_task_id':row.get('resume_task_id'),'failures':result.get('failures',[]),'counts':result.get('counts',{}),
             'plan_progress':result.get('plan_progress'),
             **bulk_progress(row,result)}
+
+
+def startup_retry_available(row, result):
+    return bool(row.get('actual_finished') and row.get('task_status')=='needs_attention'
+        and row.get('startup_failure') and row.get('taobao_account') and row.get('options') and not row.get('stop_requested')
+        and not row.get('recovery_ready') and not result.get('batch_id') and not result.get('skipped')
+        and not any(item.get('batch_id') or item.get('skipped') for item in result.get('modules', ())))
 
 
 def bulk_progress(row,result):

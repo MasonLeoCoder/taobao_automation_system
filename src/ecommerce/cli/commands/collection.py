@@ -7,9 +7,6 @@ from ecommerce.modules.account import buyers
 
 def _buyer(settings, account):
     if settings.task_backend == 'mysql':
-        # 正式和测试共用源码。正式切换前保留原命令的会话行为。
-        if settings.environment == 'production' and account is None:
-            return None
         return buyers.named_target(settings, account)
     if account:
         raise ValueError('淘宝买家账号管理需要 MySQL')
@@ -95,7 +92,7 @@ def execute_resume(settings,task_id,*,preview=False,wait=True):
         account = CollectionJobStore(settings).read(task_id).get('taobao_account')
     except LookupError:
         account = None
-    if not account and settings.environment != 'production':
+    if not account:
         raise ValueError('旧任务缺少淘宝账号归属，请选择账号重新采集')
     options=view['options']
     def action():

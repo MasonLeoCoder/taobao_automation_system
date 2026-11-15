@@ -7,7 +7,7 @@ from playwright.sync_api import Error as PlaywrightError, TimeoutError as Playwr
 from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.infrastructure.storage.platform_accounts import AccountStore
 from ecommerce.platforms.taobao.identity import read_buyer_nickname
-from ecommerce.platforms.taobao.login import check_login, is_login_required, login_manually
+from ecommerce.platforms.taobao.login import check_login, is_login_required, login_manually, wait_until_browser_closed
 from ecommerce.platforms.taobao.session import browser_session
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from .web_accounts import AccountWorkbench
@@ -35,7 +35,16 @@ class BuyerAccountWorkbench(AccountWorkbench):
         super()._attention(message)
         return '继续'
 
-    def _inspect(self, action, current):
+    def inspect_selected(self, action, current, *, on_attention=None, on_scan=None, wait=False):
+        """在调用者已持有淘宝锁时重新核对账号，复用网页的会话保存规则。"""
+        current = self._account(current['id'], None, current['revision'])
+        if not current['enabled']:
+            raise NeedsAttention('账号已停用，请先启用')
+        self.state = {'phase': 'running'}
+        message, _ = self._inspect(action, current, on_attention=on_attention, on_scan=on_scan, wait=wait)
+        return message
+
+    def _inspect(self, action, current, *, on_attention=None, on_scan=None, wait=False):
         store = AccountStore(self.settings)
         existing = action == 'check'
         session_id = current['session_id'] if existing else uuid4().hex
@@ -49,8 +58,8 @@ class BuyerAccountWorkbench(AccountWorkbench):
             raise NeedsAttention('未找到账号的本机会话，请重新登录')
         keep_directory = existing
         try:
-            with browser_session(settings, on_attention=None if settings.headless else self._attention,
-                                 hold_on_attention=False) as (context, page):
+            attention = on_attention or (None if settings.headless else self._attention)
+            with browser_session(settings, on_attention=attention, hold_on_attention=False) as (context, page):
                 if existing:
                     if not check_login(page, settings.timeout_ms, stop_on_login_required=True):
                         if is_login_required(page):
@@ -60,6 +69,8 @@ class BuyerAccountWorkbench(AccountWorkbench):
                         raise NeedsAttention('本次核验未完成，请检查网络或淘宝页面后重试')
                 else:
                     self._update(phase='scan', message='请在淘宝窗口扫码，登录后会核对账号菜单里的完整昵称')
+                    if on_scan is not None:
+                        on_scan()
                     page = login_manually(page, settings.timeout_ms, on_wait=self._check_cancelled)
                     with self.lock:
                         if self.cancelled:
@@ -72,13 +83,15 @@ class BuyerAccountWorkbench(AccountWorkbench):
                     raise NeedsAttention(f'预期账号「{current["login_name"]}」，实际登录「{nickname}」，保留原会话')
                 if not existing:
                     save_session(context, settings)
-            # 数据库可能已提交后才断开连接，此时保留新目录，让账号页可据数据库状态核对。
-            keep_directory = True
-            try:
-                store.record_buyer(nickname, session_id, current=current)
-            except NeedsAttention:
-                keep_directory = existing
-                raise
+                # 提交后连接可能中断，保留目录供账号页核对数据库中的引用。
+                keep_directory = True
+                try:
+                    store.record_buyer(nickname, session_id, current=current)
+                except NeedsAttention:
+                    keep_directory = existing
+                    raise
+                if wait and not existing:
+                    wait_until_browser_closed(context)
         except PlaywrightTimeoutError:
             raise NeedsAttention('本次核验未完成，淘宝页面加载超时，请检查网络后重试') from None
         except PlaywrightError:

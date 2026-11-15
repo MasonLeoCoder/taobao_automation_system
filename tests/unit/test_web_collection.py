@@ -82,7 +82,7 @@ class WebCollectionTests(unittest.TestCase):
 
     def start(self,module='video'):
         """派发模拟模块；参数：模块；返回：公开状态。"""
-        return service.start(self.settings,'123',module)
+        return service.start(self.settings,'123',module,taobao_account=self.buyer)
 
     def test_question_skip_with_database_proof_closes_single_job_without_attention(self):
         """已入库跳过结束单模块任务，不把跳过计为有效采集；参数：无；返回：无。"""
@@ -117,7 +117,7 @@ class WebCollectionTests(unittest.TestCase):
 
     def test_question_skip_and_completed_module_close_bulk_job_separately(self):
         """已保存模块与入口跳过分别计数，配置任务正常收尾；参数：无；返回：无。"""
-        job=service.start_configured(self.settings,{'mode':'detail','input':'123','modules':['video','questions']})
+        job=service.start_configured(self.settings,{'mode':'detail','input':'123','modules':['video','questions']},taobao_account=self.buyer)
         self.data.update(history=[{'id':7,'task_id':job['id'],'module':'video','status':'no_video'}],current_ids=[7])
         self.skip_evidence[job['id']]={'skipped':True,'message':'未找到问大家入口，已跳过'}
         original=self.query
@@ -242,6 +242,100 @@ class WebCollectionTests(unittest.TestCase):
         self.assertEqual(dispatch.start_job(self.settings,blocked['id'])['taobao_account'],account_b)
         self.assertIsNone(store.read(blocked['id']).get('account_wait'))
 
+    def test_old_job_without_buyer_never_starts_a_browser_or_blocks_other_accounts(self):
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.modules.collection import dispatch
+
+        store = CollectionJobStore(self.settings)
+        key = execution_key(self.settings.for_platform('taobao'))
+        store.pause(key,True,'测试暂停')
+        old = service.start_configured(self.settings,{'mode':'keyword','keyword':'旧任务'})
+        current = service.start_configured(self.settings,{'mode':'keyword','keyword':'新任务'},taobao_account=self.buyer)
+        self.assertFalse(old['can_start'])
+        self.assertIn('缺少淘宝账号归属',old['message'])
+        with self.assertRaisesRegex(ValueError,'缺少淘宝账号归属'):
+            dispatch.start_job(self.settings,old['id'])
+        self.launch.assert_not_called()
+        store.pause(key,False,'测试继续')
+        store.claim(key,old['id'])
+        with patch('ecommerce.modules.collection.web_worker.run_collection') as collect:
+            self.execute_job(old['id'])
+            collect.assert_not_called()
+        rejected = store.read(old['id'])
+        self.assertEqual(rejected['dispatch_state'],'start_failed')
+        self.assertIn('缺少淘宝账号归属',rejected['message'])
+        self.assertFalse(store.queue_state(key)['paused'])
+        self.assertEqual(store.read(current['id'])['dispatch_state'],'claimed')
+
+    def test_retry_startup_uses_saved_buyer_and_scope_and_reuses_one_submission(self):
+        from uuid import uuid4
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.shared.exceptions import BuyerUnavailable
+
+        store = CollectionJobStore(self.settings)
+        key = execution_key(self.settings.for_platform('taobao'))
+        store.pause(key,True,'测试暂停')
+        original = service.start_configured(self.settings,{
+            'mode':'detail','input':'456','modules':['reviews','questions'],'all_reviews':True,'all_questions':False,
+        },taobao_account=self.buyer)
+        self.save({**store.read(original['id']),'state':'needs_attention','message':'昵称不符'})
+        status_url = f"/api/collection-jobs/{original['id']}"
+        endpoint = status_url + '/retry-startup'
+        self.assertFalse(self.client.get(status_url).get_json()['can_retry_startup'])
+        self.assertEqual(self.client.post(endpoint,json={},headers=self.headers).status_code,409)
+        self.job_db.store.apply_operation({'op':'event','database':self.settings.mysql.database,'task_id':original['id'],
+            'event_key':uuid4().hex,'time':now(),'event_type':'taobao_account_start_failed','message':'昵称不符'})
+        self.assertTrue(self.client.get(status_url).get_json()['can_retry_startup'])
+        self.assertEqual(self.client.post(endpoint,json={}).status_code,403)
+        self.assertEqual(self.client.post(endpoint,json={'account_id':'b'*32},headers=self.headers).status_code,409)
+        with patch('ecommerce.modules.account.buyers.resolve',side_effect=BuyerUnavailable('待重新登录')):
+            response = self.client.post(endpoint,json={},headers=self.headers)
+            self.assertEqual(response.status_code,409)
+            self.assertIn('待重新登录',response.get_json()['error'])
+            self.assertIn('账号管理',response.get_json()['error'])
+        with patch('ecommerce.modules.account.buyers.resolve') as resolve:
+            first = self.client.post(endpoint,json={},headers=self.headers)
+            second = self.client.post(endpoint,json={},headers={**self.headers,'X-Submission-Id':uuid4().hex})
+            resolve.assert_called_once()
+        self.assertEqual((first.status_code,second.status_code),(202,202))
+        retry = first.get_json()
+        self.assertEqual(second.get_json()['id'],retry['id'])
+        self.assertEqual(retry['startup_retry_of'],original['id'])
+        self.assertEqual(retry['taobao_account'],self.buyer)
+        self.assertEqual(retry['options'],original['options'])
+        self.assertEqual(retry['modules'],['reviews','questions'])
+        self.assertTrue(retry['can_start'])
+        self.launch.assert_not_called()
+        self.assertEqual(store.read(original['id'])['task_status'],'needs_attention')
+
+    def test_retry_startup_reuses_unchanged_parent_recovery_plan(self):
+        from uuid import uuid4
+        from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+        from ecommerce.modules.collection import dispatch
+
+        store = CollectionJobStore(self.settings)
+        key = execution_key(self.settings.for_platform('taobao'))
+        store.pause(key,True,'测试暂停')
+        parent = 'b'*32
+        options = service.normalize_request({'mode':'detail','input':'456','modules':['reviews']})
+        with patch.object(dispatch,'dispatch_next'):
+            stalled = service._start(self.settings,'456','selected','detail',options,taobao_account=self.buyer,
+                resume_task_id=parent,resume_revision=7)
+        self.save({**store.read(stalled['id']),'state':'needs_attention'})
+        self.job_db.store.apply_operation({'op':'event','database':self.settings.mysql.database,'task_id':stalled['id'],
+            'event_key':uuid4().hex,'time':now(),'event_type':'taobao_account_start_failed','message':'昵称不符'})
+        with (patch('ecommerce.modules.account.buyers.resolve'),
+              patch.object(dispatch,'preview',return_value={'finished':False,'revision':8}) as preview):
+            with self.assertRaisesRegex(ValueError,'原恢复计划已经变化'):
+                dispatch.retry_startup(self.settings,stalled['id'])
+            preview.return_value['revision'] = 7
+            retry = dispatch.retry_startup(self.settings,stalled['id'])
+        self.assertEqual(retry['resume_task_id'],parent)
+        self.assertEqual(store.read(retry['id'])['resume_revision'],7)
+        self.assertEqual(retry['options'],options)
+        self.assertTrue(retry['can_start'])
+        self.launch.assert_not_called()
+
     def test_configured_detail_dispatches_only_selected_modules_and_independent_ranges(self):
         """后台任务准确传递所选模块与两个独立范围；参数：无；返回：无。"""
         job=service.start_configured(self.settings,{'mode':'detail','input':'456','modules':['reviews','questions'],
@@ -288,7 +382,7 @@ class WebCollectionTests(unittest.TestCase):
 
     def test_configured_worker_validates_results_of_selected_modules(self):
         """完整详情要求本次所有选中模块成功，旧批次不能替代；参数：无；返回：无。"""
-        job=service.start_configured(self.settings,{'mode':'detail','input':'123','modules':['video','reviews']})
+        job=service.start_configured(self.settings,{'mode':'detail','input':'123','modules':['video','reviews']},taobao_account=self.buyer)
         self.data.update(history=[{'id':7,'task_id':job['id'],'module':'video','status':'no_video'},
                                   {'id':8,'task_id':'c'*32,'module':'reviews','status':'complete'}],current_ids=[7,8])
         with patch('ecommerce.modules.collection.web_worker.run_collection',return_value=TaskResult(job['id'],'succeeded','已结束',0)):
@@ -584,7 +678,8 @@ class WebCollectionTests(unittest.TestCase):
         from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
         store=CollectionJobStore(self.settings)
         store.pause(execution_key(self.settings.for_platform('taobao')),True,'合成分页验证')
-        rows=[service.start_configured(self.settings,{'mode':'detail','input':str(100000+i),'modules':['video']}) for i in range(count)]
+        rows=[service.start_configured(self.settings,{'mode':'detail','input':str(100000+i),'modules':['video']},
+            taobao_account=self.buyer) for i in range(count)]
         with store.connection(True) as c:
             c.execute(store.tables['collection_jobs'].update().values(created_at=datetime(2026,10,27,10)))
         return store,rows

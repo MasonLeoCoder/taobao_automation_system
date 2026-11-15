@@ -6,6 +6,7 @@ import os
 import sys
 from ecommerce.infrastructure.tasks.ownership import process_started_at
 from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+from ecommerce.modules.account.buyers import MISSING_BUYER
 from ecommerce.modules.collection.web_collection import run_collection, validate_job
 from ecommerce.shared.config import Settings,mysql_settings_from_payload,mysql_connection_target
 
@@ -39,7 +40,12 @@ def execute(workspace, identifier, claim_token, *, bootstrap=None):
         raise ValueError('采集申请工作空间或数据库不匹配')
     if not persistence.bind_process(identifier,claim_token,os.getpid(),process_started_at(os.getpid()),replace_owner=True):
         return
+    from ecommerce.modules.collection.dispatch import after_execution
     try:
+        if not row.get('taobao_account'):
+            persistence.fail_start(identifier,claim_token,MISSING_BUYER)
+            after_execution(settings,identifier,'needs_attention',account_blocked=True)
+            return
         validate_job(settings,row)
         result=run_collection(settings,row)
         if result.task_id is None:
@@ -47,7 +53,6 @@ def execute(workspace, identifier, claim_token, *, bootstrap=None):
                 persistence.hold_buyer(identifier,claim_token,result.message)
             else:
                 persistence.fail_start(identifier,claim_token,result.message)
-        from ecommerce.modules.collection.dispatch import after_execution
         after_execution(settings,identifier,result.status,account_blocked=result.account_blocked)
     except Exception:
         logging.getLogger(__name__).exception('采集进程退出，执行记录及待补写流水保留')

@@ -1,4 +1,5 @@
 """验证淘宝登录隔离、成功证据及失败时不保存状态。"""
+from dataclasses import replace
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 from ecommerce.cli.app import parser
 from ecommerce.cli.commands import account
+from ecommerce.cli.commands import collection
 from ecommerce.modules.account import taobao_service
 from ecommerce.platforms.taobao import login
 from ecommerce.shared.config import load_settings
@@ -71,6 +73,31 @@ class TaobaoLoginTests(unittest.TestCase):
             self.assertEqual(account.execute(self.settings, "login", "taobao"), "ok")
             self.assertEqual(run.call_args.args[1], "account.taobao.login")
             self.assertEqual(handler.call_args.args[0].profile_path, self.settings.for_platform("taobao").profile_path)
+
+    def test_managed_cli_requires_explicit_buyer_in_production_and_test(self):
+        for environment in ('production','test'):
+            settings = replace(self.settings, task_backend='mysql', environment=environment)
+            with self.subTest(environment=environment), patch.object(account,'run_task') as run:
+                with self.assertRaisesRegex(ValueError,'--account'):
+                    account.execute(settings,'check','taobao')
+                with self.assertRaisesRegex(ValueError,'--account'):
+                    collection.execute(settings,'样例')
+                run.assert_not_called()
+
+    def test_managed_cli_inspects_only_requested_buyer_under_taobao_lock(self):
+        settings = replace(self.settings, task_backend='mysql', environment='production')
+        selected = {'id':'a'*32,'login_name':'样例买家','revision':3}
+        result = parser().parse_args(['account','login','--platform','taobao','--account',selected['login_name'],'--no-wait'])
+        with (patch('ecommerce.modules.account.buyers.named_account',return_value=selected) as lookup,
+              patch('ecommerce.modules.account.web_buyers.BuyerAccountWorkbench') as workbench,
+              patch.object(account,'run_task',side_effect=lambda actual,name,work,**options: work()) as run):
+            account.execute(settings,result.action,result.platform,account=result.account,wait=not result.no_wait)
+        self.assertEqual(lookup.call_args.args[1],selected['login_name'])
+        self.assertEqual(run.call_args.args[0].profile_path,settings.for_platform('taobao').profile_path)
+        self.assertEqual(run.call_args.kwargs['buyer_scope'],{'account_id':selected['id'],'login_name':selected['login_name']})
+        operation = workbench.return_value.inspect_selected.call_args
+        self.assertEqual(operation.args,('login',selected))
+        self.assertFalse(operation.kwargs['wait'])
 
     def test_browser_channel_is_optional_and_validated(self):
         self.assertIsNone(self.settings.taobao_browser_channel)

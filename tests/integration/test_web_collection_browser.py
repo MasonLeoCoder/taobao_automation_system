@@ -549,7 +549,32 @@ class WebCollectionBrowserTests(unittest.TestCase):
         from ecommerce.infrastructure.tasks.ownership import execution_key
         from ecommerce.modules.collection import web_collection
         CollectionJobStore(self.settings).pause(execution_key(self.settings.for_platform('taobao')),True,'合成用户暂停')
-        return web_collection.start_configured(self.settings,{'mode':'detail','input':product,'modules':['video']})
+        return web_collection.start_configured(self.settings,{'mode':'detail','input':product,'modules':['video']},
+            taobao_account={'account_id':'a'*32,'login_name':'合成买家甲'})
+
+    def test_startup_retry_displays_original_buyer_and_scope_and_waits_for_confirmation(self):
+        from uuid import uuid4
+        from ecommerce.infrastructure.storage.database import now
+
+        job = self.paused_job()
+        self.save({**jobs.read(self.settings,job['id']),'state':'needs_attention','message':'未读到完整昵称'})
+        self.job_db.store.apply_operation({'op':'event','database':self.settings.mysql.database,'task_id':job['id'],
+            'event_key':uuid4().hex,'time':now(),'event_type':'taobao_account_start_failed','message':'未读到完整昵称'})
+        with patch('ecommerce.modules.account.buyers.resolve'), patch.object(jobs,'launch') as launch:
+            self.page.goto('http://127.0.0.1/modules/collection')
+            card = self.page.locator(f'[data-job-id="{job["id"]}"]')
+            card.get_by_role('button',name='重试原申请').click()
+            modal = self.page.get_by_role('dialog',name='重试原申请')
+            expect(modal).to_contain_text('淘宝账号 合成买家甲')
+            expect(modal).to_contain_text('商品 123')
+            expect(modal).to_contain_text('视频')
+            self.assertEqual(len(jobs.rows(self.settings)),1)
+            modal.get_by_role('button',name='确认重试').click()
+            expect(modal).not_to_be_visible()
+            expect(self.page.get_by_role('link',name='查看原申请日志')).to_be_visible()
+            self.assertEqual(len(jobs.rows(self.settings)),2)
+            launch.assert_not_called()
+        self.assertEqual(self.errors,[])
 
     def test_paused_card_starts_only_selected_request_and_double_click_does_not_duplicate(self):
         first=self.paused_job();second=self.paused_job('456')

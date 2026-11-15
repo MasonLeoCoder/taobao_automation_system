@@ -1,5 +1,5 @@
 """恢复预览与持久补采队列；短请求只派发，浏览器仍由统一执行器串行运行。"""
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 from ecommerce.infrastructure.storage.collection_recovery import RecoveryStore
 from ecommerce.infrastructure.tasks import web_jobs as jobs
 from ecommerce.infrastructure.tasks.lock import shop_lock
@@ -109,6 +109,39 @@ def retry(settings, identifier, product_id, module, *, account_id=None, submissi
     return {'id':result['id'],'message':'补采申请已入库；等待当前采集结束，暂停队列须手动继续'}
 
 
+def retry_startup(settings, identifier):
+    """重试原账号未通过启动校验的无结果申请，重复确认返回同一条申请。"""
+    from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
+    from ecommerce.modules.account.buyers import resolve
+    from ecommerce.modules.collection.web_collection import _start, get_job, public_status
+    from ecommerce.shared.exceptions import BuyerUnavailable
+
+    original = get_job(settings, identifier)
+    if not public_status(settings, original)['can_retry_startup']:
+        raise ValueError('该任务不支持重试原申请，请查看恢复计划或选择账号新建采集')
+    submission = uuid5(NAMESPACE_URL, 'ecommerce:taobao:startup-retry:' + identifier).hex
+    key = execution_key(settings.for_platform('taobao'))
+    existing = CollectionJobStore(settings).submitted(key, submission)
+    if existing:
+        if existing.get('startup_retry_of') != identifier:
+            raise ValueError('重试提交归属不一致，请刷新后查看')
+        return public_status(settings, existing)
+    account = original['taobao_account']
+    try:
+        resolve(settings.for_platform('taobao'), account)
+    except BuyerUnavailable as error:
+        raise BuyerUnavailable(f'{error}。请在「账号管理」核对原账号后再试。') from None
+    parent = original.get('resume_task_id')
+    revision = original.get('resume_revision')
+    if parent:
+        recovery_view = preview(settings, parent)
+        if recovery_view['finished'] or recovery_view['revision'] != revision:
+            raise ValueError('原恢复计划已经变化，请从原任务重新查看恢复计划')
+    return _start(settings, original['product_id'], original['module'], original['mode'], original['options'],
+        submission_key=submission, cleanup_tasks=original.get('cleanup_tasks'), taobao_account=account,
+        resume_task_id=parent, resume_revision=revision, startup_retry=original)
+
+
 def queue(settings):
     """查询所有待执行申请；参数：配置；返回：公开队列。"""
     from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
@@ -189,6 +222,7 @@ def dispatch_next(settings, *, identifier=None, manual=False):
 def start_job(settings, identifier):
     """明确启动选中的待执行申请，不解除队列暂停；参数：配置、申请编号；返回：公开状态。"""
     from ecommerce.modules.collection.web_collection import get_job, public_status, validate_job
+    from ecommerce.modules.account.buyers import MISSING_BUYER
     row=get_job(settings,identifier)
     if row['dispatch_state'] in {'claimed','started'} and not row.get('actual_finished'):
         return public_status(settings,row)
@@ -196,6 +230,8 @@ def start_job(settings, identifier):
         raise ValueError('该申请已结束或已取消，请查看结果或重新提交')
     if row.get('migration_pending'):
         raise ValueError('旧申请配置尚未核对，不能启动，请重新提交采集范围')
+    if not row.get('taobao_account'):
+        raise ValueError(MISSING_BUYER)
     validate_job(settings,row)
     selected=dispatch_next(settings,identifier=identifier,manual=True)
     row=get_job(settings,identifier)
