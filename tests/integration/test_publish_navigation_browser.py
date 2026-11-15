@@ -90,6 +90,30 @@ class PublishNavigationBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.get_by_role('dialog').is_visible())
         self.assertFalse(self.page.evaluate('!!window.closedUnknown'))
 
+    def test_publish_search_with_and_without_onboarding(self):
+        for onboarding in (True, False):
+            with self.subTest(onboarding=onboarding):
+                self.page.set_content('''
+                    <button class="model-button next-btn-primary" onclick="
+                      this.hidden = true;
+                      this.dataset.clicked = 'yes';
+                      document.querySelector('section').hidden = false;
+                    ">开启</button>
+                    <section hidden><input placeholder="可输入产品名称">
+                      <button onclick="document.querySelector('output').hidden = false">搜索</button>
+                    </section>
+                    <output hidden><span>全部</span><span>我的商品</span></output>
+                ''')
+                start = self.page.get_by_role('button', name='开启', include_hidden=True)
+                if not onboarding:
+                    self.page.evaluate("() => { document.querySelector('button').hidden = true; document.querySelector('section').hidden = false; }")
+                with VerificationGuard(self.context):
+                    product.prepare_publish_search(self.page)
+                    product.search_publish_products(self.page, '粘毛器')
+                self.assertEqual(start.get_attribute('data-clicked'), 'yes' if onboarding else None)
+                self.assertEqual(self.page.get_by_placeholder('可输入产品名称').input_value(), '粘毛器')
+                self.assertTrue(self.page.get_by_text('我的商品', exact=True).is_visible())
+
     def _brand_page(self):
         """构造两个独立输入框；仅浮层搜索完整名称才返回目标选项。"""
         self.page.goto("https://qianniu.test/category")
