@@ -11,6 +11,21 @@
 <div class="tabs collection-mode-tabs" role="tablist" aria-label="采集方式"><button type="button" id="keyword-tab" role="tab" aria-controls="keyword-panel" aria-selected="true" data-mode-tab="keyword">关键词采集</button><button type="button" id="detail-tab" role="tab" aria-controls="detail-panel" aria-selected="false" tabindex="-1" data-mode-tab="detail">商品详情采集</button></div>
 <form id="collection-start-form" class="panel collection-form">
 <fieldset {{ 'disabled' if not enabled }}>
+{% if config.COLLECTION_BUYER_SELECTION %}
+<div class="collection-field collection-account-field">
+  <label for="collection-account">淘宝账号</label>
+  {% call select_control({'id':'collection-account','name':'account_id','required':true,'aria-describedby':'collection-account-help'}) %}
+    <option value="">请选择淘宝买家账号</option>
+    {% for account in buyer_accounts %}<option value="{{ account.id }}"{% if account.reason %} disabled{% endif %}>{{ account.login_name }}{% if account.reason %} · {{ account.reason }}{% endif %}</option>{% endfor %}
+  {% endcall %}
+  <small id="collection-account-help">
+    {% if buyer_load_error %}暂时无法读取淘宝账号，请刷新页面后重试。
+    {% elif not buyer_accounts or not buyer_accounts|selectattr('reason','equalto','')|list %}
+      请前往<a href="{{ url_for('platform_accounts.index', platform='taobao') }}" target="_blank" rel="noopener">账号管理</a>添加账号或恢复登录，再刷新本页。
+    {% else %}提交后，排队任务会使用你选定的账号。{% endif %}
+  </small>
+</div>
+{% endif %}
 <div id="keyword-panel" role="tabpanel" aria-labelledby="keyword-tab">
 <h2>按关键词采集商品</h2><p class="muted">按销量排序，从第一页开始连续采集；每页单独保存结果。</p>
 <div class="collection-form-grid"><label class="collection-field collection-field-wide" for="collection-keyword">搜索关键词{{ input_control({"id": "collection-keyword", "name": "keyword", "maxlength": "100", "required": true, "placeholder": "例如：粘毛器", "autocomplete": "off"}) }}</label>
@@ -28,7 +43,7 @@
 <div class="collection-form-grid collection-ranges"><div class="collection-field"><label for="collection-review-range">评价数量范围</label>{% call select_control({"id": "collection-review-range", "disabled": true, "aria-label": "评价数量范围"}) %}<option value="limited">默认上限：100 条有效评价</option><option value="all">不限数量</option>{% endcall %}</div><div class="collection-field"><label for="collection-question-range">问大家数量范围</label>{% call select_control({"id": "collection-question-range", "disabled": true, "aria-label": "问大家数量范围"}) %}<option value="limited">默认上限：50 个问题</option><option value="all">不限数量</option>{% endcall %}</div></div>
 <p class="collection-help">每个问题采集全部可见回答。不限数量表示取消程序上限，实际内容以平台提供为准。已有资料也会重新采集，并保留历史。</p>
 </div>
-<div class="collection-submit"><div><strong>本次采集范围</strong><p id="collection-request-summary" aria-live="polite"></p></div>{{ control_button("开始采集", {"class": "button action-button action-primary", "id": "collection-submit", "type": "submit", "disabled": (not enabled)}) }}</div>
+<div class="collection-submit"><div><strong>本次采集范围</strong><p id="collection-request-summary" aria-live="polite"></p></div>{{ control_button("开始采集", {"class": "button action-button action-primary", "id": "collection-submit", "type": "submit", "disabled": (not enabled or config.COLLECTION_BUYER_SELECTION)}) }}</div>
 <p id="collection-submit-status" class="collection-feedback" role="status" aria-live="polite"></p>
 </fieldset></form>
 <section class="panel collection-queue" aria-labelledby="retry-queue-title"><h2 id="retry-queue-title">采集等待队列</h2><p>“开始本次采集”只启动所选申请；“继续队列”按顺序执行等待申请。暂停队列不停止当前采集。</p><div class="module-actions">{{ control_button("继续队列", {"type": "button", "class": "button action-button action-primary", "data-queue-action": "resume"}) }}{{ control_button("暂停队列", {"type": "button", "class": "button action-button action-neutral", "data-queue-action": "pause"}) }}</div><p id="collection-queue-status" role="status"></p><div id="collection-queue-list"></div></section>

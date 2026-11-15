@@ -55,6 +55,14 @@ def module(key: str):
     reference_product=request.args.get('input','')
     reference=None
     reference_error=False
+    buyer_accounts = []
+    buyer_load_error = False
+    if current_app.config['COLLECTION_BUYER_SELECTION']:
+        from ecommerce.modules.account.buyers import choices
+        try:
+            buyer_accounts = choices(settings)
+        except MySQLStorageError:
+            buyer_load_error = True
     if settings.collection_backend=='mysql' and re.fullmatch('[1-9][0-9]{0,24}',reference_product):
         try:
             data=query(settings,'browse_product',product_id=reference_product)
@@ -65,6 +73,7 @@ def module(key: str):
             reference_error=True
     return render_template('collection_start.html',active=key,features=FEATURES,shop_name=settings.shop_name,
         modules=MODULES,enabled=settings.task_backend=='mysql' and settings.collection_backend=='mysql',
+        buyer_accounts=buyer_accounts,buyer_load_error=buyer_load_error,
         module_reference=reference,reference_product=reference_product,reference_error=reference_error)
 
 

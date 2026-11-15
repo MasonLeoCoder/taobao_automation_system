@@ -7,6 +7,8 @@
   const bar = document.getElementById('collection-task-bar');
   const dialog = document.getElementById('collection-attention');
   const buyerDialog = document.getElementById('collection-buyer-dialog');
+  const formAccount = document.getElementById('collection-account');
+  const selectedFormAccount = () => formAccount?.selectedOptions[0]?.disabled ? '' : formAccount?.value;
   const labels = {list:'列表采集',basic_info:'基本信息',video:'视频',main_images:'主图',skus:'SKU',parameters:'商品参数',detail_images:'详情图片',review_summary:'评价概览',reviews:'评价明细',questions:'问大家'};
   const states = {queued:'等待执行',paused:'队列已暂停',starting:'启动中',stopping:'正在停止',running:'采集中',waiting:'等待采集',not_run:'本次未执行',skipped:'已跳过',needs_attention:'需要人工处理',storage_pending:'等待入库',succeeded:'采集完成',failed:'采集失败',cancelled:'已停止',interrupted:'进程已退出',unverified:'进程待核实',verification_pending:'结果待核对'};
   const tracked = new Map();
@@ -268,7 +270,7 @@
     jobs.filter(job => !job.can_start).forEach(job => startFeedback.delete(job.id));
     const submit = document.getElementById('collection-submit');
     if (submit) {
-      submit.disabled = submitting || startingJobs.size > 0 || !stateKnown || submit.closest('fieldset').disabled;
+      submit.disabled = submitting || startingJobs.size > 0 || !stateKnown || submit.closest('fieldset').disabled || Boolean(formAccount && !selectedFormAccount());
       submit.textContent = submitting ? '正在提交…' : executingJob() ? '加入采集队列' : queuePaused ? '保存采集申请' : '开始采集';
     }
     document.querySelectorAll('.module-collect').forEach(button => button.disabled = submitting || !stateKnown);
@@ -732,6 +734,7 @@
       get('request-summary').textContent = mode === 'keyword'
         ? `关键词：${get('keyword').value.trim() || '待填写'} · 从第 1 页开始采集 ${get('pages').value || '待填写'} 页 · ${get('unlimited').checked ? '每页不限数量' : `每页最多 ${get('limit').value || '待填写'} 个商品`} · ${get('with-details').checked ? '连带采集九个详情模块' : '仅采集列表'}`
         : `商品：${get('input').value.trim() || '待填写'} · ${selected.length ? selected.map(node => labels[node.value]).join('、') : '尚未选择模块'}${!get('review-range').disabled ? ` · 评价${get('review-range').value === 'all' ? '不限数量' : '最多 100 条'}` : ''}${!get('question-range').disabled ? ` · 问大家${get('question-range').value === 'all' ? '不限数量' : '最多 50 题'}` : ''}`;
+      if (selectedFormAccount()) get('request-summary').textContent += ` · 淘宝账号 ${formAccount.selectedOptions[0].textContent.trim()}`;
     }
     document.querySelectorAll('[data-mode-tab]').forEach(tab => {
       tab.addEventListener('click',() => { mode = tab.dataset.modeTab; update(); });
@@ -743,6 +746,7 @@
     });
     get('select-all').addEventListener('click',() => { const selected = modules.every(node => node.checked); modules.forEach(node => node.checked = !selected); update(); });
     form.addEventListener('input',update); form.addEventListener('change',update);
+    formAccount?.addEventListener('change',render);
     const parameters = new URLSearchParams(location.search);
     const updateSourceReference = () => document.querySelectorAll('[data-module-source-info]').forEach(node => {
       node.hidden = get('input').value.trim() !== node.dataset.referenceProduct;
@@ -757,13 +761,15 @@
     form.addEventListener('submit',async event => {
       event.preventDefault();
       if (submitting || !stateKnown) return;
+      const account = selectedFormAccount();
+      if (formAccount && !account) { get('submit-status').textContent = '请选择淘宝买家账号。'; return; }
       const selected = modules.filter(node => node.checked).map(node => node.value);
       if (mode === 'detail' && !selected.length) { get('submit-status').textContent = '请至少选择一个采集模块。'; return; }
       const body = mode === 'keyword' ? {mode,keyword:get('keyword').value,pages:Number(get('pages').value),limit:get('unlimited').checked ? null : Number(get('limit').value),with_details:get('with-details').checked}
         : {mode,input:get('input').value,modules:selected,all_reviews:!get('review-range').disabled && get('review-range').value === 'all',all_questions:!get('question-range').disabled && get('question-range').value === 'all'};
       submitting = true; render(); get('submit-status').textContent = '正在提交采集任务…';
       try {
-        const job = await api('/api/collection-jobs',await buyerBody(body)); tracked.set(job.id,job);
+        const job = await api('/api/collection-jobs',formAccount ? {...body, account_id:account} : await buyerBody(body)); tracked.set(job.id,job);
         get('submit-status').textContent = job.can_start
           ? `申请已保存：${stateLabel(job)}。点击任务卡或底部状态栏的“开始本次采集”即可执行。`
           : `申请已保存：${stateLabel(job)}。下方可查看队列、进度和结果。`;

@@ -171,6 +171,7 @@ img[data-image-preview-ready]{cursor:zoom-in}
 .collection-form fieldset{border:0;padding:0;margin:0;min-width:0}.collection-form h2{margin-top:0}.collection-form .muted{margin-bottom:24px}
 .collection-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.collection-field-wide{grid-column:1/-1}
 .collection-field{display:flex;flex-direction:column;gap:10px;min-width:0}
+.collection-account-field{max-width:32rem;margin-bottom:26px}
 .collection-field input:not([type=checkbox]),.collection-field select{width:100%;min-width:0}.collection-field small,.collection-check small{display:block;font-weight:400;color:var(--muted);font-size:12px;line-height:1.8}
 .collection-check{display:flex;align-items:center;gap:10px}.collection-check input{flex-shrink:0}
 .collection-detail-switch{margin-top:26px;padding:20px;background:#f3f8f5;border:1px solid #dce9e2;border-radius:9px}.collection-detail-switch small{margin-top:5px}

@@ -201,6 +201,18 @@ class WebCollectionTests(unittest.TestCase):
             self.execute_job(job['id']);collect.assert_not_called()
         self.assertEqual(self.client.get(job['status_url']).get_json()['state'],'cancelled')
 
+    def test_collection_form_displays_buyer_choice_before_submission(self):
+        self.app.config['COLLECTION_BUYER_SELECTION'] = True
+        options = [{'id':'a' * 32,'login_name':'样例买家甲','reason':''},
+                   {'id':'b' * 32,'login_name':'样例买家乙','reason':'待重新登录'}]
+        with patch('ecommerce.modules.account.buyers.choices',return_value=options):
+            response = self.client.get('/modules/collection')
+        self.assertEqual(response.status_code,200)
+        html = response.get_data(as_text=True)
+        self.assertLess(html.index('id="collection-account"'), html.index('id="keyword-panel"'))
+        self.assertIn(f'<option value="{"a" * 32}">样例买家甲', html)
+        self.assertIn(f'<option value="{"b" * 32}" disabled>样例买家乙 · 待重新登录', html)
+
     def test_buyer_requests_separate_dedupe_and_hold_only_the_affected_job(self):
         from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
         from ecommerce.modules.collection import dispatch
