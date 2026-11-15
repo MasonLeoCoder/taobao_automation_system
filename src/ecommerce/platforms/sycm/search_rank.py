@@ -2,9 +2,12 @@
 from datetime import date, timedelta
 import re
 from time import monotonic
+from urllib.parse import urlsplit
 
+from ecommerce.platforms.qianniu.login import is_login_required
 from ecommerce.platforms.qianniu.collection_pacing import pause
 from ecommerce.platforms.qianniu.verification import checkpoint, page_step, qianniu_operation
+from ecommerce.shared.exceptions import NeedsAttention
 
 URL = 'https://sycm.taobao.com/mc/free/search_rank'
 HEADER = '.item-cate .common-picker-header:visible'
@@ -18,9 +21,24 @@ class RankingError(ValueError):
     """已知的排行页面读取失败。"""
 
 
+class RankingLoginRequired(NeedsAttention):
+    """平台已明确要求重新登录千牛。"""
+
+
+def check_access(page):
+    if is_login_required(page):
+        raise RankingLoginRequired('千牛已显示登录页')
+    location = urlsplit(page.url)
+    if (location.scheme, location.hostname) == ('https', 'sycm.taobao.com'):
+        for text in ('暂无权限', '您没有权限访问该页面', '当前账号暂无权限', '无权访问'):
+            if page.get_by_text(text, exact=True).first.is_visible():
+                raise NeedsAttention('当前千牛账号没有访问生意参谋搜索排行的权限')
+
+
 def _until(page, read, message):
     deadline = monotonic() + 18
     while monotonic() < deadline:
+        check_access(page)
         checkpoint(message)
         if result := page_step(read, description=message):
             return result
@@ -69,9 +87,12 @@ def _radio(page, name):
 @qianniu_operation
 def prepare(page, requested_path, period, label):
     """验证已知搜索排行入口、完整类目路径和统计周期。"""
-    page_step(lambda: page.goto(URL, wait_until='domcontentloaded'), description='打开生意参谋搜索排行')
+    response = page_step(lambda: page.goto(URL, wait_until='domcontentloaded'), description='打开生意参谋搜索排行')
+    check_access(page)
+    if response and response.status >= 400:
+        raise NeedsAttention(f'生意参谋页面返回 HTTP {response.status}，请确认网络状态及该功能权限')
     header = page.locator(HEADER)
-    _until(page, lambda: _only(header), '未找到生意参谋类目选择器，请核对账号权限')
+    _until(page, lambda: _only(header), '未能读取生意参谋类目选择器，请检查页面后重试')
     pause(page, 'page')
     changing_category = _category(page) != requested_path
     old = _table_state(page) if changing_category or not _dates(page, period, label) else None
@@ -226,6 +247,7 @@ def collect_type(page, scope, word_label, requested, save):
         first = None
         seen = set()
         while True:
+            check_access(page)
             entries = parse_rows(state['headers'], state['rows'], word_label, number)
             order = [(entry['rank'], entry['keyword']) for entry in entries]
             # 平台在同一页可能显示 35、34 或跳过 40。保留原名次和页面顺序。

@@ -11,8 +11,30 @@
   const resume = document.getElementById('sycm-resume');
   const task = document.getElementById('sycm-task');
   const result = document.getElementById('sycm-result');
-  const controls = root.querySelectorAll('#sycm-new,#sycm-start button[type="submit"],[data-sycm-retry]');
+  const controls = root.querySelectorAll('#sycm-new,[data-sycm-retry]');
+  const submit = form?.querySelector('button[type="submit"]');
+  const managed = Boolean(form?.elements.shop_id);
+  const shops = JSON.parse(document.getElementById('sycm-shop-data')?.textContent || '[]');
+  const storageKey = 'sycm-collection-request';
   let prompt, activeId, timer, starting = false;
+  let tracked = null;
+  if (managed) {
+    try { tracked = JSON.parse(sessionStorage.getItem(storageKey)); } catch {}
+    activeId = tracked?.id;
+  }
+
+  function remember(value) {
+    tracked = value;
+    try {
+      if (value) sessionStorage.setItem(storageKey, JSON.stringify(value));
+      else sessionStorage.removeItem(storageKey);
+    } catch {}
+  }
+
+  function allowStart(active) {
+    controls.forEach(button => { button.disabled = active; });
+    if (submit) submit.disabled = active || (managed && (!form.elements.shop_id.value || !form.elements.account_id.value));
+  }
 
   async function api(url, data) {
     const options = data === undefined ? {} : {method:'POST', headers:{
@@ -20,7 +42,7 @@
     const response = await fetch(url,options);
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || '操作未完成，请刷新后重试。');
+      throw Object.assign(new Error(body.error || '操作未完成，请刷新后重试。'), {status:response.status});
     }
     return response.json();
   }
@@ -34,14 +56,15 @@
     clearTimeout(timer);
     if (!state || starting) return;
     const active = ['queued','running','waiting'].includes(state.phase);
-    controls.forEach(button => { button.disabled = active; });
+    allowStart(active);
     const relevant = String(state.category_id) === root.dataset.category && state.period === root.dataset.period;
     const settled = !active && state.phase === 'succeeded' && state.id === root.dataset.batch;
-    show(active || state.id === activeId || (relevant && !settled) ? state.message : '');
+    const source = state.target?.login_name ? `${state.target.shop_name} · ${state.target.login_name}\n` : '';
+    show(active || state.id === activeId || (relevant && !settled) ? source + state.message : '');
     prompt = state.prompt;
     resume.hidden = !prompt;
     task.hidden = !state.task_id;
-    result.hidden = active || state.phase !== 'succeeded' || settled;
+    result.hidden = active || !(state.has_batch ?? state.phase === 'succeeded') || settled || box.hidden;
     if (state.task_id) task.href = root.dataset.tasks + '/' + encodeURIComponent(state.task_id);
     if (active) {
       activeId = state.id;
@@ -54,7 +77,22 @@
   }
 
   async function poll() {
-    try { render(await api(root.dataset.status)); }
+    try {
+      let state;
+      if (managed && tracked) {
+        state = await api(root.dataset.status + '?request=' + encodeURIComponent(tracked.id));
+        if (state && tracked.signature !== null) {
+          remember({id:tracked.id, signature:null});
+          if (dialog?.open) dialog.close();
+        }
+      }
+      state ??= await api(root.dataset.status);
+      render(state);
+      if (!state && managed && tracked?.signature) {
+        show('上一次采集尚未确认，可用原设置重试或等待任务出现。');
+        timer = setTimeout(poll,2500);
+      }
+    }
     catch (error) { show(error.message); timer = setTimeout(poll,2500); }
   }
 
@@ -62,19 +100,28 @@
     if (starting) return;
     starting = true;
     clearTimeout(timer);
-    controls.forEach(button => { button.disabled = true; });
+    allowStart(true);
+    if (managed) {
+      const signature = JSON.stringify(values);
+      const id = tracked?.signature === signature ? tracked.id : crypto.randomUUID().replace(/-/g,'');
+      remember({id, signature});
+      activeId = id;
+      values.request_id = id;
+    }
     try {
       const state = await api(root.dataset.start,values);
       starting = false;
       activeId = state.id;
+      if (managed) remember({id:state.id, signature:null});
       if (dialog?.open) dialog.close();
       render(state);
     }
     catch (error) {
       starting = false;
+      if (managed && error.status >= 400 && error.status < 500) remember(null);
       if (dialog?.open) showFormError(error.message);
       else show(error.message);
-      controls.forEach(button => { button.disabled = false; });
+      allowStart(false);
       timer = setTimeout(poll,2500);
     }
   }
@@ -82,6 +129,36 @@
   function showFormError(message) {
     formError.textContent = message;
     formError.hidden = !message;
+  }
+
+  function updateAccounts() {
+    if (!managed) return;
+    const field = document.getElementById('sycm-account-field');
+    const old = form.elements.account_id;
+    const select = old.cloneNode(false);
+    const shop = shops.find(item => item.id === form.elements.shop_id.value);
+    field.dispatchEvent(new Event('ui:controls-remove', {bubbles:true}));
+    select.classList.remove('ui-searchable-native');
+    select.disabled = !shop;
+    select.dataset.placeholder = shop ? '选择千牛账号' : '先选择店铺';
+    select.add(new Option(select.dataset.placeholder, ''));
+    for (const unavailable of [false, true]) {
+      const group = document.createElement('optgroup');
+      group.label = unavailable ? '不可用账号' : '可用账号';
+      for (const account of shop?.accounts || []) {
+        if (Boolean(account.reason) !== unavailable) continue;
+        const option = new Option(account.name + (account.reason ? ' · ' + account.reason : ''), account.id);
+        option.disabled = unavailable;
+        group.append(option);
+      }
+      if (group.children.length) select.append(group);
+    }
+    old.replaceWith(select);
+    field.dispatchEvent(new Event('ui:controls-added', {bubbles:true}));
+    document.getElementById('sycm-account-note').hidden = shops.length > 0 &&
+      (!shop || shop.accounts.some(account => !account.reason));
+    document.getElementById('sycm-account-note-text').textContent = shop ?
+      '该店铺暂无可用千牛账号。' : '当前环境暂无已登记的千牛账号。';
   }
 
   function describeSelection() {
@@ -109,6 +186,10 @@
     button.addEventListener('click',() => dialog.close()));
   form?.addEventListener('input',describeSelection);
   form?.addEventListener('change',describeSelection);
+  form?.addEventListener('change',event => {
+    if (event.target.name === 'shop_id') updateAccounts();
+    if (['shop_id','account_id'].includes(event.target.name)) allowStart(starting);
+  });
   form?.addEventListener('submit',event => {
     event.preventDefault();
     const values = new FormData(form);
@@ -116,18 +197,33 @@
     if (!word_types.length) { showFormError('请至少勾选一种词类型。'); return; }
     showFormError('');
     start({category_id:Number(values.get('category_id')),period:values.get('period'),
-      pages:Number(values.get('pages')),word_types,sycm_path:values.get('sycm_path')});
+      pages:Number(values.get('pages')),word_types,sycm_path:values.get('sycm_path'),
+      ...(managed ? {shop_id:values.get('shop_id'),account_id:values.get('account_id')} : {})});
   });
   const filters = document.getElementById('sycm-filters');
   filters.addEventListener('change',() => {
     const batch = filters.elements.batch;
     if (!batch) return;
-    const scope = filters.elements.category.value + ':' + filters.elements.period.value;
+    const sources = filters.elements.source_shop ? [filters.elements.source_shop.value,filters.elements.source_account.value] : [];
+    const scope = [filters.elements.category.value, filters.elements.period.value, ...sources].join(':');
     batch.disabled = scope !== filters.elements.filter_scope.value;
     if (batch.disabled) batch.value = '';
   });
   root.querySelectorAll('[data-sycm-retry]').forEach(button =>
-    button.addEventListener('click',() => start(JSON.parse(button.dataset.sycmRetry))));
+    button.addEventListener('click',() => {
+      const data = JSON.parse(button.dataset.sycmRetry);
+      if (!managed) { start(data); return; }
+      for (const key of ['category_id','period','pages','sycm_path']) {
+        form.elements[key].value = data[key];
+        form.elements[key].dispatchEvent(new Event('change'));
+      }
+      for (const field of form.querySelectorAll('[name="word_types"]')) field.checked = data.word_types.includes(field.value);
+      form.elements.shop_id.value = '';
+      form.elements.shop_id.dispatchEvent(new Event('change',{bubbles:true}));
+      showFormError('');
+      describeSelection();
+      dialog.showModal();
+    }));
   resume.addEventListener('click',async () => {
     resume.disabled = true;
     try { await api(root.dataset.resume,{prompt}); }

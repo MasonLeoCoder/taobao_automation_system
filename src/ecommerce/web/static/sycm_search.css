@@ -9,6 +9,7 @@
 .sycm-fields { display:grid; grid-template-columns:minmax(0,2.2fr) minmax(82px,.65fr) minmax(0,1.4fr) auto; align-items:end; gap:10px; }
 .sycm-fields:has(input[name="view"]) { grid-template-columns:minmax(0,2.2fr) minmax(82px,.65fr) auto; }
 .sycm-fields > * { min-width:0; }
+.sycm-source-filters { grid-column:1 / -2; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 .sycm-filters { margin-bottom:14px; }
 .sycm-types { display:flex; gap:8px 16px; flex-wrap:wrap; min-width:0; padding:8px 0 0; border:0; margin:0; }
 .sycm-types label { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--control-border); border-radius:8px; cursor:pointer; }
@@ -40,8 +41,12 @@
 #sycm-rank select[name="batch"] { appearance:auto; overflow:hidden; text-overflow:ellipsis; }
 #sycm-rank .table-wrap { max-width:100%; overflow-x:auto; }
 #sycm-rank a:not(.ui-button,.button,.page-number) { color:var(--control-accent); }
-@media(max-width:850px) { .sycm-fields,.sycm-fields:has(input[name="view"]) { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:850px) {
+  .sycm-fields,.sycm-fields:has(input[name="view"]) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .sycm-source-filters { grid-column:1 / -1; }
+}
 @media(max-width:480px) {
   .sycm-fields,.sycm-fields:has(input[name="view"]) { grid-template-columns:minmax(0,1fr); }
+  .sycm-source-filters,.sycm-modal-fields { grid-template-columns:minmax(0,1fr); }
   .sycm-scope-summary { grid-template-columns:minmax(0,1fr); }
 }

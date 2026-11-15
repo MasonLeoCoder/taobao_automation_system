@@ -199,9 +199,9 @@ class TaskEvents:
         return {'op':op,'database':self.store.settings.database,'task_id':self.task_id,'event_key':uuid4().hex,'time':datetime.now(BEIJING).isoformat(),
                 'event_type':event_type,'message':sanitize(message),'state':state,'level':level,'step':sanitize(step),'details':sanitize(details or {})}
 
-    def start(self):
+    def start(self, *, details=None):
         """先持久保存创建记录，再确认数据库后启动业务；参数：无；返回：无。"""
-        operation=self.operation('create','task_started','任务开始：'+self.name,state='running')
+        operation=self.operation('create','task_started','任务开始：'+self.name,state='running',details=details)
         if self.name.startswith('collection.taobao.') and self.settings.collection_backend=='mysql':
             from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
             try:

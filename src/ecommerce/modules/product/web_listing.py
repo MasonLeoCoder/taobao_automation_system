@@ -18,8 +18,10 @@ from ecommerce.infrastructure.tasks.runner import current_task, run_task
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.platforms.qianniu.product_review import read_listing_fields, read_listing_media
 from ecommerce.platforms.qianniu.identity import read_editor_account, read_shop_identity
-from ecommerce.platforms.qianniu.login import LoginStatus, inspect_login, is_login_required
-from ecommerce.infrastructure.storage.platform_accounts import AccountStore
+from ecommerce.platforms.qianniu.login import is_login_required
+from ecommerce.modules.account.managed import (
+    account_settings, account_target, check_identity, require_login, selected_account, verify_session,
+)
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from ecommerce.shared.time import BEIJING
 from .service import open_publish
@@ -28,7 +30,6 @@ from .listing_logs import local_log
 from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
 from .listing_profiles import PROFILES, support
 from .listing_video import ADAPTED_VIDEO
-from .listing_accounts import account_settings, listing_target, selected_account
 
 _ID = re.compile('[0-9a-f]{32}')
 _ACTIVE = {'queued', 'running', 'waiting'}
@@ -125,7 +126,7 @@ class ListingWorkbench:
         if self.settings.task_backend == 'mysql':
             row = selected_account(self.settings, account_id, shop_id)
             account_settings(self.settings, row)
-            target = listing_target(row)
+            target = account_target(row)
         if self.settings.collection_backend != 'mysql':
             return import_materials(self.root, uploads, **form, **({'target': target} if target else {}))
         binding = category_binding(self.settings, form.get('category'))
@@ -304,30 +305,19 @@ class _ListingRun:
 
     def authenticate_managed(self, page):
         """核对专用会话中的当前账号及店铺，登录失效时释放窗口。"""
-        status = inspect_login(page)
-        if status is LoginStatus.REQUIRED:
-            self.require_login()
-        if status is not LoginStatus.AUTHENTICATED:
-            raise NeedsAttention('暂时无法确认千牛会话，任务已暂停')
-        identity = read_shop_identity(page)
-        if identity is None and is_login_required(page):
-            self.require_login()
-        self.verify_identity(identity)
+        self.record_identity(verify_session(page, self.target, self.require_login))
         return page
 
     def require_login(self):
-        AccountStore(self.settings).change_state(self.managed_account, 'require_login')
-        if self.state['submit_attempted']:
-            raise NeedsAttention('千牛会话已失效，请到原店人工核对提交结果')
-        raise NeedsAttention('千牛会话已失效。请到账号管理重新登录原账号，核对千牛是否仍保留商品编辑现场；现场丢失时请重新预检和填写')
+        message = ('千牛会话已失效，请到原店人工核对提交结果' if self.state['submit_attempted'] else
+                   '千牛会话已失效。请到账号管理重新登录原账号，核对千牛是否仍保留商品编辑现场；现场丢失时请重新预检和填写')
+        require_login(self.settings, self.managed_account, message)
 
     def verify_identity(self, identity):
-        if identity is None or not identity.login_name:
-            raise NeedsAttention('无法核实当前千牛账号和店铺，任务已暂停')
-        if identity.login_name != self.target['login_name']:
-            raise NeedsAttention(f'千牛账号不符：预期 {self.target["login_name"]}，实际 {identity.login_name}')
-        if identity.shop_id != self.target['platform_shop_id']:
-            raise NeedsAttention(f'千牛店铺不符：预期店铺 ID {self.target["platform_shop_id"]}，实际 {identity.shop_id}')
+        check_identity(identity, self.target)
+        self.record_identity(identity)
+
+    def record_identity(self, identity):
         self.update(verified_identity={'login_name': identity.login_name, 'platform_shop_id': identity.shop_id,
                                       'verified_at': datetime.now(BEIJING).isoformat()})
 
@@ -709,7 +699,7 @@ class _ListingRun:
                 **({'title_overrides': self.state['titles']} if 'titles' in self.state else {}))
         try:
             result = run_task(self.settings, 'product.submit' if self.state['submit'] else 'product.open',
-                              work, **({'listing_scope': self.target} if self.target else {}))
+                              work, **({'qianniu_scope': self.target} if self.target else {}))
             message = ('提交结果待核实；请检查千牛仓库，未重复提交' if self.state['outcome'] == 'uncertain'
                        else result.message)
             if self.local_log:

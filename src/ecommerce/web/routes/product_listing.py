@@ -7,7 +7,7 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 from werkzeug.exceptions import HTTPException
 from ecommerce.modules.product.web_materials import CATEGORY, GROUPS, LIMIT, MAX_FILES
 from ecommerce.modules.product.web_listing import ListingConflict, category_binding
-from ecommerce.modules.product.listing_accounts import account_problem, listing_accounts
+from ecommerce.modules.account.managed import shop_choices
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.modules.product.listing_profiles import LINT_ROLLER, PROFILES, support
@@ -79,22 +79,12 @@ def index():
         profile = PROFILES.get(row['listing_profile_key'])
         choices.append(dict(row, support=state, has_template=bool(template),
                             keyword=(profile.search_keyword if profile else None) or row['name']))
-    account_choices = {}
     last_used = workbench().last_used_accounts() if settings.task_backend == 'mysql' else {}
-    for row in listing_accounts(settings):
-        shop = account_choices.setdefault(row['shop_id'], {
-            'id': row['shop_id'], 'name': row['shop_name'], 'platform_id': row['platform_shop_id'], 'accounts': [],
-        })
-        reason = account_problem(settings, row)
-        shop['accounts'].append({'id': row['id'], 'name': row['login_name'], 'reason': reason,
-                                 'recent': not reason and last_used.get(row['shop_id']) == row['id']})
-    for shop in account_choices.values():
-        shop['accounts'].sort(key=lambda row: (bool(row['reason']), not row['recent'], row['name'].casefold(), row['id']))
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
         use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify',
         title_generation_enabled=use_catalog, managed_accounts=settings.task_backend == 'mysql',
-        listing_shops=sorted(account_choices.values(), key=lambda shop: (shop['name'], shop['platform_id'])))
+        listing_shops=shop_choices(settings, last_used))
 
 
 @product_listing.get('/api/listing/template')

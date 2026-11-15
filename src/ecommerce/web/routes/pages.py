@@ -440,10 +440,14 @@ def task_detail(task_id):
     data=browse_query('task',task_id=task_id)
     settings=current_app.config['SETTINGS']
     listing_job = None
+    sycm_job = None
     if data['task']['name'] in {'product.open', 'product.submit'}:
         listing_job = current_app.extensions['product_listing'].jobs_for_tasks([task_id]).get(task_id)
+    if data['task']['name'] == 'sycm.search_rank':
+        from ecommerce.infrastructure.storage.sycm_search import request_status
+        sycm_job = request_status(settings, task_id)
     return render_template('task_detail.html',active='tasks',features=FEATURES,shop_name=settings.shop_name,
-        alerts=local_task_alerts(settings,task_id=task_id),listing_job=listing_job,**data)
+        alerts=local_task_alerts(settings,task_id=task_id),listing_job=listing_job,sycm_job=sycm_job,**data)
 
 
 @pages.get('/collections/files/<int:file_id>')

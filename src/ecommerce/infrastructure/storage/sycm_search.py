@@ -6,7 +6,8 @@ import sqlalchemy as sa
 from ecommerce.infrastructure.storage.collection_store import collection_store
 from ecommerce.infrastructure.storage.environments import assert_writable
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError, safe_error
-from ecommerce.infrastructure.storage.time_values import database_now
+from ecommerce.infrastructure.storage.time_values import database_now, iso_value
+from ecommerce.infrastructure.tasks.ownership import owner_alive
 
 WORD_TYPES = {'search': '搜索词', 'trend': '趋势词', 'core': '核心词', 'modifier': '修饰词'}
 PERIODS = {'7d': '7天', '30d': '30天', 'day': '日'}
@@ -88,22 +89,85 @@ def finish(settings, identifier, error=None):
         return status
 
 
-def browse(settings, category_id, period, batch_id=None, word_type='search', page=1, *, export=False):
+def _source_rows(tables):
+    tasks, events = tables['tasks'], tables['task_events']
+    return tasks.outerjoin(events, sa.and_(events.c.task_id == tasks.c.id,
+                                           events.c.task_sequence == 1, events.c.event_type == 'task_started'))
+
+
+def _source(details):
+    return (details or {}).get('qianniu_source') or {}
+
+
+def request_status(settings, identifier):
+    """读取已持久化的请求。已结束或来源不明的进程不重放。"""
+    with connection(settings) as (conn, tables):
+        tasks, events, batches = (tables[key] for key in ('tasks', 'task_events', 'sycm_search_batches'))
+        query = sa.select(tasks.c.status, tasks.c.message, tasks.c.finished_at, tasks.c.owner_pid,
+            tasks.c.owner_process_started_at, events.c.details, batches.c.id.label('batch_id'),
+            batches.c.publish_category_id.label('category_id'), batches.c.period_type.label('period')).select_from(
+                _source_rows(tables).outerjoin(batches, batches.c.task_id == tasks.c.id)
+            ).where(tasks.c.id == identifier, tasks.c.name == 'sycm.search_rank')
+        row = conn.execute(query).mappings().one_or_none()
+        if row is None:
+            return None
+        source = _source(row['details'])
+        phase = row['status']
+        message = row['message'] or '正在采集搜索排行'
+        if row['finished_at'] is None:
+            if owner_alive(row['owner_pid'], iso_value(row['owner_process_started_at'])) is False:
+                phase, message = 'needs_attention', '原采集进程已退出，已保存的排行可在采集记录查看'
+            else:
+                phase = 'running'
+        return dict(id=row['batch_id'] or identifier, task_id=identifier, category_id=row['category_id'],
+                    period=row['period'], phase=phase, prompt=None, message=message, target=source,
+                    has_batch=row['batch_id'] is not None)
+
+
+def browse(settings, category_id, period, batch_id=None, word_type='search', page=1, *, export=False,
+           source_shop='', source_account=''):
     with connection(settings) as (conn, tables):
         batches, types, detail = (tables[name] for name in
             ('sycm_search_batches', 'sycm_search_batch_types', 'sycm_search_rank_entries'))
         has_rows = sa.exists(sa.select(types.c.id).where(types.c.batch_id == batches.c.id, types.c.row_count > 0))
         captured = sa.select(sa.func.coalesce(sa.func.sum(types.c.collected_pages), 0)).where(
             types.c.batch_id == batches.c.id).scalar_subquery()
-        history = [dict(row) for row in conn.execute(sa.select(batches, has_rows.label('has_rows'),
-            captured.label('captured_pages')).where(
+        tasks, events = tables['tasks'], tables['task_events']
+        rows = conn.execute(sa.select(batches, has_rows.label('has_rows'), captured.label('captured_pages'),
+            tasks.c.shop_id, tasks.c.account_id, tasks.c.finished_at.label('task_finished_at'),
+            events.c.details.label('source_details')).select_from(
+                batches.outerjoin(_source_rows(tables), batches.c.task_id == tasks.c.id)
+            ).where(
             batches.c.publish_category_id == category_id, batches.c.period_type == period
-        ).order_by(batches.c.started_at.desc(), batches.c.id.desc())).mappings()]
+        ).order_by(batches.c.started_at.desc(), batches.c.id.desc())).mappings()
+        shops, accounts, history = {}, {}, []
+        for value in rows:
+            row = dict(value)
+            source = _source(row.pop('source_details'))
+            row.update(shop_name=source.get('shop_name'), login_name=source.get('login_name'),
+                       platform_shop_id=source.get('platform_shop_id'))
+            if not row['shop_name']:
+                row['shop_id'] = None
+            if not row['login_name']:
+                row['account_id'] = None
+            if row['shop_id']:
+                shops.setdefault(row['shop_id'], f"{row['shop_name']} · {row['platform_shop_id']}")
+            if row['account_id']:
+                accounts.setdefault(row['account_id'], row['login_name'])
+            if source_shop and (row['shop_id'] or 'unknown') != source_shop:
+                continue
+            if source_account and (row['account_id'] or 'unknown') != source_account:
+                continue
+            if row['status'] == 'running' and row['task_finished_at'] is not None:
+                row['status'] = 'partial' if row['has_rows'] else 'failed'
+            history.append(row)
         selected = next((row for row in history if row['id'] == batch_id), None) if batch_id else next(
             (row for row in history if row['has_rows'] and row['status'] != 'running'), None)
         if batch_id and not selected:
             raise LookupError('找不到此类目及周期下的采集批次')
         result = {'history': history, 'batch': selected, 'types': {}, 'entries': [],
+                  'source_shops': dict(sorted(shops.items(), key=lambda item: item[1].casefold())),
+                  'source_accounts': dict(sorted(accounts.items(), key=lambda item: item[1].casefold())),
                   'page': 1, 'pages': 1, 'page_size': PAGE_SIZE}
         if not selected:
             return result

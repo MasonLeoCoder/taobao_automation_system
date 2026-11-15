@@ -80,7 +80,7 @@ class WebListingTests(TestCase):
         session = settings.workspace / 'storage/managed_accounts/qianniu' / session_id / 'session.json'
         session.parent.mkdir(parents=True)
         session.write_text('{}', encoding='utf-8')
-        with patch('ecommerce.modules.product.listing_accounts.AccountStore') as store:
+        with patch('ecommerce.modules.account.managed.AccountStore') as store:
             store.return_value.list_accounts.return_value = [row]
             other_shop = 'd' * 32
             self.assertEqual(self.preflight(account_id=account_id, shop_id=other_shop).status_code, 409)
@@ -122,6 +122,7 @@ class WebListingTests(TestCase):
         worker = MagicMock(spec=_ListingRun)
         worker.target = dict(login_name='tb123:大橘', platform_shop_id='123')
         worker.verify_identity.side_effect = lambda identity: _ListingRun.verify_identity(worker, identity)
+        worker.record_identity.side_effect = lambda identity: _ListingRun.record_identity(worker, identity)
         page = MagicMock()
         companion = page.context.new_page.return_value
         module = 'ecommerce.modules.product.web_listing'

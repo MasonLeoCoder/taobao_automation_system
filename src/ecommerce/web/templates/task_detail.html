@@ -19,4 +19,16 @@
   </dl>
 </section>
 {% endif %}
+{% if sycm_job %}
+<section class="panel">
+  <h2>搜索排行采集来源</h2>
+  <dl>
+    <dt>店铺</dt><dd>{{ sycm_job.target.shop_name or '未知' }}{% if sycm_job.target.platform_shop_id %} · {{ sycm_job.target.platform_shop_id }}{% endif %}</dd>
+    <dt>千牛账号</dt><dd>{{ sycm_job.target.login_name or '未知' }}</dd>
+  </dl>
+  {% if sycm_job.has_batch %}
+  <a class="ui-button ui-secondary" href="{{ url_for('sycm_search.index', category=sycm_job.category_id, period=sycm_job.period, batch=sycm_job.id) }}">查看搜索排行批次</a>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

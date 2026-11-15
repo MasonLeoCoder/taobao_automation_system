@@ -27,14 +27,14 @@ class TaskResult:
     exit_code: int
 
 
-def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_id=None, job_claim_token=None, listing_scope=None) -> TaskResult:
+def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_id=None, job_claim_token=None, qianniu_scope=None) -> TaskResult:
     """记录并执行任务；参数：配置、任务名、业务回调；返回：TaskResult。"""
     if settings.task_backend=='mysql':
-        if listing_scope is not None:
-            return _run_mysql_task(settings, name, action, task_id=task_id, listing_scope=listing_scope)
+        if qianniu_scope is not None:
+            return _run_mysql_task(settings, name, action, task_id=task_id, qianniu_scope=qianniu_scope)
         return _run_mysql_task(settings,name,action,task_id=task_id,job_claim_token=job_claim_token) if task_id else _run_mysql_task(settings,name,action)
-    if task_id is not None:
-        raise ValueError('预分配任务编号仅支持 MySQL 任务')
+    if task_id is not None or qianniu_scope is not None:
+        raise ValueError('预分配任务编号和千牛账号归属需要启用 MySQL')
     database.initialize(settings.task_database)
     task_id = None
     try:
@@ -62,7 +62,7 @@ def run_task(settings: Settings, name: str, action: Callable[[], str], *, task_i
         return TaskResult(None, "needs_attention", str(error), 3)
 
 
-def _run_mysql_task(settings,name,action,*,task_id=None,job_claim_token=None,listing_scope=None):
+def _run_mysql_task(settings,name,action,*,task_id=None,job_claim_token=None,qianniu_scope=None):
     """执行已确认入库的任务，保留未提交结论；参数：配置、名称、业务；返回：真实任务结果。"""
     from ecommerce.infrastructure.tasks.events import TaskEvents,event_session,replay_events
     from ecommerce.infrastructure.tasks.ownership import execution_key,owner_alive
@@ -74,14 +74,19 @@ def _run_mysql_task(settings,name,action,*,task_id=None,job_claim_token=None,lis
         with shop_lock(settings.profile_path):
             replay_events(settings,store)
             store.recover_interrupted(execution_key(settings),owner_alive)
+            if qianniu_scope is not None and task_id and store.get_task(task_id) is not None:
+                raise TaskBusy('此请求已有任务，请查看原采集记录')
             session=TaskEvents(settings,store,name,task_id=task_id) if task_id else TaskEvents(settings,store,name)
-            if listing_scope is not None:
-                session.owner.update(account_id=listing_scope['account_id'], shop_id=listing_scope['shop_id'])
+            if qianniu_scope is not None:
+                session.owner.update(account_id=qianniu_scope['account_id'], shop_id=qianniu_scope['shop_id'])
             session.expected_job_claim=job_claim_token
             token=_CURRENT_TASK.set((store,session.task_id))
             try:
                 with event_session(session):
-                    session.start()
+                    if qianniu_scope is None:
+                        session.start()
+                    else:
+                        session.start(details={'qianniu_source': qianniu_scope})
                     try:
                         message=action()
                         status,code='succeeded',0

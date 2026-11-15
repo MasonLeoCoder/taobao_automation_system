@@ -1,12 +1,14 @@
 """生意参谋搜索排行采集、历史与 CSV。"""
 from csv import writer
 from io import StringIO
+import re
 from secrets import compare_digest
 from urllib.parse import urlsplit
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request
 from ecommerce.infrastructure.storage import sycm_search as repository
-from ecommerce.shared.exceptions import TaskBusy
+from ecommerce.modules.account.managed import shop_choices
+from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
 
 sycm_search = Blueprint('sycm_search', __name__)
 
@@ -31,8 +33,9 @@ def protect():
 
 @sycm_search.errorhandler(ValueError)
 @sycm_search.errorhandler(TaskBusy)
+@sycm_search.errorhandler(NeedsAttention)
 def rejected(error):
-    return jsonify(error=str(error)), 409 if isinstance(error, TaskBusy) else 422
+    return jsonify(error=str(error)), 409 if isinstance(error, (TaskBusy, NeedsAttention)) else 422
 
 
 @sycm_search.errorhandler(LookupError)
@@ -48,6 +51,17 @@ def _filters():
     return period, word_type
 
 
+def _identifier(value):
+    if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{32}', value):
+        raise ValueError('采集请求编号无效，请刷新后再试')
+    return value
+
+
+def _source_filter(name):
+    value = request.args.get(name, '')
+    return value if value in ('', 'unknown') else _identifier(value)
+
+
 @sycm_search.get('/sycm/search-rank')
 def index():
     period, word_type = _filters()
@@ -57,23 +71,30 @@ def index():
     category_id = request.args.get('category', default['id'] if default else 0, type=int)
     category = next((row for row in categories if row['id'] == category_id), None)
     batch_id = request.args.get('batch') or None
+    source_shop, source_account = _source_filter('source_shop'), _source_filter('source_account')
     filter_scope = request.args.get('filter_scope')
-    if filter_scope is not None and filter_scope != f'{category_id}:{period}':
+    scope = f'{category_id}:{period}:{source_shop}:{source_account}'
+    if filter_scope is not None and filter_scope != scope and not (
+        not source_shop and not source_account and filter_scope == f'{category_id}:{period}'
+    ):
         batch_id = None
     view = 'history' if request.args.get('view') == 'history' else 'library'
     data = repository.browse(settings(), category_id, period, batch_id, word_type,
-                             request.args.get('page', 1, type=int))
+                             request.args.get('page', 1, type=int), source_shop=source_shop,
+                             source_account=source_account)
     return render_template('sycm_search.html', active='sycm-search', shop_name=settings().shop_name,
         categories=categories, available=available, category=category, category_id=category_id,
         periods=repository.PERIODS, word_types=repository.WORD_TYPES, period=period, word_type=word_type,
-        view=view, explicit_batch=bool(batch_id), **data)
+        view=view, explicit_batch=bool(batch_id), sycm_shops=shop_choices(settings()), scope=scope,
+        source_shop=source_shop, source_account=source_account, **data)
 
 
 @sycm_search.post('/api/sycm/search-rank/start')
 def start():
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or set(data) != {'category_id','period','pages','word_types','sycm_path'}:
-        raise ValueError('请选择类目、周期、词类型和页数')
+    fields = {'category_id', 'period', 'pages', 'word_types', 'sycm_path', 'shop_id', 'account_id', 'request_id'}
+    if not isinstance(data, dict) or set(data) != fields:
+        raise ValueError('请选择店铺、账号、类目、周期、词类型和页数')
     category_id, period, pages, types = (data[name] for name in ('category_id','period','pages','word_types'))
     if (type(category_id) is not int or not isinstance(period, str) or period not in repository.PERIODS
             or type(pages) is not int or not 1 <= pages <= 2_147_483_647 or not isinstance(types, list)
@@ -89,12 +110,14 @@ def start():
         raise ValueError('生意参谋类目路径无效')
     path = ' > '.join(part.strip() for part in path.split('>')) if path.strip() else category['full_path']
     return jsonify(workbench().start(category, path, period, pages,
-        [key for key in repository.WORD_TYPES if key in types])), 202
+        [key for key in repository.WORD_TYPES if key in types], account_id=data['account_id'],
+        shop_id=data['shop_id'], request_id=_identifier(data['request_id']))), 202
 
 
 @sycm_search.get('/api/sycm/search-rank/status')
 def status():
-    return jsonify(workbench().snapshot())
+    request_id = request.args.get('request')
+    return jsonify(workbench().snapshot(_identifier(request_id) if request_id is not None else None))
 
 
 @sycm_search.post('/api/sycm/search-rank/resume')

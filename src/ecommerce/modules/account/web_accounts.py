@@ -3,7 +3,7 @@
 from dataclasses import replace
 from logging import getLogger
 from threading import Event, Lock, Thread
-from uuid import UUID, uuid4
+from uuid import uuid4
 import shutil
 
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
@@ -12,22 +12,13 @@ from ecommerce.infrastructure.browser.session import save_session
 from ecommerce.infrastructure.storage.mysql import MySQLStorageError
 from ecommerce.infrastructure.storage.platform_accounts import AccountStore
 from ecommerce.infrastructure.tasks.lock import shop_lock
+from ecommerce.modules.account.managed import account_session_directory
 from ecommerce.platforms.qianniu.identity import read_shop_identity
 from ecommerce.platforms.qianniu.login import LoginStatus, inspect_login, login_with_qrcode
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.shared.exceptions import NeedsAttention, TaskBusy, TaskStopped
 
 MANAGEMENT_ACTIONS = {'disable', 'enable', 'clear', 'retry_cleanup'}
-
-
-def account_session_directory(workspace, identifier):
-    if not isinstance(identifier, str) or UUID(hex=identifier).hex != identifier:
-        raise ValueError('会话编号无效')
-    root = workspace.resolve() / 'storage/managed_accounts/qianniu'
-    directory = (root / identifier).resolve()
-    if directory != root / identifier:
-        raise ValueError('会话目录不在千牛账号资料下')
-    return directory
 
 
 class AccountWorkbench:
