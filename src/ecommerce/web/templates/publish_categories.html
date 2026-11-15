@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% import 'form_controls.html' as ui %}
+{% from 'managed_accounts.html' import account_fields %}
 {% block title %}发布类目管理{% endblock %}
 {% block breadcrumb %}我的商品 / 发布类目管理{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='publish_categories.css') }}">{% endblock %}
@@ -45,12 +46,16 @@
     {{ ui.control_button('已处理，继续',{'type':'button','id':'category-resume','hidden':true},'secondary') }}
   </div>
   <dialog id="category-confirm" class="ui-modal category-confirm" aria-labelledby="category-confirm-title">
-    <form method="dialog">
+    <form method="dialog" id="category-scan-form">
       <h2 id="category-confirm-title">刷新一级类目</h2>
-      <p>读取当前千牛账号在发品页可见的一级类目。要更新下级，请进入对应类目后点击「重采此分支」。</p>
+      <p id="category-confirm-scope">读取发品页可见的一级类目，结果用于公共类目目录。</p>
+      {% if scan_shops is defined %}
+        {{ account_fields('category', scan_shops, 'category-account-fields') }}
+        <p id="category-scan-error" role="alert" hidden></p>
+      {% endif %}
       <div class="category-header-actions">
-        {{ ui.control_button('取消',{'value':'cancel','autofocus':true},'secondary') }}
-        {{ ui.control_button('开始刷新一级类目',{'value':'confirm'},'primary') }}
+        {{ ui.control_button('取消',{'value':'cancel','autofocus':true,'formnovalidate':true},'secondary') }}
+        {{ ui.control_button('开始刷新一级类目',{'value':'confirm','id':'category-scan-submit','disabled':scan_shops is defined},'primary') }}
       </div>
     </form>
   </dialog>
@@ -167,6 +172,10 @@
           <span class="category-badge {{ 'is-supported' if scan.status == 'complete' else 'is-review' }}">{{ {'complete':'完成','partial':'部分完成','failed':'失败','running':'等待结果'}[scan.status] }}</span></summary>
         <div class="category-run-body">
         <p class="category-muted">批次 {{ scan.id }}</p>
+        {% if scan_shops is defined %}
+        <p>来源店铺 {{ scan.source.shop_name or '未知' }}{% if scan.source.platform_shop_id %}（{{ scan.source.platform_shop_id }}）{% endif %} · 千牛账号 {{ scan.source.login_name or '未知' }}
+          {% if scan.task_id %} · <a href="{{ url_for('pages.task_detail', task_id=scan.task_id) }}">查看任务</a>{% endif %}</p>
+        {% endif %}
         <p>{{ result_counts(result) }}</p>
         {% for item in result.get('changed',[]) %}
           <p>{{ item.before }}{% if item.before != item.after %} → {{ item.after }}{% endif %}
@@ -195,5 +204,6 @@
   </div>
   {% endif %}
 </section>
+<script src="{{ url_for('static',filename='managed_accounts.js') }}" defer></script>
 <script src="{{ url_for('static',filename='publish_categories.js') }}" defer></script>
 {% endblock %}

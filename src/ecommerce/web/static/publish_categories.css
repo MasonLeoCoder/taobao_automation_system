@@ -135,6 +135,8 @@
 .category-run-body { display: grid; gap: 8px; padding: 11px 12px; }
 #publish-categories .category-confirm form { padding: 20px; }
 #publish-categories .category-confirm p { margin: 12px 0 16px; }
+.category-account-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr)); gap:10px; margin-bottom:14px; }
+#category-scan-error { color:var(--control-error); }
 @media (max-width: 1000px) {
   #publish-categories .category-filter { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }

@@ -18,6 +18,7 @@ from ecommerce.platforms.qianniu.product_details import upload_detail_images
 from ecommerce.platforms.qianniu.product_submit import SubmissionResult, submit_product_to_warehouse, inspect_submission_result
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.modules.account.service import authenticate
+from ecommerce.modules.account.managed import verify_editor_session, verify_session
 from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, click_start_button, continue_to_editor, prepare_publish_search, search_publish_products, select_publish_category, select_brand_and_continue
 from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
@@ -96,7 +97,7 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
     return message
 
 
-def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None, sku_titles=None) -> str:
+def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None, sku_titles=None, qianniu_target=None, on_session_expired=None) -> str:
     """填写单商品；参数：配置、导航选项、素材、Excel、人工回调及提交开关；SKU目录默认Excel同级sku图；返回：如实填写及提交说明。"""
     if submit and (brand is None or product_info_file is None):
         raise ValueError("提交需要提供品牌和商品Excel，以完成填写并选择放入仓库")
@@ -192,11 +193,15 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             else:
                 page = authenticate(context, page, settings, on_login_wait=web_review.login_wait)
             web_review.progress('千牛已登录，正在进入商品发布')
+        elif qianniu_target:
+            verify_session(page, qianniu_target, on_session_expired)
         else:
             page = authenticate(context, page, settings)
         page = click_product_nav(context, page)
         page = click_publish_product(context, page)
-        if start:
+        if qianniu_target and (start or keyword is not None):
+            prepare_publish_search(page)
+        elif start:
             click_start_button(page)
         elif managed and keyword is not None:
             prepare_publish_search(page)
@@ -296,6 +301,9 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                 submission_message = submit_with_review(settings, page, on_submit_attention,
                     before_click=web_review.before_click, on_click_intent=web_review.click_intent,
                     on_click_finished=web_review.click_finished, on_result=web_review.result)
+            elif qianniu_target:
+                submission_message = submit_with_review(settings, page, on_submit_attention,
+                    before_click=lambda editor: verify_editor_session(editor, qianniu_target, on_session_expired))
             else:
                 submission_message = submit_with_review(settings, page, on_submit_attention)
         if on_ready is not None:

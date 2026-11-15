@@ -22,8 +22,8 @@ MANAGEMENT_ACTIONS = {'disable', 'enable', 'clear', 'retry_cleanup'}
 
 
 class AccountWorkbench:
-    def __init__(self, settings):
-        self.settings = replace(settings.for_platform('qianniu'), headless=False)
+    def __init__(self, settings, *, headless=False):
+        self.settings = replace(settings.for_platform('qianniu'), headless=headless)
         self.lock = Lock()
         self.feedback = Event()
         self.state = None
@@ -146,7 +146,13 @@ class AccountWorkbench:
             return '已清理本机登录资料' if action == 'retry_cleanup' else '已清除本机登录，下次使用时请重新扫码', False
         return ('已停用账号' if action == 'disable' else '已启用账号'), False
 
-    def _inspect(self, action, current):
+    def inspect_selected(self, action, current, *, on_attention=None, on_scan=None):
+        """命令行在已持有千牛资源锁时，复用扫码或检查所选账号的流程。"""
+        self.state = {'phase': 'running'}
+        message, _ = self._inspect(action, current, on_attention=on_attention, on_scan=on_scan)
+        return message
+
+    def _inspect(self, action, current, *, on_attention=None, on_scan=None):
         store = AccountStore(self.settings)
         existing = action in {'check', 'open'}
         session_id = current['session_id'] if existing else uuid4().hex
@@ -160,7 +166,8 @@ class AccountWorkbench:
             raise NeedsAttention('未找到账号的本机会话，请重新登录')
         ready_to_publish = False
         try:
-            with browser_session(settings, on_attention=self._attention, restore_state=existing) as (context, page):
+            attention = on_attention or (None if settings.headless else self._attention)
+            with browser_session(settings, on_attention=attention, restore_state=existing) as (context, page):
                 if existing:
                     try:
                         status = inspect_login(page)
@@ -175,7 +182,7 @@ class AccountWorkbench:
                     if status is not LoginStatus.AUTHENTICATED:
                         raise NeedsAttention('暂时无法确认千牛登录状态，请检查网络或页面后重试')
                 else:
-                    page = login_with_qrcode(page, on_wait=self._on_scan)
+                    page = login_with_qrcode(page, on_wait=on_scan or self._on_scan)
                     with self.lock:
                         if self.cancelled:
                             raise TaskStopped('已取消本次操作')

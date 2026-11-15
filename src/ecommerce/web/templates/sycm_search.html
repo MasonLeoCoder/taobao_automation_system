@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% import 'form_controls.html' as ui %}
+{% from 'managed_accounts.html' import account_fields %}
 {% from 'pagination.html' import pager with context %}
 {% block title %}生意参谋搜索排行{% endblock %}
 {% block breadcrumb %}市场与选品 / 生意参谋搜索排行{% endblock %}
@@ -31,27 +32,7 @@
   {% if available %}
   {% call ui.modal_shell('sycm-dialog','新建采集','从生意参谋读取指定类目的搜索人气榜。','生意参谋',close_attrs={'aria-label':'关闭采集设置'},dialog_attrs={'class':'sycm-dialog'}) %}
     <form id="sycm-start">
-      {% if sycm_shops is defined %}
-      <div class="sycm-modal-fields">
-        {% call ui.field('目标店铺') %}
-          {% call ui.select_control({'name':'shop_id','required':true,'data-searchable-select':'true'}) %}
-          <option value="">先选择店铺</option>
-          {% for shop in sycm_shops %}<option value="{{ shop.id }}">{{ shop.name }} · {{ shop.platform_id }}</option>{% endfor %}
-          {% endcall %}
-        {% endcall %}
-        {% call ui.field('千牛账号', {'id':'sycm-account-field'}) %}
-          {% call ui.select_control({'name':'account_id','required':true,'disabled':true,
-            'data-searchable-select':'true','data-search-disabled':'true','data-show-disabled':'true','data-option-groups':'true'}) %}
-          <option value="">先选择店铺</option>
-          {% endcall %}
-        {% endcall %}
-      </div>
-      <script id="sycm-shop-data" type="application/json">{{ sycm_shops|tojson }}</script>
-      <p class="ui-form-note" id="sycm-account-note" aria-live="polite" {% if sycm_shops %}hidden{% endif %}>
-        <span id="sycm-account-note-text">当前环境暂无已登记的千牛账号。</span>
-        <a href="{{ url_for('platform_accounts.index') }}">前往账号管理</a>
-      </p>
-      {% endif %}
+      {% if sycm_shops is defined %}{{ account_fields('sycm', sycm_shops, 'sycm-modal-fields') }}{% endif %}
       {% call ui.field('词库归属（千牛类目）') %}{% call ui.select_control({'name':'category_id','required':true,'data-searchable-select':'true'}) %}{{ category_options(available) }}{% endcall %}{% endcall %}
       <div class="sycm-modal-fields">
         {% call ui.field('统计周期') %}{% call ui.select_control({'name':'period'}) %}{{ period_options() }}{% endcall %}{% endcall %}
@@ -181,5 +162,6 @@
     {% endif %}
   </section>
 </section>
+<script src="{{ url_for('static',filename='managed_accounts.js') }}" defer></script>
 <script src="{{ url_for('static',filename='sycm_search.js') }}" defer></script>
 {% endblock %}

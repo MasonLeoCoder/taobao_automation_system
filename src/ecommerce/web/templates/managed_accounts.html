@@ -1,0 +1,23 @@
+{% import 'form_controls.html' as ui %}
+
+{% macro account_fields(prefix, shops, grid_class) %}
+  <div class="{{ grid_class }}">
+    {% call ui.field('目标店铺') %}
+      {% call ui.select_control({'name':'shop_id','required':true,'data-searchable-select':'true'}) %}
+        <option value="">先选择店铺</option>
+        {% for shop in shops %}<option value="{{ shop.id }}">{{ shop.name }} · {{ shop.platform_id }}</option>{% endfor %}
+      {% endcall %}
+    {% endcall %}
+    {% call ui.field('千牛账号', {'id':prefix ~ '-account-field'}) %}
+      {% call ui.select_control({'name':'account_id','required':true,'disabled':true,
+        'data-searchable-select':'true','data-search-disabled':'true','data-show-disabled':'true','data-option-groups':'true'}) %}
+        <option value="">先选择店铺</option>
+      {% endcall %}
+    {% endcall %}
+  </div>
+  <script id="{{ prefix }}-shop-data" type="application/json">{{ shops|tojson }}</script>
+  <p class="ui-form-note" id="{{ prefix }}-account-note" aria-live="polite" {% if shops %}hidden{% endif %}>
+    <span id="{{ prefix }}-account-note-text">当前环境暂无已登记的千牛账号。</span>
+    <a href="{{ url_for('platform_accounts.index') }}">前往账号管理</a>
+  </p>
+{% endmacro %}

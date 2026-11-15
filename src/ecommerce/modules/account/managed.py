@@ -4,7 +4,7 @@ from dataclasses import replace
 import re
 
 from ecommerce.infrastructure.storage.platform_accounts import AccountStore
-from ecommerce.platforms.qianniu.identity import read_shop_identity
+from ecommerce.platforms.qianniu.identity import read_editor_account, read_shop_identity
 from ecommerce.platforms.qianniu.login import LoginStatus, inspect_login, is_login_required
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -45,16 +45,34 @@ def account_problem(settings, account):
     return ''
 
 
-def selected_account(settings, account_id, shop_id):
+def _ensure_eligible(settings, row, allow_relogin):
+    problem = ('已停用' if not row['enabled'] else '') if allow_relogin else account_problem(settings, row)
+    if problem:
+        raise NeedsAttention(f'千牛账号 {row["login_name"]}（{problem}），请前往账号管理')
+    return row
+
+
+def selected_account(settings, account_id, shop_id, *, allow_relogin=False):
     if any(not isinstance(value, str) or not re.fullmatch('[0-9a-f]{32}', value)
            for value in (account_id, shop_id)):
         raise NeedsAttention('请先选择店铺及该店可用的千牛账号')
     row = next((row for row in AccountStore(settings).list_accounts(account_id) if row['shop_id'] == shop_id), None)
     if row is None:
         raise NeedsAttention('所选账号与店铺不匹配，请重新选择')
-    if problem := account_problem(settings, row):
-        raise NeedsAttention(f'千牛账号 {row["login_name"]}（{problem}），请前往账号管理')
-    return row
+    return _ensure_eligible(settings, row, allow_relogin)
+
+
+def registered_account(settings, platform_shop_id, login_name, *, allow_relogin=False):
+    """以界面可见的店铺 ID 和完整登录名选择已登记账号。"""
+    if not platform_shop_id or not login_name:
+        raise NeedsAttention('请指定 --shop-id（千牛店铺 ID）和 --account（完整登录名）')
+    if settings.task_backend != 'mysql':
+        raise NeedsAttention('按千牛账号执行需要启用 MySQL，并先在网页账号管理登记账号')
+    row = next((item for item in AccountStore(settings).list_accounts()
+                if item['platform_shop_id'] == platform_shop_id and item['login_name'] == login_name), None)
+    if row is None:
+        raise NeedsAttention('此店铺和登录名的组合未登记，请到账号管理核对')
+    return _ensure_eligible(settings, row, allow_relogin)
 
 
 def account_target(row):
@@ -95,4 +113,25 @@ def verify_session(page, target, on_expiry):
     if identity is None and is_login_required(page):
         on_expiry()
     check_identity(identity, target)
+    return identity
+
+
+def verify_editor_session(page, target, on_expiry):
+    """保留编辑现场，并与同一浏览器的店铺信息页交叉核对。"""
+    if is_login_required(page):
+        on_expiry()
+    account = read_editor_account(page)
+    if account is None:
+        raise NeedsAttention('无法核对千牛编辑页顶栏的账号及店铺，已暂停入仓')
+    verifier = page.context.new_page()
+    try:
+        identity = read_shop_identity(verifier)
+        if identity is None and is_login_required(verifier):
+            on_expiry()
+    finally:
+        verifier.close()
+    check_identity(identity, target)
+    expected = (identity.shop_name, identity.login_name.rsplit(':', 1)[-1])
+    if account != expected or read_editor_account(page) != expected:
+        raise NeedsAttention('千牛编辑页的账号或店铺与店铺信息页不一致，已暂停入仓')
     return identity

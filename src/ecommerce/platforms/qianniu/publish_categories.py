@@ -1,10 +1,13 @@
 """在已登录的千牛发品页逐列只读采集。"""
 from time import monotonic
+from urllib.parse import urlsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
+from ecommerce.shared.exceptions import NeedsAttention
 
 from .collection_pacing import pause
-from .product import SEARCH_INPUT_SELECTOR, click_start_button
+from .login import is_login_required
+from .product import prepare_publish_search
 from .verification import checkpoint, expect, page_step, qianniu_operation
 
 SEARCH = 'input[placeholder="名称/拼音首字母"]:visible'
@@ -38,6 +41,22 @@ class CategoryPageError(ValueError):
     """页面未能确认类目列表，不能把结果解释为空分支。"""
 
 
+class CategoryLoginRequired(NeedsAttention):
+    """类目页已要求重新登录千牛。"""
+
+
+def check_category_access(page):
+    if is_login_required(page):
+        raise CategoryLoginRequired('千牛已显示登录页')
+    location = urlsplit(page.url)
+    if location.scheme == 'https' and location.hostname in {
+        'myseller.taobao.com', 'item.upload.taobao.com', 'upload.taobao.com',
+    }:
+        for text in ('暂无权限', '您没有权限访问该页面', '当前账号暂无权限', '无权访问'):
+            if page.get_by_text(text, exact=True).first.is_visible():
+                raise NeedsAttention('当前千牛账号没有访问发布类目的权限')
+
+
 def _state(page, column):
     fields = page.locator(SEARCH)
     if fields.count() <= column:
@@ -48,6 +67,7 @@ def _state(page, column):
 def _ready(page, column, predicate=lambda state: True):
     deadline = monotonic() + 10
     while monotonic() < deadline:
+        check_category_access(page)
         checkpoint('等待千牛类目栏目更新')
         state = page_step(lambda: _state(page, column))
         if state and not state['loading'] and state['rows'] and predicate(state):
@@ -155,13 +175,12 @@ def _pick(page, column, name, *, branch):
 
 
 @qianniu_operation
-def collect_publish_categories(page, scopes, *, on_progress=None):
+def collect_publish_categories(page, scopes, *, on_progress=None, prior_parents=()):
     """返回已观察节点、完整父列和失败分支。空范围仅读取一级。"""
     search = page.locator(SEARCH).first
     if not search.is_visible():
-        if not page.locator(SEARCH_INPUT_SELECTOR).is_visible():
-            click_start_button(page)
-            pause(page, 'page')
+        check_category_access(page)
+        prepare_publish_search(page)
         button = page.get_by_text('选择类目', exact=True)
         expect(button).to_be_visible(timeout=15_000)
         page_step(button.click, completed=search.is_visible)
@@ -201,11 +220,14 @@ def collect_publish_categories(page, scopes, *, on_progress=None):
                     raise CategoryPageError('类目路径超过当前采集范围，请复核页面结构')
                 if on_progress and column < 2:
                     on_progress(' > '.join(parts))
-                if row['branch'] or column < 2:
+                was_parent = ' > '.join(parts) in prior_parents
+                if row['branch'] or column < 2 or was_parent:
                     _pick(page, column, name, branch=row['branch'])
                 observed[parts] = (row['platformId'], not row['branch'])
                 if row['branch']:
                     visit(column + 1, parts)
+                elif was_parent:
+                    complete.add(parts)
             except (CategoryPageError, PlaywrightTimeout) as error:
                 # 当前列的这个条目存在，但状态不明。不能将它或兄弟类目核销。
                 complete.discard(parent)

@@ -28,8 +28,21 @@ def connection(settings, *, write=False):
 def catalog(settings):
     with connection(settings) as (conn, categories, scans):
         rows = conn.execute(sa.select(categories).order_by(categories.c.full_path)).mappings()
-        history = conn.execute(sa.select(scans).order_by(scans.c.started_at.desc()).limit(12)).mappings()
-        return [dict(row) for row in rows], [dict(row) for row in history]
+        return [dict(row) for row in rows], _history(conn, scans)
+
+
+def _history(conn, scans):
+    events = scans.metadata.tables['task_events']
+    rows = conn.execute(sa.select(scans, events.c.details.label('source_details')).outerjoin(
+        events, sa.and_(events.c.task_id == scans.c.task_id, events.c.task_sequence == 1,
+                        events.c.event_type == 'task_started')
+    ).order_by(scans.c.started_at.desc()).limit(12)).mappings()
+    history = []
+    for value in rows:
+        row = dict(value)
+        row['source'] = (row.pop('source_details') or {}).get('qianniu_source') or {}
+        history.append(row)
+    return history
 
 
 def find(settings, path):
@@ -47,7 +60,7 @@ def last_confirmed_columns(settings, branch):
         return last(''), last(branch) if branch else None
 
 
-def begin_scan(settings, identifier, scopes):
+def begin_scan(settings, identifier, scopes, *, task_id=None):
     with connection(settings, write=True) as (conn, _, scans):
         # 浏览器任务已持有会话锁，前序运行记录只能来自已退出的采集。
         interrupted = conn.execute(sa.select(scans.c.id, scans.c.result).where(scans.c.status == 'running')).mappings().all()
@@ -55,7 +68,7 @@ def begin_scan(settings, identifier, scopes):
             conn.execute(scans.update().where(scans.c.id == scan['id']).values(
                 status='failed', finished_at=database_now(), result={**scan['result'],
                     'failed': [{'path': '', 'reason': '前次采集已中断，请按页面所示范围重试'}]}))
-        conn.execute(scans.insert().values(id=identifier, scopes=scopes, status='running',
+        conn.execute(scans.insert().values(id=identifier, scopes=scopes, status='running', task_id=task_id,
             result={'mode': 'branches' if scopes else 'roots'}, started_at=database_now()))
 
 
@@ -75,12 +88,18 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
         by_id = {row['qianniu_category_id']: row for row in old if row['qianniu_category_id']}
         id_counts = Counter(platform_id for platform_id, _ in observed.values() if platform_id)
         started = conn.scalar(sa.select(scans.c.result).where(scans.c.id == identifier)) or {}
-        result = {**started, **dict(added=[], changed=[], hidden=[], conflicts=[], completed=[], failed=failed)}
+        result = {**started, **dict(added=[], changed=[], hidden=[], conflicts=[], completed=[], failed=list(failed))}
+        if not observed and not complete and not failed:
+            result['failed'].append({'path': '', 'reason': '未取得可核实的类目，保留原目录'})
+        failed_paths = {row['path'] for row in failed}
+        complete = {parts for parts in complete if SEPARATOR.join(parts) not in failed_paths}
         seen = set()
         leaves = set()
         renamed_roots = set()
         blocked = set()
         original = {row['id']: dict(row) for row in old}
+        previous_parents = {row['parent_id'] for row in old if row['parent_id'] is not None}
+        observed_parents = {parts[:-1] for parts in observed}
         now = database_now()
         for parts, entry in sorted(observed.items(), key=lambda item: (len(item[0]), item[0])):
             path, parent_path = SEPARATOR.join(parts), SEPARATOR.join(parts[:-1])
@@ -102,6 +121,9 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
                     conn.execute(table.update().where(table.c.id.in_(affected)).values(profile_status='review'))
                 continue
             row = at_id or at_path
+            if row and row['id'] in previous_parents and leaf and parts not in complete:
+                leaf = False
+                result['failed'].append({'path': path, 'reason': '原有下级的类目显示为末级，请重采分支核对'})
             data = dict(parent_id=parent['id'] if parent else None, name=parts[-1], full_path=path,
                         level=len(parts), is_leaf=leaf, is_visible=True, last_seen_at=now)
             if platform_id:
@@ -143,6 +165,9 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
         complete_ids = leaves
         for parts in complete:
             path = SEPARATOR.join(parts)
+            if parts not in observed_parents and not (parts in observed and observed[parts][1]):
+                result['failed'].append({'path': path, 'reason': '未取得可核实的类目或末级证据，保留原有下级'})
+                continue
             if parts not in blocked and not any(conflict[:-1] == parts for conflict in blocked):
                 if not parts or path in by_path:
                     complete_ids.add(by_path[path]['id'] if parts else None)
@@ -166,7 +191,7 @@ def apply_scan(settings, identifier, observed, complete, failed, initial_profile
                 if not by_path[path].get('qianniu_category_id'):
                     result['conflicts'].append({'path': path, 'previous': result['hidden'],
                                                 'platform_id': None})
-        status = 'partial' if (failed or result['conflicts']) and observed else 'failed' if failed else 'complete'
+        status = ('partial' if observed else 'failed') if result['failed'] or result['conflicts'] else 'complete'
         conn.execute(scans.update().where(scans.c.id == identifier).values(
             result=result, status=status, finished_at=now))
         return status

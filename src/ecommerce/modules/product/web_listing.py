@@ -17,10 +17,9 @@ from ecommerce.infrastructure.tasks.ownership import atomic_json, owner_alive, p
 from ecommerce.infrastructure.tasks.runner import current_task, run_task
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.platforms.qianniu.product_review import read_listing_fields, read_listing_media
-from ecommerce.platforms.qianniu.identity import read_editor_account, read_shop_identity
 from ecommerce.platforms.qianniu.login import is_login_required
 from ecommerce.modules.account.managed import (
-    account_settings, account_target, check_identity, require_login, selected_account, verify_session,
+    account_settings, account_target, require_login, selected_account, verify_editor_session, verify_session,
 )
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from ecommerce.shared.time import BEIJING
@@ -313,34 +312,13 @@ class _ListingRun:
                    '千牛会话已失效。请到账号管理重新登录原账号，核对千牛是否仍保留商品编辑现场；现场丢失时请重新预检和填写')
         require_login(self.settings, self.managed_account, message)
 
-    def verify_identity(self, identity):
-        check_identity(identity, self.target)
-        self.record_identity(identity)
-
     def record_identity(self, identity):
         self.update(verified_identity={'login_name': identity.login_name, 'platform_shop_id': identity.shop_id,
                                       'verified_at': datetime.now(BEIJING).isoformat()})
 
     def verify_editor_identity(self, page):
         """用同一会话的店铺信息页交叉核对编辑页顶栏，保留编辑现场。"""
-        if is_login_required(page):
-            self.require_login()
-        account = read_editor_account(page)
-        if account is None:
-            raise NeedsAttention('无法核对千牛编辑页顶栏的账号及店铺，已暂停入仓')
-        verifier = page.context.new_page()
-        try:
-            identity = read_shop_identity(verifier)
-            if identity is None and is_login_required(verifier):
-                self.require_login()
-        finally:
-            verifier.close()
-        if identity is None or not identity.login_name:
-            raise NeedsAttention('无法读取千牛店铺 ID 及完整登录名，已暂停入仓')
-        expected = (identity.shop_name, identity.login_name.rsplit(':', 1)[-1])
-        if account != expected or read_editor_account(page) != expected:
-            raise NeedsAttention('千牛编辑页的账号或店铺与店铺信息页不一致，已暂停入仓')
-        self.verify_identity(identity)
+        self.record_identity(verify_editor_session(page, self.target, self.require_login))
 
     def update(self, **values):
         """原子保存当前进度；参数：状态更新；返回：无。"""

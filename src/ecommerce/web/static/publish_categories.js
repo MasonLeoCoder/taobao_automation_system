@@ -206,7 +206,8 @@
     const active = ['queued','running','waiting'].includes(state.phase);
     controls.forEach(control => { control.disabled = active; });
     notice.hidden = !state.message;
-    progress.textContent = state.message || '';
+    const source = state.target?.login_name ? `${state.target.shop_name} · ${state.target.login_name} · ` : '';
+    progress.textContent = state.message ? source + state.message : '';
     prompt = state.prompt;
     resume.hidden = !prompt;
     if (active) {
@@ -223,28 +224,76 @@
     catch (error) { notice.hidden = false; progress.textContent = error.message; timer = setTimeout(poll,2500); }
   }
 
-  async function start(scopes) {
+  async function start(scopes, target = {}) {
     clearTimeout(timer);
     controls.forEach(control => { control.disabled = true; });
-    try { render(await api(root.dataset.scan,{scopes:[...new Set(scopes)]})); }
+    try {
+      render(await api(root.dataset.scan,{scopes:[...new Set(scopes)], ...target}));
+      return true;
+    }
     catch (error) {
-      notice.hidden = false;
-      progress.textContent = error.message;
+      if (scanError && confirmation.open) {
+        scanError.textContent = error.message;
+        scanError.hidden = false;
+      } else {
+        notice.hidden = false;
+        progress.textContent = error.message;
+      }
       controls.forEach(control => { control.disabled = false; });
+      return false;
     }
   }
 
   const confirmation = document.getElementById('category-confirm');
-  document.getElementById('category-full')?.addEventListener('click',() => {
+  const form = document.getElementById('category-scan-form');
+  const scanSubmit = document.getElementById('category-scan-submit');
+  const scanError = document.getElementById('category-scan-error');
+  const managed = Boolean(form?.elements.shop_id);
+  let scopes = [], submitting = false;
+  function confirmScan(paths) {
+    if (managed) {
+      scopes = paths;
+      form.elements.shop_id.value = '';
+      form.elements.shop_id.dispatchEvent(new Event('change',{bubbles:true}));
+      document.getElementById('category-confirm-title').textContent = paths.length ? '重采此分支' : '刷新一级类目';
+      document.getElementById('category-confirm-scope').textContent = paths.length ? paths.join('、') : '读取发品页可见的一级类目，结果用于公共类目目录。';
+      scanSubmit.textContent = paths.length ? '开始采集分支' : '开始刷新一级类目';
+      scanError.hidden = true;
+    }
     confirmation.returnValue = '';
     confirmation.showModal();
-  });
+  }
+  document.getElementById('category-full')?.addEventListener('click',() => confirmScan([]));
   confirmation?.addEventListener('close',() => {
-    if (confirmation.returnValue === 'confirm') start([]);
+    if (!managed && confirmation.returnValue === 'confirm') start([]);
   });
+  function updateSubmit() {
+    scanSubmit.disabled = submitting || !form.elements.shop_id.value || !form.elements.account_id.value;
+  }
+  if (managed) {
+    form.addEventListener('change',event => {
+      if (event.target.name === 'shop_id') window.updateManagedAccounts(form, 'category');
+      if (['shop_id','account_id'].includes(event.target.name)) updateSubmit();
+    });
+    form.addEventListener('submit',async event => {
+      if (event.submitter?.value === 'cancel') return;
+      event.preventDefault();
+      if (scanSubmit.disabled) return;
+      submitting = true;
+      updateSubmit();
+      scanError.hidden = true;
+      const started = await start(scopes, {shop_id:form.elements.shop_id.value,account_id:form.elements.account_id.value});
+      submitting = false;
+      updateSubmit();
+      if (started && confirmation.open) confirmation.close();
+    });
+  }
   root.querySelectorAll('[data-retry],[data-retry-scopes]').forEach(button => {
-    button.addEventListener('click',() => start(button.dataset.retry ?
-      [button.dataset.retry] : JSON.parse(button.dataset.retryScopes)));
+    button.addEventListener('click',() => {
+      const paths = button.dataset.retry ? [button.dataset.retry] : JSON.parse(button.dataset.retryScopes);
+      if (managed) confirmScan(paths);
+      else start(paths);
+    });
   });
   resume.addEventListener('click',async () => {
     resume.disabled = true;

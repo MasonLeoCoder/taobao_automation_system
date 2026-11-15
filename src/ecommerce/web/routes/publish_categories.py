@@ -6,8 +6,9 @@ from urllib.parse import urlsplit
 
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request
 from ecommerce.infrastructure.storage import publish_categories as repository
+from ecommerce.modules.account.managed import shop_choices
 from ecommerce.modules.product.listing_profiles import PROFILES, support
-from ecommerce.shared.exceptions import TaskBusy
+from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
 
 publish_categories = Blueprint('publish_categories', __name__)
 
@@ -25,6 +26,7 @@ def protect():
 
 @publish_categories.errorhandler(ValueError)
 @publish_categories.errorhandler(TaskBusy)
+@publish_categories.errorhandler(NeedsAttention)
 def rejected(error):
     return jsonify(error=str(error)), 409
 
@@ -81,12 +83,17 @@ def index():
         page=page, pages=pages, total=len(selected), current=current, crumbs=crumbs, history=history,
         roots_checked=roots_checked, branch_checked=branch_checked,
         query=query, selected_status=status, visibility=visibility,
+        scan_shops=shop_choices(current_app.config['SETTINGS']),
         shop_name=current_app.config['SETTINGS'].shop_name)
 
 
 @publish_categories.post('/api/publish-categories/scan')
 def scan():
     data = request.get_json()
+    if current_app.config['SETTINGS'].task_backend != 'mysql':
+        raise ValueError('按千牛账号采集需要启用 MySQL')
+    if not isinstance(data, dict) or set(data) != {'scopes', 'account_id', 'shop_id'}:
+        raise ValueError('请先选择店铺和该店的千牛账号')
     scopes = data.get('scopes') if isinstance(data, dict) else None
     if not isinstance(scopes, list) or any(not isinstance(path, str) or not path for path in scopes):
         raise ValueError('请选择有效采集范围')
@@ -100,7 +107,8 @@ def scan():
                 known.update([item['path']] if item['path'] else entry['scopes'])
         if set(scopes) - known:
             raise ValueError('请先刷新一级类目，再选择要采集的分支')
-    return jsonify(current_app.extensions['publish_categories'].start(scopes)), 202
+    return jsonify(current_app.extensions['publish_categories'].start(scopes,
+        account_id=data['account_id'], shop_id=data['shop_id'])), 202
 
 
 @publish_categories.get('/publish-categories/export')

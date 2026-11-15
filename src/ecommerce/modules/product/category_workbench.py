@@ -5,14 +5,15 @@ from threading import Event, Lock, Thread
 from uuid import uuid4
 
 from ecommerce.infrastructure.storage import publish_categories as repository
-from ecommerce.infrastructure.tasks.runner import run_task
-from ecommerce.modules.account.service import authenticate
+from ecommerce.infrastructure.tasks.runner import current_task, run_task
+from ecommerce.modules.account.managed import account_settings, account_target, require_login, selected_account, verify_session
 from ecommerce.platforms.qianniu.collection_pacing import check_cooldown, collection_pacing, pause
 from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product
-from ecommerce.platforms.qianniu.publish_categories import collect_publish_categories
+from ecommerce.platforms.qianniu.publish_categories import CategoryLoginRequired, collect_publish_categories
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
 from .listing_profiles import INITIAL_PROFILES
+
 
 class CategoryWorkbench:
     def __init__(self, settings):
@@ -29,14 +30,16 @@ class CategoryWorkbench:
         with self.lock:
             self.state.update(values)
 
-    def start(self, scopes):
+    def start(self, scopes, *, account_id, shop_id):
         with self.lock:
             if self.state and self.state['phase'] in {'queued', 'running', 'waiting'}:
                 raise TaskBusy('已有类目采集正在运行')
+            target = account_target(selected_account(self.settings, account_id, shop_id))
             identifier = uuid4().hex
-            self.state = {'id': identifier, 'phase': 'queued', 'prompt': None, 'message': '等待千牛会话'}
+            self.state = {'id': identifier, 'phase': 'queued', 'prompt': None, 'message': '等待千牛会话',
+                          'target': target, 'task_id': None}
             try:
-                Thread(target=self._run, args=(identifier, scopes), daemon=True,
+                Thread(target=self._run, args=(identifier, scopes, target), daemon=True,
                        name='publish-categories').start()
             except RuntimeError:
                 self.state.update(phase='failed', message='无法启动类目采集')
@@ -56,21 +59,33 @@ class CategoryWorkbench:
         if not self.feedback_event.wait(600):
             raise NeedsAttention('等待千牛人工反馈超时，请重新采集')
 
-    def _run(self, identifier, scopes):
+    def _run(self, identifier, scopes, target):
         def collect():
-            check_cooldown(self.settings)
-            repository.begin_scan(self.settings, identifier, scopes)
+            task_id = current_task()[1]
+            self._update(phase='running', message='正在检查千牛登录', task_id=task_id)
+            repository.begin_scan(self.settings, identifier, scopes, task_id=task_id)
             try:
-                self._update(phase='running', message='正在检查千牛登录')
-                with browser_session(self.settings, on_attention=self._attention) as (context, page), collection_pacing(self.settings, context):
-                    page = authenticate(context, page, self.settings, on_login_wait=lambda _page, **_kwargs:
-                        self._attention('请在千牛浏览器完成扫码，再点击「已处理，继续」'))
-                    page = click_product_nav(context, page)
-                    pause(page, 'page')
-                    page = click_publish_product(context, page)
-                    pause(page, 'page')
-                    observed, complete, failed = collect_publish_categories(page, scopes,
-                        on_progress=lambda path: self._update(message=f'正在采集 {path}'))
+                check_cooldown(self.settings)
+                row = selected_account(self.settings, target['account_id'], target['shop_id'])
+                browser_settings = account_settings(self.settings, row)
+                prior_rows, _ = repository.catalog(self.settings)
+                parent_ids = {item['parent_id'] for item in prior_rows}
+                prior_parents = {item['full_path'] for item in prior_rows if item['id'] in parent_ids}
+
+                def expired():
+                    require_login(self.settings, row)
+
+                try:
+                    with browser_session(browser_settings, on_attention=self._attention) as (context, page), collection_pacing(self.settings, context):
+                        verify_session(page, target, expired)
+                        page = click_product_nav(context, page)
+                        pause(page, 'page')
+                        page = click_publish_product(context, page)
+                        pause(page, 'page')
+                        observed, complete, failed = collect_publish_categories(page, scopes, prior_parents=prior_parents,
+                            on_progress=lambda path: self._update(message=f'正在采集 {path}'))
+                except CategoryLoginRequired:
+                    expired()
                 status = repository.apply_scan(self.settings, identifier, observed, complete, failed, INITIAL_PROFILES)
             except Exception as error:
                 repository.fail_scan(self.settings, identifier, str(error).splitlines()[0])
@@ -82,7 +97,7 @@ class CategoryWorkbench:
             return '已更新发布类目目录' if status == 'complete' else '部分分支已更新，请查看待重试或待核对项'
 
         try:
-            result = run_task(self.settings, 'product.categories', collect)
+            result = run_task(self.settings, 'product.categories', collect, qianniu_scope=target)
             self._update(phase=result.status, prompt=None, message=result.message)
         except Exception:
             getLogger(__name__).exception('类目采集任务中断')

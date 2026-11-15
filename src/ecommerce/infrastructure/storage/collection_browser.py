@@ -233,7 +233,13 @@ def _browse(c, tables, view, **o):
         if not task:
             raise LookupError('任务不存在')
         from ecommerce.infrastructure.storage.collection_lifecycle import task_views
-        return {'task':task_views(c,tables,[task])[0]}
+        source = {}
+        if task.get('account_id') and task.get('shop_id'):
+            events = tables['task_events']
+            details = c.scalar(sa.select(events.c.details).where(events.c.task_id == task['id'],
+                events.c.task_sequence == 1, events.c.event_type == 'task_started')) or {}
+            source = details.get('qianniu_source') or {}
+        return {'task':task_views(c,tables,[task])[0], 'qianniu_source':source}
     if view in {'search','search_records'}:
         task_id = o['task_id']
         if not re.fullmatch(r'[a-f0-9]{32}', task_id):

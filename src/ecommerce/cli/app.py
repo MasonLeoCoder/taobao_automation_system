@@ -9,6 +9,11 @@ from ecommerce.shared.logging import setup_logging
 DETAIL_STEPS = ("basic_info", "video", "main_images", "skus", "parameters", "detail_images", "review_summary", "reviews", "questions")
 
 
+def _qianniu_options(command):
+    command.add_argument('--shop-id', help='千牛「店铺信息」显示的店铺 ID')
+    command.add_argument('--account', help='账号管理中的完整千牛登录名')
+
+
 def parser() -> argparse.ArgumentParser:
     """建立命令结构；参数：无；返回：解析器。"""
     root = argparse.ArgumentParser(description="电商自动化工作台 · 单店铺")
@@ -51,6 +56,7 @@ def parser() -> argparse.ArgumentParser:
     account.add_argument("--platform", choices=("qianniu", "taobao"), default="qianniu",
                          help="登录平台：qianniu 千牛（默认），taobao 淘宝买家端；会话独立保存")
     account.add_argument("--no-wait", action="store_true", help="仅淘宝 login：保存会话后自动关闭浏览器，默认保留窗口")
+    _qianniu_options(account)
     taobao = commands.add_parser("taobao", help="淘宝关键词搜索、列表及详情采集与任务控制")
     taobao_actions = taobao.add_subparsers(dest="action", required=True)
     resume = taobao_actions.add_parser('resume',help='查看或继续已保存的原采集计划')
@@ -85,6 +91,7 @@ def parser() -> argparse.ArgumentParser:
     detail.add_argument("--no-wait", action="store_true", help="所选详情步骤完成后关闭浏览器，默认保留窗口")
     product = commands.add_parser("product", help="商品入口导航")
     product.add_argument("action", choices=("open",))
+    _qianniu_options(product)
     product.add_argument("--start", action="store_true", help="尝试点击开启按钮，旧定位问题待验证")
     product.add_argument("--no-wait", action="store_true", help="完成后立即关闭浏览器")
     product.add_argument("--submit", action="store_true", help="填写后提交到仓库，失败时提示音并等待人工检查")
@@ -135,7 +142,7 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("--report", help="新建验证报告路径；默认在 workspace/output/reports 生成唯一文件，不覆盖已有报告")
     web = commands.add_parser("web", help="启动本地网页")
     web.add_argument("--port", type=int, help="本地服务端口")
-    commands.add_parser("upload", help="兼容入口：product open --start")
+    _qianniu_options(commands.add_parser("upload", help="兼容入口：product open --start"))
     commands.add_parser("download", help="兼容入口：旧下载尚未实现")
     return root
 
@@ -154,6 +161,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         cli.print_help()
         return 0
+    if args.command in ('product', 'upload') or args.command == 'account' and args.platform == 'qianniu':
+        if not (args.shop_id and args.account):
+            cli.error('千牛操作需要 --shop-id 和 --account')
+    if args.command == 'account' and args.platform == 'taobao' and (args.shop_id or args.account):
+        cli.error('淘宝买家端无需指定千牛店铺和账号')
     try:
         settings = load_settings(args.config)
         from ecommerce.infrastructure.storage.environments import label, assert_writable
@@ -241,13 +253,14 @@ def main(argv: list[str] | None = None) -> int:
             from ecommerce.cli.commands.account import execute
             if args.no_wait and (args.platform != "taobao" or args.action != "login"):
                 cli.error("account --no-wait 仅支持 login --platform taobao")
-            result = execute(settings, args.action, args.platform, wait=not args.no_wait)
+            result = execute(settings, args.action, args.platform, wait=not args.no_wait,
+                             shop_id=args.shop_id, account=args.account)
         else:
             from ecommerce.cli.commands.product import execute
             legacy = args.command == "upload"
             if legacy:
                 print("旧命令 upload 对应 product open --start；尚不支持完整上架。", file=sys.stderr)
-            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None), getattr(args, "video_file", None), getattr(args, "product_info_file", None), submit=getattr(args, "submit", False), sku_images_dir=getattr(args, "sku_images_dir", None))
+            result = execute(settings, legacy or args.start, legacy or not args.no_wait, getattr(args, "keyword", None), getattr(args, "category", None), getattr(args, "brand", None), getattr(args, "main_images_dir", None), getattr(args, "portrait_images_dir", None), getattr(args, "detail_images_dir", None), getattr(args, "video_file", None), getattr(args, "product_info_file", None), submit=getattr(args, "submit", False), sku_images_dir=getattr(args, "sku_images_dir", None), shop_id=args.shop_id, account=args.account)
         print(f"[{result.status}] {result.message}")
         if result.task_id:
             print(f"任务编号：{result.task_id}")

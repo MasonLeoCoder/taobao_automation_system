@@ -9,7 +9,8 @@ import sqlalchemy as sa
 from flask import Flask
 
 from ecommerce.infrastructure.storage import publish_categories as repo
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v27 import build_metadata, NEW_TABLES
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v27 import NEW_TABLES
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v32 import build_metadata
 from ecommerce.platforms.qianniu import publish_categories as platform
 from ecommerce.web.routes.publish_categories import publish_categories
 
@@ -17,7 +18,7 @@ from ecommerce.web.routes.publish_categories import publish_categories
 class PublishCategoryRouteTests(TestCase):
     def test_new_scans_allow_only_one_branch_and_legacy_failed_scopes_can_retry(self):
         app = Flask(__name__)
-        app.config.update(SETTINGS=SimpleNamespace(collection_backend='mysql'), COLLECTION_TOKEN='token')
+        app.config.update(SETTINGS=SimpleNamespace(collection_backend='mysql', task_backend='mysql'), COLLECTION_TOKEN='token')
         app.register_blueprint(publish_categories)
         start = Mock(return_value={'phase': 'queued'})
         app.extensions['publish_categories'] = SimpleNamespace(start=start)
@@ -25,11 +26,13 @@ class PublishCategoryRouteTests(TestCase):
         headers = {'X-Collection-Token': 'token'}
 
         def submit(scopes):
-            return client.post('/api/publish-categories/scan', json={'scopes': scopes}, headers=headers)
+            return client.post('/api/publish-categories/scan',
+                json={'scopes': scopes, 'shop_id': 'a' * 32, 'account_id': 'b' * 32}, headers=headers)
 
         rows = [{'full_path': '宠物', 'is_leaf': False}]
         history = [{'scopes': ['宠物', '图书'], 'result': {'failed': [{'path': '', 'reason': '中断'}]}}]
         with patch.object(repo, 'catalog', return_value=(rows, history)):
+            self.assertEqual(client.post('/api/publish-categories/scan', json={'scopes': []}, headers=headers).status_code, 409)
             self.assertEqual(submit(['宠物', '图书']).status_code, 409)
             start.assert_not_called()
             self.assertEqual(submit([]).status_code, 202)
@@ -37,6 +40,8 @@ class PublishCategoryRouteTests(TestCase):
             self.assertEqual(submit(['图书']).status_code, 202)
             self.assertEqual(submit(['未确认分支']).status_code, 409)
         self.assertEqual([call.args[0] for call in start.call_args_list], [[], ['宠物'], ['图书']])
+        self.assertTrue(all(call.kwargs == {'shop_id': 'a' * 32, 'account_id': 'b' * 32}
+                            for call in start.call_args_list))
 
 
 class PublishCategoryScopeTests(TestCase):
@@ -83,10 +88,13 @@ class PublishCategoryMergeTests(TestCase):
         metadata = sa.MetaData()
         tables = []
         for name in NEW_TABLES:
-            columns = [sa.Column(col.name, sa.Integer if col.name == 'id' and name == NEW_TABLES[0] else col.type,
+            columns = [sa.Column(col.name, sa.Integer if col.name == 'id' and name == NEW_TABLES[0] else
+                                 sa.String(32) if getattr(col.type, 'collation', None) == 'ascii_bin' else col.type,
                                  primary_key=col.primary_key, nullable=col.nullable)
                        for col in original.tables[name].columns]
             tables.append(sa.Table(name, metadata, *columns))
+        self.events = sa.Table('task_events', metadata, sa.Column('task_id', sa.String(32)),
+            sa.Column('task_sequence', sa.Integer), sa.Column('event_type', sa.String), sa.Column('details', sa.JSON))
         metadata.create_all(self.engine)
         self.category, self.batch = tables
         self.settings = SimpleNamespace()
@@ -144,9 +152,34 @@ class PublishCategoryMergeTests(TestCase):
         self.scan(rows, {('宠物',), ('宠物', '工具')})
         del rows[('宠物', '工具', '粘毛器')]
         rows[('宠物', '工具')] = ('2', True)
-        status, result = self.scan(rows, {('宠物',)})
+        status, result = self.scan(rows, {('宠物',), ('宠物', '工具')})
         self.assertEqual((status, result['hidden']), ('complete', ['宠物 > 工具 > 粘毛器']))
         self.assertFalse(repo.find(self.settings, '宠物 > 工具 > 粘毛器')['is_visible'])
+
+    def test_unconfirmed_empty_and_unconfirmed_leaf_do_not_hide_previous_children(self):
+        self.scan(self.initial(), {('宠物',), ('宠物', '工具')})
+        child = '宠物 > 工具 > 粘毛器'
+        status, result = self.scan({}, {()}, scopes=())
+        self.assertEqual((status, result['completed'], result['hidden']), ('failed', [], []))
+        status, result = self.scan({('宠物',): ('1', False), ('宠物', '工具'): ('2', True),
+                                    ('宠物', '猫咪'): (None, True)}, {('宠物',)})
+        self.assertEqual((status, result['hidden']), ('partial', []))
+        self.assertTrue(repo.find(self.settings, child)['is_visible'])
+        self.assertFalse(repo.find(self.settings, '宠物 > 工具')['is_leaf'])
+
+    def test_scan_links_task_and_reads_the_recorded_identity(self):
+        task_id, new, old = uuid4().hex, uuid4().hex, uuid4().hex
+        recorded = {'login_name': 'tb123:大橘', 'shop_name': 'A店', 'platform_shop_id': '123'}
+        repo.begin_scan(self.settings, old, [])
+        repo.fail_scan(self.settings, old, '读取失败')
+        with self.engine.begin() as conn:
+            conn.execute(self.events.insert().values(task_id=task_id, task_sequence=1,
+                event_type='task_started', details={'qianniu_source': recorded}))
+        repo.begin_scan(self.settings, new, [], task_id=task_id)
+        by_id = {row['id']: row for row in repo.catalog(self.settings)[1]}
+        self.assertEqual(by_id[new]['task_id'], task_id)
+        self.assertEqual(by_id[new]['source'], recorded)
+        self.assertEqual(by_id[old]['source'], {})
 
     def test_roots_only_keeps_children_until_a_root_disappears_and_branch_is_confirmed_again(self):
         rows = self.initial()

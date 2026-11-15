@@ -31,4 +31,13 @@
   {% endif %}
 </section>
 {% endif %}
+{% if qianniu_source and not sycm_job and not listing_job %}
+<section class="panel">
+  <h2>千牛任务归属</h2>
+  <dl>
+    <dt>店铺</dt><dd>{{ qianniu_source.shop_name }} · {{ qianniu_source.platform_shop_id }}</dd>
+    <dt>千牛账号</dt><dd>{{ qianniu_source.login_name }}</dd>
+  </dl>
+</section>
+{% endif %}
 {% endblock %}

@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.mysql import insert
 
 from .mysql import MySQLStorageError, safe_error
-from .mysql_migrations.schema_v31 import build_metadata
+from .mysql_migrations.schema_v32 import build_metadata
 from .time_values import database_now
 from ecommerce.shared.exceptions import NeedsAttention
 

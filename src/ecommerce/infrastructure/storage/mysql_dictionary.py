@@ -2,7 +2,7 @@
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 from ecommerce.infrastructure.storage.mysql import version_table
-from ecommerce.infrastructure.storage.mysql_migrations.schema_v31 import REVISION,build_metadata
+from ecommerce.infrastructure.storage.mysql_migrations.schema_v32 import REVISION,build_metadata
 
 
 def render_dictionary():

@@ -121,11 +121,10 @@ class WebListingTests(TestCase):
     def test_editor_and_shop_identity_must_both_match_the_sealed_account(self):
         worker = MagicMock(spec=_ListingRun)
         worker.target = dict(login_name='tb123:大橘', platform_shop_id='123')
-        worker.verify_identity.side_effect = lambda identity: _ListingRun.verify_identity(worker, identity)
         worker.record_identity.side_effect = lambda identity: _ListingRun.record_identity(worker, identity)
         page = MagicMock()
         companion = page.context.new_page.return_value
-        module = 'ecommerce.modules.product.web_listing'
+        module = 'ecommerce.modules.account.managed'
         with (patch(f'{module}.is_login_required', return_value=False),
               patch(f'{module}.read_shop_identity', return_value=ShopIdentity('123', '测试店铺', '大橘-运营', 'tb123:大橘')),
               patch(f'{module}.read_editor_account', return_value=('测试店铺', 'tb123')) as account):
