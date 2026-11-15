@@ -50,6 +50,7 @@ def bind_listing_fixture(app):
           patch.object(workbench, 'settings', replace(workbench.settings, task_backend='mysql')),
           patch('ecommerce.modules.account.managed.AccountStore') as store,
           patch('ecommerce.modules.product.web_listing.run_task', side_effect=run_locally),
+          patch('ecommerce.modules.product.listing_history.cli_listing_events', return_value=[]),
           patch('ecommerce.modules.product.web_listing.local_log',
                 side_effect=lambda config, path: local_log(replace(config, task_backend='sqlite'), path)),
           patch('ecommerce.modules.product.web_listing.log_page',
@@ -187,13 +188,15 @@ class WebListingTests(TestCase):
         worker = MagicMock(spec=_ListingRun)
         worker.target = {'shop_id': 's'}
         worker.path = self.root / ('a' * 32)
+        worker.settings = self.app.extensions['product_listing'].settings
+        worker.state = {'task_id': 'a' * 32}
         worker._wait.return_value = 'approve'
         rows = [{'id': digit * 32, 'task_id': digit * 32, 'target': {'shop_id': shop},
-                 'outcome': outcome, 'code': code} for digit, shop, outcome, code in (
+                 'outcome': outcome, 'code': code, 'created_at': ''} for digit, shop, outcome, code in (
                      ('a', 's', 'uncertain', 'actual'), ('b', 's', 'uncertain', 'actual'),
                      ('c', 't', 'uncertain', 'actual'), ('d', 's', 'warehouse', 'actual'),
                      ('e', 's', 'uncertain', 'planned'))]
-        with patch('ecommerce.modules.product.web_listing.listing_records', return_value=iter(rows)):
+        with patch('ecommerce.modules.product.listing_history.listing_records', return_value=iter(rows)):
             _ListingRun.warn_pending_submission(worker, MagicMock(), 'actual')
         self.assertEqual(worker._wait.call_args.kwargs['related_tasks'], ['b' * 32])
         worker.update.assert_called_once_with(submitted_code='actual')

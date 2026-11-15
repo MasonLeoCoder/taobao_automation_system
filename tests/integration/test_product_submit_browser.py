@@ -3,11 +3,15 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from playwright.sync_api import sync_playwright
 from ecommerce.modules.product import service
+from ecommerce.modules.product.cli_listing import CliListing
 from ecommerce.platforms.qianniu.product_submit import submit_product_to_warehouse, inspect_submission_result
 from ecommerce.platforms.qianniu.verification import VerificationGuard
 from ecommerce.shared.config import load_settings
+from ecommerce.shared.exceptions import TaskStopped
 
 
 HTML = """
@@ -45,6 +49,37 @@ class ProductSubmitBrowserTests(unittest.TestCase):
             result = submit_product_to_warehouse(self.page, wait_ms=500)
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(self.page.evaluate("submitCount"), 1)
+
+    def test_cli_pending_review_precedes_intent_and_click(self):
+        self.page.evaluate("""() => {
+            document.querySelector('#sell-field-title').innerHTML = '<input value="示例标题">';
+            document.body.insertAdjacentHTML('beforeend', '<div id="sell-field-outerId"><input value="ABC-100"></div>');
+            action = () => {
+                document.querySelector('#sell-field-title').remove();
+                document.body.insertAdjacentHTML('beforeend', '<h1>宝贝发布成功，已放入仓库</h1><div>商品ID：123456</div>');
+            };
+        }""")
+        events = Mock(task_id='a' * 32)
+        identity = SimpleNamespace(login_name='example:子账号', shop_id='100')
+        reviewer = Mock(side_effect=TaskStopped('取消'))
+        with (patch('ecommerce.modules.product.cli_listing.current_events', return_value=events),
+              patch('ecommerce.modules.product.cli_listing.verify_editor_session', return_value=identity),
+              patch('ecommerce.modules.product.cli_listing.pending_submissions', return_value=['b' * 32]) as related,
+              patch('ecommerce.modules.product.cli_listing.storage_checkpoint'), VerificationGuard(self.context)):
+            journal = CliListing(SimpleNamespace(port=8001), {'shop_id': 'A'}, Mock(), reviewer)
+            options = {'before_click': journal.before_click, 'on_click_intent': journal.click_intent}
+            with self.assertRaises(TaskStopped):
+                submit_product_to_warehouse(self.page, wait_ms=500, **options)
+            self.assertEqual(self.page.evaluate('submitCount'), 0)
+            events.append.assert_not_called()
+            reviewer.side_effect = None
+            events.append.side_effect = lambda operation: self.assertEqual(self.page.evaluate('submitCount'), 0)
+            result = submit_product_to_warehouse(self.page, wait_ms=500, **options)
+            journal.result(result)
+            self.assertEqual(self.page.evaluate('submitCount'), 1)
+            self.assertEqual(related.call_args.args[1:], ('A', 'ABC-100'))
+            events.append.assert_called_once()
+            self.assertEqual(events.emit.call_args.kwargs['details']['item_id'], '123456')
 
     def test_success_keeps_item_id_and_supplemental_failures(self):
         self.page.evaluate("""() => { action=()=>{

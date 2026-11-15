@@ -6,11 +6,12 @@ from ecommerce.modules.account.managed import (
 from ecommerce.shared.config import Settings
 
 
-from ecommerce.cli.interaction import prompt_manual_verification, prompt_submission_review
+from ecommerce.cli.interaction import prompt_duplicate_listing, prompt_manual_verification, prompt_submission_review
 
 
 def execute(settings: Settings, start: bool, wait: bool, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, sku_images_dir: str | None = None, *, shop_id=None, account=None):
     """执行商品任务；参数：配置、导航选项、素材、Excel、提交开关、SKU图片目录；返回：任务结果。"""
+    from ecommerce.modules.product.cli_listing import CliListing
     from ecommerce.modules.product.service import open_publish
     settings = settings.for_platform('qianniu')
     target = account_target(registered_account(settings, shop_id, account))
@@ -19,10 +20,14 @@ def execute(settings: Settings, start: bool, wait: bool, keyword: str | None = N
     on_submit_attention = None if settings.headless else prompt_submission_review
     def work():
         row = selected_account(settings, target['account_id'], target['shop_id'])
+        def on_expiry():
+            require_login(settings, row)
+
+        listing = CliListing(settings, target, on_expiry, None if settings.headless else prompt_duplicate_listing)
         return open_publish(account_settings(settings, row), start, on_ready, keyword, category, brand,
             main_images_dir, portrait_images_dir, on_attention=on_attention,
             detail_images_dir=detail_images_dir, video_file=video_file, product_info_file=product_info_file,
             submit=submit, on_submit_attention=on_submit_attention, sku_images_dir=sku_images_dir,
-            qianniu_target=target, on_session_expired=lambda: require_login(settings, row))
+            qianniu_target=target, on_session_expired=on_expiry, cli_listing=listing)
 
     return run_task(settings, "product.submit" if submit else "product.open", work, qianniu_scope=target)

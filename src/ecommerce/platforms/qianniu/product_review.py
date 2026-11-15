@@ -37,24 +37,35 @@ def read_listing_media(page, group):
     return images.evaluate_all("els => els.map(e => e.getAttribute('src') || '')")
 
 
+def _input_value(locator, label, *, optional=False, strip=True):
+    """读取编辑页中唯一对应的输入框。"""
+    count = locator.count()
+    if count == 0 and optional:
+        return ''
+    if count != 1:
+        raise NeedsAttention(f'无法唯一核对{label}，不会自动提交')
+    text = locator.input_value(timeout=3000)
+    return text.strip() if strip else text
+
+
+def _product_fields(page):
+    return {'title': _input_value(page.locator(TITLE_GROUP).get_by_role('textbox'), '宝贝标题', strip=False),
+            'code': _input_value(page.locator(MERCHANT_CODE_GROUP).get_by_role('textbox'), '商家编码')}
+
+
+@qianniu_operation
+def read_product_fields(page):
+    """从编辑页读取标题及商品级商家编码。"""
+    return _product_fields(page)
+
+
 @qianniu_operation
 def read_listing_fields(page, *, attribute_labels=ATTRIBUTES, sku_combinations=None):
     """读取实际商品和SKU；参数：编辑页；返回：结构化当前值。"""
-    def value(locator, label, *, optional=False, strip=True):
-        """读取唯一文本框；参数：定位器、名称及可空标志；返回：当前值。"""
-        count = locator.count()
-        if count == 0 and optional:
-            return ''
-        if count != 1:
-            raise NeedsAttention(f'无法唯一核对{label}，不会自动提交')
-        text = locator.input_value(timeout=3000)
-        return text.strip() if strip else text
-
-    result = {key: value(page.locator(group).get_by_role('textbox'), label, optional=key == 'guide',
-                         strip=key not in ('title', 'guide'))
-              for key, group, label in (('title', TITLE_GROUP, '宝贝标题'), ('guide', GUIDE_TITLE_GROUP, '导购标题'),
-              ('price', FIXED_PRICE_GROUP, '一口价'), ('code', MERCHANT_CODE_GROUP, '商家编码'))}
-    result['price'] = _number(result['price'])
+    result = _product_fields(page)
+    result['guide'] = _input_value(page.locator(GUIDE_TITLE_GROUP).get_by_role('textbox'), '导购标题',
+                                   optional=True, strip=False)
+    result['price'] = _number(_input_value(page.locator(FIXED_PRICE_GROUP).get_by_role('textbox'), '一口价'))
     result['attributes'] = {}
     for label in attribute_labels:
         group = page.locator(ATTRIBUTE_GROUP).filter(has=page.get_by_title(label, exact=True))
@@ -62,7 +73,7 @@ def read_listing_fields(page, *, attribute_labels=ATTRIBUTES, sku_combinations=N
         if field.count() != 1:
             result['attributes'][label] = None
         elif field.get_attribute('readonly') is None:
-            result['attributes'][label] = value(field, label)
+            result['attributes'][label] = _input_value(field, label)
         else:
             values = group.locator('.next-select-values > em').all_text_contents()
             result['attributes'][label] = values[0].strip() if len(values) == 1 else None
@@ -72,10 +83,10 @@ def read_listing_fields(page, *, attribute_labels=ATTRIBUTES, sku_combinations=N
         matching = layered_sku_rows(group, sku_combinations)
         named_rows = [(name, matching[name]) for name in sku_combinations]
     else:
-        named_rows = [(value(row.locator(CREATED_NAMES), '销售规格'), row)
+        named_rows = [(_input_value(row.locator(CREATED_NAMES), '销售规格'), row)
                       for row in group.locator(SKU_ROWS).all()]
     for name, row in named_rows:
-        info = {label: value(row.locator(selector).get_by_role('textbox'), f'{name}的{label}')
+        info = {label: _input_value(row.locator(selector).get_by_role('textbox'), f'{name}的{label}')
                 for label, selector in DETAIL_CELLS.items()}
         info.update({'销售规格': name, '价格': _number(info['价格']), '数量': _number(info['数量'])})
         result['skus'].append(info)

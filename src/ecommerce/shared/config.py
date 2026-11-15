@@ -108,7 +108,7 @@ def settings_payload(settings) -> dict:
 
 @dataclass(frozen=True)
 class Settings:
-    """单店铺配置，所有文件路径均为绝对路径。"""
+    """工作区配置，所有文件路径均为绝对路径。"""
 
     root: Path
     workspace: Path

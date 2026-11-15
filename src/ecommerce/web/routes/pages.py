@@ -17,16 +17,18 @@ def tasks():
     """按页展示全部任务；参数：页码；返回：每页20条的任务页面。"""
     try:
         if request.args.get('view') == 'listing':
-            from ecommerce.modules.product.web_listing import LISTING_RESULTS
+            from ecommerce.modules.product.listing_history import LISTING_ENTRIES, LISTING_RESULTS
             filters = {key: request.args.get(key, '').strip() for key in
-                       ('title', 'code', 'item_id', 'account', 'shop', 'outcome')}
+                       ('title', 'code', 'item_id', 'account', 'shop', 'outcome', 'entry')}
             if any(len(term) > 200 for term in filters.values()):
                 raise ValueError('每个搜索条件最多输入 200 个字符')
             if filters['outcome'] and filters['outcome'] not in LISTING_RESULTS:
                 raise ValueError('请选择有效的入仓结果')
+            if filters['entry'] and filters['entry'] not in LISTING_ENTRIES:
+                raise ValueError('请选择有效的执行入口')
             rows, pagination = current_app.extensions['product_listing'].history(filters, integer_arg('page', 1))
             return render_template('listing_history.html', active='tasks', rows=rows, filters=filters,
-                                   results=LISTING_RESULTS, pagination=pagination)
+                                   results=LISTING_RESULTS, entries=LISTING_ENTRIES, pagination=pagination)
         data=task_history(current_app.config['SETTINGS'],integer_arg('page',1),sort_by=request.args.get('sort'),order=request.args.get('order'))
     except ValueError as error:
         abort(400,description=str(error))
@@ -446,7 +448,7 @@ def task_detail(task_id):
     listing_job = None
     sycm_job = None
     if data['task']['name'] in {'product.open', 'product.submit'}:
-        listing_job = current_app.extensions['product_listing'].jobs_for_tasks([task_id]).get(task_id)
+        listing_job = current_app.extensions['product_listing'].record_for_task(task_id)
     if data['task']['name'] == 'sycm.search_rank':
         from ecommerce.infrastructure.storage.sycm_search import request_status
         sycm_job = request_status(settings, task_id)

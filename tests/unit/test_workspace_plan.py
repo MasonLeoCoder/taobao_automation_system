@@ -84,7 +84,8 @@ class WorkspacePlanTests(TestCase):
         """账本与填写页明确实际用途、已有能力及尚未建设范围。"""
         self.assertEqual(self.client.get('/plans/ledger').status_code, 409)
         text = self.client.get('/plans/listing').get_data(as_text=True)
-        self.assertIn('选择商品文件夹，自检通过后', text)
-        self.assertIn('填写完成后直接提交到仓库', text)
+        self.assertIn('选择商品文件夹进行离线预检', text)
+        self.assertRegex(text, r'<input[^>]*\bid="listing-submit"[^>]*\bdisabled=')
+        self.assertRegex(text, r'<button[^>]*\bid="listing-start"[^>]*\bdisabled=')
         self.assertIn('webkitdirectory', text)
         self.assertEqual(self.client.post('/plans/listing').status_code, 405)

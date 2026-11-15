@@ -41,6 +41,17 @@ class QianniuCliTests(TestCase):
             product.execute(self.settings, False, False, shop_id='456', account=self.row['login_name'])
         run.assert_not_called()
 
+    def test_test_and_verify_environments_refuse_real_cli_submissions(self):
+        for mode in ('test', 'verify'):
+            settings = replace(self.settings, environment=mode, mysql=replace(self.settings.mysql,
+                               database=f'taobao_automation_{mode}'))
+            args = ['product', 'open', '--shop-id', '123', '--account', 'tb123:子账号', '--submit']
+            with (self.subTest(mode=mode), patch('ecommerce.cli.app.load_settings', return_value=settings),
+                  redirect_stderr(StringIO()) as output, patch.object(product, 'execute') as execute):
+                self.assertNotEqual(main(args), 0)
+                self.assertIn('禁止提交真实店铺上架', output.getvalue())
+                execute.assert_not_called()
+
     def test_product_navigation_opens_selected_session_under_original_lock(self):
         with (patch.object(product, 'run_task', side_effect=lambda settings, name, work, **kwargs: work()) as run,
               patch('ecommerce.modules.product.service.open_publish', return_value='已打开') as publish):

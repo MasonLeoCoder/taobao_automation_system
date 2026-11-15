@@ -1,4 +1,6 @@
 """CLI 公共人工验证交互。"""
+from builtins import print as terminal_print
+
 from ecommerce.infrastructure.tasks.events import notify as print
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 
@@ -61,6 +63,23 @@ def prompt_submission_review(message: str) -> None:
             _manual_state('running','已收到提交检查反馈；核对现有结果，不重放提交','继续')
             return
         print("尚未收到检查完成反馈，保持浏览器打开并等待。", flush=True)
+
+
+def prompt_duplicate_listing(message: str) -> None:
+    _play_attention_sound()
+    terminal_print(message, flush=True)
+    _manual_state('needs_attention', message)
+    while True:
+        try:
+            feedback = input('人工核对完毕后输入“继续入仓”，或输入“取消”结束本次填写：').strip()
+        except EOFError as error:
+            raise NeedsAttention('输入通道已关闭，未收到继续入仓确认') from error
+        if feedback == '取消':
+            raise TaskStopped('已填写，用户选择不提交')
+        if feedback == '继续入仓':
+            _manual_state('running', '已确认继续入仓，等待重新核对千牛页面', feedback)
+            return
+        print('尚未收到继续入仓或取消的明确反馈。', flush=True)
 
 
 def prompt_taobao_attention(message: str) -> str:

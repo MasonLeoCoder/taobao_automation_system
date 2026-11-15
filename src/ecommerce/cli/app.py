@@ -16,7 +16,7 @@ def _qianniu_options(command):
 
 def parser() -> argparse.ArgumentParser:
     """建立命令结构；参数：无；返回：解析器。"""
-    root = argparse.ArgumentParser(description="电商自动化工作台 · 单店铺")
+    root = argparse.ArgumentParser(description="电商自动化工作台")
     root.add_argument("--config", help="配置路径，相对项目根目录解析")
     commands = root.add_subparsers(dest="command")
     analysis = commands.add_parser('analysis', help='持久化商品分析')
@@ -171,8 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         from ecommerce.infrastructure.storage.environments import label, assert_writable
         if args.command not in ('database','status','logs','collections','tasks','web'):
             assert_writable(settings.mysql)
-        if settings.environment == 'test' and getattr(args,'submit',False):
-            raise ValueError('人工测试环境禁止提交真实店铺上架')
+        if settings.environment in ('test', 'verify') and getattr(args,'submit',False):
+            raise ValueError(f'{label(settings)}环境禁止提交真实店铺上架')
         print('运行环境：'+label(settings)+'；数据库：'+settings.mysql.database, file=sys.stderr)
         prepare_workspace(settings)
         setup_logging(settings)

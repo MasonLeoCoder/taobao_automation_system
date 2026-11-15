@@ -99,7 +99,7 @@ def review_submission_result(settings: Settings, page, result: SubmissionResult,
     return message
 
 
-def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None, sku_titles=None, qianniu_target=None, on_session_expired=None) -> str:
+def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[], None] | None = None, keyword: str | None = None, category: str | None = None, brand: str | None = None, main_images_dir: str | None = None, portrait_images_dir: str | None = None, on_attention: Callable[[str], None] | None = None, detail_images_dir: str | None = None, video_file: str | None = None, product_info_file: str | None = None, submit: bool = False, on_submit_attention: Callable[[str], None] | None = None, sku_images_dir: str | None = None, *, web_review=None, title_overrides=None, sku_titles=None, qianniu_target=None, on_session_expired=None, cli_listing=None) -> str:
     """填写单商品；参数：配置、导航选项、素材、Excel、人工回调及提交开关；SKU目录默认Excel同级sku图；返回：如实填写及提交说明。"""
     if submit and (brand is None or product_info_file is None):
         raise ValueError("提交需要提供品牌和商品Excel，以完成填写并选择放入仓库")
@@ -290,6 +290,8 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             select_warehouse_listing(page)
         if web_review:
             web_review.filled(page, category_result, sku_media_result, attributes if product_info is not None else {})
+        elif cli_listing and product_info is not None:
+            cli_listing.filled(page)
         if category is not None and not web_review:
             destination = settings.log_dir / "screenshots" / f"{'title' if product_title else 'video' if video_path else 'details' if detail_images else 'main-images' if images or portrait_images else 'category'}-{uuid4().hex}.png"
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -299,6 +301,10 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
                 submission_message = submit_with_review(settings, page, on_submit_attention,
                     before_click=web_review.before_click, on_click_intent=web_review.click_intent,
                     on_click_finished=web_review.click_finished, on_result=web_review.result)
+            elif cli_listing:
+                submission_message = submit_with_review(settings, page, on_submit_attention,
+                    before_click=cli_listing.before_click, on_click_intent=cli_listing.click_intent,
+                    on_result=cli_listing.result)
             else:
                 submission_message = submit_with_review(settings, page, on_submit_attention,
                     before_click=lambda editor: verify_editor_session(editor, target, on_session_expired))

@@ -26,52 +26,13 @@ from ecommerce.shared.time import BEIJING
 from .service import ACCOUNT_REQUIRED, open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
+from .listing_history import DUPLICATE_NOTICE, cli_listing_records, listing_records, pending_submissions, read_listing_state
 from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
 from .listing_profiles import PROFILES, support
 from .listing_video import ADAPTED_VIDEO
 
 _ID = re.compile('[0-9a-f]{32}')
 _ACTIVE = {'queued', 'running', 'waiting'}
-LISTING_RESULTS = {'warehouse': '已入仓', 'uncertain': '结果待核对', 'filled': '已填写，未提交'}
-
-
-def read_listing_state(path):
-    """兼容 Windows 上原子替换状态文件时的短暂占用。"""
-    for attempt in range(3):
-        try:
-            return json.loads(path.read_text(encoding='utf-8'))
-        except PermissionError:
-            if attempt == 2:
-                raise
-            time.sleep(.02 * (attempt + 1))
-
-
-def listing_records(root):
-    """读取已启动任务的上架摘要，跳过无法识别的历史残件。"""
-    if not root.is_dir():
-        return
-    for path in root.iterdir():
-        if not _ID.fullmatch(path.name) or path.resolve().parent != root.resolve():
-            continue
-        try:
-            state = read_listing_state(path / 'state.json')
-            task_id = state.get('task_id')
-            if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
-                continue
-            manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
-            preview = manifest['preview']
-            outcome = state.get('outcome')
-            yield {'id': path.name, 'task_id': task_id, 'target': manifest.get('listing_target'),
-                   'title': state.get('titles', {}).get('title', preview.get('title', '')),
-                   'code': state.get('submitted_code', preview.get('code', '')), 'item_id': state.get('item_id'),
-                   'outcome': outcome, 'label': LISTING_RESULTS.get(outcome, '未确认填写完成'),
-                   'created_at': state.get('created_at', ''), 'warehouse_at': state.get('warehouse_at'),
-                   'used_at': state.get('warehouse_at') or state.get('filled_at') or state.get('created_at', ''),
-                   'verified_identity': state.get('verified_identity'),
-                   'waiting': state['phase'] == 'waiting' and bool(state.get('prompt'))
-                              and owner_alive(state['pid'], state['process_started']) is not False}
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            continue
 
 
 class ListingConflict(ValueError):
@@ -163,20 +124,30 @@ class ListingWorkbench:
         ids = set(task_ids)
         return {row['task_id']: row for row in listing_records(self.root) if row['task_id'] in ids} if ids else {}
 
+    def record_for_task(self, task_id):
+        return (self.jobs_for_tasks([task_id]).get(task_id)
+                or cli_listing_records(self.settings, task_id=task_id).get(task_id))
+
     def history(self, filters, page):
         from ecommerce.shared.pagination import PAGE_SIZE, pagination
         records = []
-        terms = {key: value.casefold() for key, value in filters.items() if value and key != 'outcome'}
-        for row in listing_records(self.root):
+        terms = {key: value.casefold() for key, value in filters.items() if value and key not in ('outcome', 'entry')}
+        entry = filters.get('entry')
+        if entry != 'cli':
+            records.extend(listing_records(self.root))
+        if entry != 'web':
+            records.extend(cli_listing_records(self.settings).values())
+        matching = []
+        for row in records:
             target = row['target'] or {}
             searchable = {**row, 'account': target.get('login_name', ''), 'shop':
                           ' '.join(target.get(key, '') for key in ('shop_name', 'platform_shop_id'))}
             if filters.get('outcome') and row['outcome'] != filters['outcome']:
                 continue
             if all(value in str(searchable.get(key) or '').casefold() for key, value in terms.items()):
-                records.append(row)
-        records.sort(key=lambda row: (row['created_at'], row['task_id']), reverse=True)
-        return records[(page - 1)*PAGE_SIZE:page*PAGE_SIZE], pagination(len(records), page)
+                matching.append(row)
+        matching.sort(key=lambda row: (row['created_at'], row['task_id']), reverse=True)
+        return matching[(page - 1)*PAGE_SIZE:page*PAGE_SIZE], pagination(len(matching), page)
 
     def last_used_accounts(self):
         result = {}
@@ -494,6 +465,7 @@ class _ListingRun:
                                      len(actual['skus']))
         self.sku_media = actual['sku_media']
         self.update(outcome='filled', filled_at=datetime.now(BEIJING).isoformat(),
+                    observed_fields={key: actual[key] for key in ('title', 'code')},
                     notes=self.notes, message='已填写，尚未提交')
         if not self.state['submit']:
             self._wait('已填写，未提交。可在千牛检查，检查完点击「结束检查」。', ['finish'], page=page, kind='finish')
@@ -578,14 +550,14 @@ class _ListingRun:
                     self.verify_editor_identity(page)
                     if self._comparison(page) != (updated, new_differences):
                         raise NeedsAttention('核对期间商品内容发生变化，请重新核对填写结果')
+                    self.update(observed_fields={key: updated[key] for key in ('title', 'code')})
                 return
             actual, differences = updated, new_differences
 
     def warn_pending_submission(self, page, code):
-        related = [row['task_id'] for row in listing_records(self.path.parent)
-                   if row['id'] != self.path.name and row['outcome'] == 'uncertain' and row['target']
-                   and row['target']['shop_id'] == self.target['shop_id'] and code and row['code'] == code]
-        if related and self._wait('同一店铺和商家编码有入仓结果待核对。请先到千牛仓库人工核对，再决定是否提交本次商品。',
+        related = pending_submissions(self.settings, self.target['shop_id'], code,
+                                      exclude_task=self.state['task_id'])
+        if related and self._wait(DUPLICATE_NOTICE,
                 ['approve', 'fill_only'], page=page, kind='duplicate', related_tasks=related) != 'approve':
             self._wait('已填写，未提交。检查完成后可关闭千牛窗口。', ['finish'], page=page, kind='finish')
             raise TaskStopped('已填写，用户选择不提交')
