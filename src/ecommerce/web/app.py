@@ -54,8 +54,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     import secrets
     app.config['COLLECTION_TOKEN']=secrets.token_hex(32)
     from ecommerce.modules.account.web_accounts import AccountWorkbench
+    from ecommerce.modules.account.web_buyers import BuyerAccountWorkbench
     from ecommerce.web.routes.platform_accounts import platform_accounts
     app.extensions['platform_accounts'] = AccountWorkbench(settings)
+    app.extensions['taobao_buyer_accounts'] = BuyerAccountWorkbench(settings)
     app.register_blueprint(platform_accounts)
     from ecommerce.modules.product.web_listing import ListingWorkbench
     from ecommerce.web.routes.product_listing import product_listing

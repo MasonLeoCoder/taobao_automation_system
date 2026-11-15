@@ -7,7 +7,7 @@ from ecommerce.shared.exceptions import NeedsAttention
 
 
 @contextmanager
-def browser_session(settings, on_attention=None):
+def browser_session(settings, on_attention=None, *, hold_on_attention=True):
     # 已有资料优先；只补回正常关闭后丢失的临时 Cookie，避免旧导出覆盖最新状态。
     initialized = (settings.profile_path / "Default").is_dir()
     options = {"restore_state": False} if initialized else {}
@@ -23,6 +23,6 @@ def browser_session(settings, on_attention=None):
             try:
                 yield context, page
             except NeedsAttention as error:
-                if not settings.headless:
+                if hold_on_attention and not settings.headless:
                     guard.hold_without_input(reason=str(error))
                 raise

@@ -8,10 +8,13 @@
   const refresh = document.getElementById('account-refresh');
   const actions = [...root.querySelectorAll('[data-account-action]')];
   const confirmation = document.getElementById('account-confirm');
+  const buyer = root.dataset.platform === 'taobao';
   const impacts = {
-    disable: '停用后，该账号不能打开千牛、检查登录或重新登录。账号登记和已保存的登录资料仍可保留。',
+    disable: buyer ? '停用后，该账号不能检查登录或重新登录。账号登记和本机登录资料仍保留。'
+      : '停用后，该账号不能打开千牛、检查登录或重新登录。账号登记和已保存的登录资料仍可保留。',
     enable: '启用后可以继续使用该账号。如果登录资料已清除或失效，需要重新扫码。',
-    clear: '清理此账号在当前环境保存的本机登录资料。下次使用时需要重新扫码，账号登记和店铺关联会保留。',
+    clear: buyer ? '清理此账号在当前环境保存的本机登录资料。下次使用时需要重新扫码，账号登记仍保留。'
+      : '清理此账号在当前环境保存的本机登录资料。下次使用时需要重新扫码，账号登记和店铺关联会保留。',
     retry_cleanup: '重试清理此账号已经撤下的本机登录资料。当前启用的会话可以继续使用。',
   };
   let state;
@@ -37,7 +40,7 @@
     cancel.hidden = !['scan', 'waiting', 'open'].includes(state?.phase);
     cancel.textContent = state?.phase === 'open' ? '关闭千牛窗口' : '取消';
     proceed.disabled = cancel.disabled = busy;
-    refresh.hidden = !['succeeded', 'partial', 'failed'].includes(state?.phase);
+    refresh.hidden = !['succeeded', 'partial', 'failed', 'cancelled'].includes(state?.phase);
     message.textContent = state?.message || '';
     message.dataset.phase = state?.phase || '';
   }
@@ -80,14 +83,16 @@
     if (!button || busy || active(state?.phase)) return;
     const row = button.closest('[data-account-id]');
     const payload = {action: button.dataset.accountAction};
-    if (row) Object.assign(payload, {account_id: row.dataset.accountId, shop_id: row.dataset.shopId,
-      revision: Number(row.dataset.revision)});
+    if (row) {
+      Object.assign(payload, {account_id: row.dataset.accountId, revision: Number(row.dataset.revision)});
+      if (!buyer) payload.shop_id = row.dataset.shopId;
+    }
     if (Object.hasOwn(impacts, payload.action)) {
       confirmationPayload = payload;
       const action = button.textContent.trim();
       document.getElementById('account-confirm-title').textContent = action;
       document.getElementById('account-confirm-login').textContent = row.querySelector('[data-login-name]').textContent;
-      document.getElementById('account-confirm-shop').textContent =
+      if (!buyer) document.getElementById('account-confirm-shop').textContent =
         `${row.querySelector('[data-shop-name]').textContent} · ${row.dataset.shopId}`;
       document.getElementById('account-confirm-impact').textContent = impacts[payload.action];
       document.getElementById('account-confirm-submit').textContent = action;

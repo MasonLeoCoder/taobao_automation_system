@@ -9,13 +9,15 @@ from ecommerce.platforms.qianniu.login import LoginStatus, inspect_login, is_log
 from ecommerce.shared.exceptions import NeedsAttention
 
 
-def account_session_directory(workspace, identifier):
+def account_session_directory(workspace, identifier, *, platform='qianniu'):
     if not isinstance(identifier, str) or not re.fullmatch('[0-9a-f]{32}', identifier):
         raise ValueError('会话编号无效')
-    root = workspace.resolve() / 'storage/managed_accounts/qianniu'
+    if platform not in {'qianniu', 'taobao'}:
+        raise ValueError('不支持的账号平台')
+    root = workspace.resolve() / 'storage' / 'managed_accounts' / platform
     directory = (root / identifier).resolve()
     if directory != root / identifier:
-        raise ValueError('会话目录不在千牛账号资料下')
+        raise ValueError('会话目录不在所选平台的账号资料下')
     return directory
 
 

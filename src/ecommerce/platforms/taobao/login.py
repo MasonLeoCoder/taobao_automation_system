@@ -63,11 +63,28 @@ def is_authenticated(page: Page) -> bool:
         return False
 
 
-def check_login(page: Page, timeout_ms: int = CHECK_TIMEOUT_MS) -> bool:
+def is_login_required(page: Page) -> bool:
+    """仅把淘宝首页的登录入口或淘宝登录页的可见表单当作明确掉线。"""
+    if page.is_closed():
+        return False
+    url = urlsplit(page.url)
+    if url.scheme != 'https':
+        return False
+    if url.hostname in {'www.taobao.com', 'taobao.com'} and url.path in {'', '/', '/index.php'}:
+        return _visible_text(page, ANONYMOUS_SELECTOR)
+    if url.hostname == 'login.taobao.com':
+        return any(field.is_visible() for field in page.locator('input[type="password"], #login').all())
+    return False
+
+
+def check_login(page: Page, timeout_ms: int = CHECK_TIMEOUT_MS, *, stop_on_login_required=False) -> bool:
     """在线加载淘宝首页并检查登录；未知页面也不视为登录成功。"""
     guard = active_guard()
     action = lambda: page.goto(HOME_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-    completed = lambda: urlsplit(page.url).hostname in {"www.taobao.com", "taobao.com"} and page.locator("body").is_visible()
+    def completed():
+        if stop_on_login_required and is_login_required(page):
+            return True
+        return urlsplit(page.url).hostname in {'www.taobao.com', 'taobao.com'} and page.locator('body').is_visible()
     response = guard.perform("检查淘宝登录状态", action, completed=completed) if guard else action()
     if response is not None and response.status >= 400 and not is_authenticated(page):
         raise NeedsAttention(f"淘宝首页返回 HTTP {response.status}，未能检查登录状态")
@@ -76,11 +93,13 @@ def check_login(page: Page, timeout_ms: int = CHECK_TIMEOUT_MS) -> bool:
         deadline += checkpoint("识别淘宝首页登录状态")
         if is_authenticated(page):
             return True
+        if stop_on_login_required and is_login_required(page):
+            return False
         deadline += wait(page, 300)
     return False
 
 
-def login_manually(page: Page, timeout_ms: int, *, on_login_required=None) -> Page:
+def login_manually(page: Page, timeout_ms: int, *, on_login_required=None, on_wait=None) -> Page:
     """打开淘宝登录页，由用户完成扫码、短信或密码及验证，不自动刷新。"""
     try:
         guard = active_guard()
@@ -94,9 +113,13 @@ def login_manually(page: Page, timeout_ms: int, *, on_login_required=None) -> Pa
           "等待不设超时，不会自动刷新二维码；关闭该浏览器或按 Ctrl+C 可取消。", flush=True)
     context = page.context
     while True:
+        if on_wait is not None:
+            on_wait()
         checkpoint("等待人工登录淘宝")
         candidates = [candidate for candidate in context.pages if not candidate.is_closed()]
         if not candidates:
+            if on_wait is not None:
+                raise TaskStopped('淘宝扫码窗口已关闭，已取消本次登录')
             raise NeedsAttention("淘宝登录浏览器已关闭，尚未确认登录，请重新执行 account login --platform taobao")
         for candidate in candidates:
             if is_authenticated(candidate):
@@ -108,4 +131,6 @@ def login_manually(page: Page, timeout_ms: int, *, on_login_required=None) -> Pa
             wait(candidates[-1], 300)
         except PlaywrightError:
             if not context.pages:
+                if on_wait is not None:
+                    raise TaskStopped('淘宝扫码窗口已关闭，已取消本次登录') from None
                 raise NeedsAttention("淘宝登录浏览器已关闭，未保存登录状态") from None

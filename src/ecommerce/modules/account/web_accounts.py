@@ -16,14 +16,17 @@ from ecommerce.modules.account.managed import account_session_directory
 from ecommerce.platforms.qianniu.identity import read_shop_identity
 from ecommerce.platforms.qianniu.login import LoginStatus, inspect_login, login_with_qrcode
 from ecommerce.platforms.qianniu.session import browser_session
-from ecommerce.shared.exceptions import NeedsAttention, TaskBusy, TaskStopped
+from ecommerce.shared.exceptions import AutomationError, NeedsAttention, TaskBusy, TaskStopped
 
 MANAGEMENT_ACTIONS = {'disable', 'enable', 'clear', 'retry_cleanup'}
 
 
 class AccountWorkbench:
+    platform = 'qianniu'
+    platform_label = '千牛'
+
     def __init__(self, settings, *, headless=False):
-        self.settings = replace(settings.for_platform('qianniu'), headless=headless)
+        self.settings = replace(settings.for_platform(self.platform), headless=headless)
         self.lock = Lock()
         self.feedback = Event()
         self.state = None
@@ -52,7 +55,7 @@ class AccountWorkbench:
     def start(self, action, account_id=None, shop_id=None, revision=None):
         with self.lock:
             if self.state and self.state['phase'] in {'running', 'scan', 'waiting', 'open', 'stopping'}:
-                raise TaskBusy('已有千牛账号检查或扫码正在进行')
+                raise TaskBusy(f'已有{self.platform_label}账号检查或扫码正在进行')
             current = self._account(account_id, shop_id, revision) if action != 'add' else None
             if current and action not in MANAGEMENT_ACTIONS:
                 if not current['enabled']:
@@ -60,12 +63,12 @@ class AccountWorkbench:
                 if action != 'login' and current['login_required']:
                     raise NeedsAttention('此账号需重新登录')
             self.state = {'id': uuid4().hex, 'phase': 'running', 'prompt': None,
-                          'message': '正在更新账号状态' if action in MANAGEMENT_ACTIONS else '正在打开千牛浏览器'}
+                          'message': '正在更新账号状态' if action in MANAGEMENT_ACTIONS else f'正在打开{self.platform_label}浏览器'}
             self.cancelled = False
             try:
-                Thread(target=self._run, args=(action, current), daemon=True, name='qianniu-accounts').start()
+                Thread(target=self._run, args=(action, current), daemon=True, name=f'{self.platform}-accounts').start()
             except RuntimeError:
-                self.state.update(phase='failed', message='无法启动千牛浏览器')
+                self.state.update(phase='failed', message=f'无法启动{self.platform_label}浏览器')
                 raise
             return dict(self.state)
 
@@ -77,7 +80,7 @@ class AccountWorkbench:
                 self.cancelled = True
                 self.state.update(phase='stopping', prompt=None, message='正在取消')
             elif action == 'continue' and self.state['phase'] == 'waiting' and self.state['prompt'] == prompt:
-                self.state.update(phase='running', prompt=None, message='正在复查千牛页面')
+                self.state.update(phase='running', prompt=None, message=f'正在复查{self.platform_label}页面')
             else:
                 raise ValueError('当前提示已变化，请刷新页面')
             self.feedback.set()
@@ -88,8 +91,11 @@ class AccountWorkbench:
                 raise TaskStopped('已取消本次操作')
 
     def _attention(self, message):
-        self.feedback.clear()
-        self._update(phase='waiting', prompt=uuid4().hex, message=message)
+        with self.lock:
+            if self.cancelled:
+                raise TaskStopped('已取消本次操作')
+            self.feedback.clear()
+            self.state.update(phase='waiting', prompt=uuid4().hex, message=message)
         if not self.feedback.wait(600):
             raise NeedsAttention('等待人工处理超时，请重新检查账号')
         self._check_cancelled()
@@ -101,7 +107,7 @@ class AccountWorkbench:
             self.state.update(phase='scan', message='请在千牛窗口扫码，系统会在登录后核对账号和店铺')
 
     def _profile(self, identifier):
-        return account_session_directory(self.settings.workspace, identifier)
+        return account_session_directory(self.settings.workspace, identifier, platform=self.platform)
 
     def _remove_session(self, identifier):
         try:
@@ -112,27 +118,27 @@ class AccountWorkbench:
                 if directory.exists():
                     raise
         except (OSError, ValueError):
-            getLogger(__name__).warning('千牛会话目录暂无法清理')
+            getLogger(__name__).warning('%s会话目录暂无法清理', self.platform_label)
             return False
         return True
 
     def _run(self, action, current):
         try:
-            # 沿用原千牛资源锁，账号管理与旧入口及数据库维护串行。
+            # 沿用平台资源锁，账号管理与采集入口及数据库维护串行。
             with shop_lock(self.settings.profile_path):
                 if current:
-                    current = self._account(current['id'], current['platform_shop_id'], current['revision'])
+                    current = self._account(current['id'], current.get('platform_shop_id'), current['revision'])
                 if action in MANAGEMENT_ACTIONS:
                     message, pending = self._manage(action, current)
                 else:
                     message, pending = self._inspect(action, current)
             self._update(phase='partial' if pending else 'succeeded', prompt=None, message=message)
-        except (NeedsAttention, TaskBusy, TaskStopped, MySQLStorageError) as error:
+        except (AutomationError, MySQLStorageError) as error:
             self._update(phase='cancelled' if isinstance(error, TaskStopped) else 'failed',
                          prompt=None, message=str(error))
         except Exception:
-            getLogger(__name__).exception('千牛账号操作失败')
-            self._update(phase='failed', prompt=None, message='千牛账号操作失败，请查看运行日志')
+            getLogger(__name__).exception('%s账号操作失败', self.platform_label)
+            self._update(phase='failed', prompt=None, message=f'{self.platform_label}账号操作失败，请查看运行日志')
 
     def _manage(self, action, current):
         store = AccountStore(self.settings)

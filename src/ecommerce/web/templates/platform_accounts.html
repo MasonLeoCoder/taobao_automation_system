@@ -4,20 +4,32 @@
 {% block breadcrumb %}工具与系统 / 账号管理{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='platform_accounts.css') }}">{% endblock %}
 {% block content %}
-<section id="platform-accounts" data-start="{{ url_for('platform_accounts.start') }}"
-    data-status="{{ url_for('platform_accounts.status') }}" data-respond="{{ url_for('platform_accounts.respond') }}">
+{% set selected = account_platform|default('qianniu') %}
+{% set buyer = selected == 'taobao' %}
+{% set login_label = '完整昵称' if buyer else '完整登录名' %}
+<section id="platform-accounts" data-platform="{{ selected }}" data-start="{{ url_for('platform_accounts.start', platform=selected) }}"
+    data-status="{{ url_for('platform_accounts.status', platform=selected) }}" data-respond="{{ url_for('platform_accounts.respond', platform=selected) }}">
   <h1>账号管理</h1>
+  {% if account_platform is defined %}
+  <nav class="account-platform-nav account-actions" aria-label="账号平台">
+    {% for platform, name in [('qianniu', '千牛账号'), ('taobao', '淘宝买家账号')] %}
+      <a class="ui-button {{ 'ui-primary' if selected == platform else 'ui-secondary' }}" href="{{ url_for('platform_accounts.index', platform=platform) }}"{% if selected == platform %} aria-current="page"{% endif %}>{{ name }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
   <div class="ui-tool-card">
     <div class="account-toolbar">
-      <h2>千牛账号</h2>
+      <h2>{{ '淘宝买家账号' if buyer else '千牛账号' }}</h2>
       {{ ui.control_button('添加账号', {'type':'button', 'data-account-action':'add'}, 'primary') }}
     </div>
-    <form method="get" action="{{ url_for('platform_accounts.index') }}" class="account-filters" aria-label="搜索账号">
+    <form method="get" action="{{ url_for('platform_accounts.index') }}" class="account-filters{{ ' account-filters-buyer' if buyer else '' }}" aria-label="搜索账号">
+      {% if buyer %}<input type="hidden" name="platform" value="{{ selected }}">{% else %}
       {% call ui.field('店铺') %}
         {{ ui.input_control({'type':'search','name':'shop','value':filters.shop,'placeholder':'店铺名或店铺 ID'}) }}
       {% endcall %}
-      {% call ui.field('完整登录名') %}
-        {{ ui.input_control({'type':'search','name':'login','value':filters.login,'placeholder':'输入账号或昵称'}) }}
+      {% endif %}
+      {% call ui.field(login_label) %}
+        {{ ui.input_control({'type':'search','name':'login','value':filters.login,'placeholder':'输入昵称' if buyer else '输入账号或昵称'}) }}
       {% endcall %}
       {% call ui.field('账号状态') %}
         {% call ui.select_control({'name':'status','data-searchable-select':true,'data-allow-empty-option':'true'}) %}
@@ -28,20 +40,22 @@
       {% endcall %}
       <div class="account-actions">
         {{ ui.control_button('搜索', {'type':'submit'}, 'primary') }}
-        {{ ui.action_link('重置', url_for('platform_accounts.index')) }}
+        {{ ui.action_link('重置', url_for('platform_accounts.index', platform=selected)) }}
       </div>
     </form>
     <p class="account-result-count">显示 {{ accounts|length }} / {{ total }} 条账号记录</p>
     {% if accounts %}
     <div class="table-wrap">
-      <table role="table" aria-label="千牛账号">
-        <thead role="rowgroup"><tr role="row"><th scope="col">完整登录名</th><th scope="col">店铺</th><th scope="col">店铺 ID</th><th scope="col">账号状态</th><th scope="col">最近核验</th><th scope="col">操作</th></tr></thead>
+      <table role="table" aria-label="{{ '淘宝买家账号' if buyer else '千牛账号' }}">
+        <thead role="rowgroup"><tr role="row"><th scope="col">{{ login_label }}</th>{% if not buyer %}<th scope="col">店铺</th><th scope="col">店铺 ID</th>{% endif %}<th scope="col">账号状态</th><th scope="col">最近核验</th><th scope="col">操作</th></tr></thead>
         <tbody role="rowgroup">
           {% for account in accounts %}
-          <tr role="row" data-account-id="{{ account.id }}" data-shop-id="{{ account.platform_shop_id }}" data-revision="{{ account.revision }}">
-            <td role="cell" data-label="完整登录名" data-login-name>{{ account.login_name }}</td>
+          <tr role="row" data-account-id="{{ account.id }}"{% if not buyer %} data-shop-id="{{ account.platform_shop_id }}"{% endif %} data-revision="{{ account.revision }}">
+            <td role="cell" data-label="{{ login_label }}" data-login-name>{{ account.login_name }}</td>
+            {% if not buyer %}
             <td role="cell" data-label="店铺" data-shop-name>{{ account.shop_name }}</td>
             <td role="cell" data-label="店铺 ID">{{ account.platform_shop_id }}</td>
+            {% endif %}
             <td role="cell" data-label="账号状态"><div class="account-state">
               <span class="account-badge {{ 'is-enabled' if account.enabled else 'is-disabled' }}">{{ '已启用' if account.enabled else '已停用' }}</span>
               {% if account.login_required or not account.session_id %}<span class="account-badge is-login-required">需重新登录</span>{% endif %}
@@ -51,7 +65,7 @@
             <td role="cell"><div class="account-actions">
               {% if account.enabled %}
                 {% if account.session_id and not account.login_required %}
-                  {{ ui.control_button('打开千牛', {'type':'button', 'data-account-action':'open', 'class':'account-open'}, 'secondary') }}
+                  {% if not buyer %}{{ ui.control_button('打开千牛', {'type':'button', 'data-account-action':'open', 'class':'account-open'}, 'secondary') }}{% endif %}
                   {{ ui.control_button('检查登录', {'type':'button', 'data-account-action':'check', 'class':'action-history'}, 'secondary') }}
                 {% endif %}
                 {{ ui.control_button('重新登录', {'type':'button', 'data-account-action':'login', 'class':'action-external'}, 'secondary') }}
@@ -69,7 +83,7 @@
       </table>
     </div>
     {% else %}
-    <p class="account-empty">{{ '没有符合条件的账号，可调整搜索条件。' if total else '添加账号后，可以用对应账号打开千牛、检查登录或重新扫码。' }}</p>
+    <p class="account-empty">{{ '没有符合条件的账号，可调整搜索条件。' if total else '还没有登记淘宝买家账号。' if buyer else '添加账号后，可以用对应账号打开千牛、检查登录或重新扫码。' }}</p>
     {% endif %}
     <p id="account-operation-message" role="status"></p>
     <div class="account-actions">
@@ -84,8 +98,8 @@
       <div class="ui-confirm-body">
         <dl class="account-confirm-details">
           <dt>环境</dt><dd>{{ environment_label() }} · {{ environment_database() }}</dd>
-          <dt>完整登录名</dt><dd id="account-confirm-login"></dd>
-          <dt>店铺</dt><dd id="account-confirm-shop"></dd>
+          <dt>{{ login_label }}</dt><dd id="account-confirm-login"></dd>
+          {% if not buyer %}<dt>店铺</dt><dd id="account-confirm-shop"></dd>{% endif %}
         </dl>
         <p id="account-confirm-impact"></p>
       </div>

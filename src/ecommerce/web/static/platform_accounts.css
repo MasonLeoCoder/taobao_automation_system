@@ -15,6 +15,9 @@
 #platform-accounts .account-toolbar h2 {
   margin: 0;
 }
+#platform-accounts .account-platform-nav {
+  margin-bottom: 16px;
+}
 #platform-accounts td:first-child {
   font-weight: 650;
 }
@@ -39,6 +42,11 @@
 #platform-accounts .account-filters .ui-field {
   margin: 0;
   min-width: 0;
+}
+@media (min-width: 901px) {
+  #platform-accounts .account-filters-buyer {
+    grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr) auto;
+  }
 }
 #platform-accounts .account-result-count {
   margin: 14px 0 8px;

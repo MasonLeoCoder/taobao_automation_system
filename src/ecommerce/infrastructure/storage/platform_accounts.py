@@ -1,4 +1,4 @@
-"""登记已核验的千牛账号、店铺及本机会话引用。"""
+"""登记已核验的平台账号及本机会话引用。"""
 
 from uuid import uuid4
 
@@ -37,32 +37,59 @@ class AccountStore:
         except sa.exc.SQLAlchemyError as error:
             raise MySQLStorageError(safe_error(error)) from None
 
+    def list_buyers(self, account_id=None):
+        """读取淘宝买家账号，不关联店铺。"""
+        accounts = self.accounts
+        query = sa.select(accounts, sa.exists().where(self.cleanup.c.account_id == accounts.c.id)
+                          .label('cleanup_pending')).where(accounts.c.platform == 'taobao').order_by(accounts.c.login_name)
+        if account_id is not None:
+            query = query.where(accounts.c.id == account_id)
+        try:
+            with self.engine.connect() as connection:
+                return [dict(row) for row in connection.execute(query).mappings()]
+        except sa.exc.SQLAlchemyError as error:
+            raise MySQLStorageError(safe_error(error)) from None
+
+    def record_buyer(self, nickname, session_id, *, current=None):
+        """登记经过核验的买家昵称，或原子替换当前账号的会话。"""
+        if current is not None and nickname != current['login_name']:
+            raise NeedsAttention('淘宝昵称与登记的账号不符，保留原会话')
+        try:
+            with self.engine.begin() as connection:
+                self._record_account(connection, 'taobao', nickname, session_id, database_now(), current)
+        except sa.exc.SQLAlchemyError as error:
+            raise MySQLStorageError(safe_error(error)) from None
+
+    def _record_account(self, connection, platform, login_name, session_id, now, current):
+        accounts = self.accounts
+        if current is None:
+            duplicate = connection.scalar(sa.select(accounts.c.id).where(
+                accounts.c.platform == platform, accounts.c.login_name == login_name))
+            if duplicate:
+                raise NeedsAttention('此账号已登记，请使用对应账号的重新登录')
+            account_id = uuid4().hex
+            connection.execute(accounts.insert().values(id=account_id, platform=platform,
+                login_name=login_name, session_id=session_id, verified_at=now))
+            return account_id
+        expected = self._current(current) & accounts.c.enabled.is_(True) & (accounts.c.platform == platform)
+        if session_id == current['session_id']:
+            expected &= accounts.c.login_required.is_(False)
+        self._update(connection, expected, session_id=session_id, login_required=False, verified_at=now)
+        if current['session_id'] and session_id != current['session_id']:
+            self._queue_cleanup(connection, current)
+        return current['id']
+
     def record(self, identity, session_id, *, current=None):
         """在一个事务登记身份，或替换已核验账号的会话引用。"""
         if current is not None and (identity.login_name, identity.shop_id) != (
             current['login_name'], current['platform_shop_id'],
         ):
             raise NeedsAttention('账号或店铺与已登记的身份不符')
-        accounts, shops, links = self.accounts, self.shops, self.links
+        shops, links = self.shops, self.links
         now = database_now()
         try:
             with self.engine.begin() as connection:
-                if current is None:
-                    account_id = uuid4().hex
-                    duplicate = connection.scalar(sa.select(accounts.c.id).where(
-                        accounts.c.platform == 'qianniu', accounts.c.login_name == identity.login_name))
-                    if duplicate:
-                        raise NeedsAttention('此账号已登记，请使用对应账号的重新登录')
-                    connection.execute(accounts.insert().values(id=account_id, platform='qianniu',
-                        login_name=identity.login_name, session_id=session_id, verified_at=now))
-                else:
-                    account_id = current['id']
-                    expected = self._current(current) & accounts.c.enabled.is_(True)
-                    if session_id == current['session_id']:
-                        expected &= accounts.c.login_required.is_(False)
-                    self._update(connection, expected, session_id=session_id, login_required=False, verified_at=now)
-                    if current['session_id'] and session_id != current['session_id']:
-                        self._queue_cleanup(connection, current)
+                account_id = self._record_account(connection, 'qianniu', identity.login_name, session_id, now, current)
 
                 shop = insert(shops).values(id=uuid4().hex, platform='taobao',
                     platform_shop_id=identity.shop_id, name=identity.shop_name)
