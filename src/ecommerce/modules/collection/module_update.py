@@ -35,7 +35,8 @@ def build(data, states, module):
         result=next((r for r in job.get('results',[]) if r.get('module')==module),{})
         skipped=bool(result.get('skipped'))
         outcome={'label':'未找到入口' if skipped else STATES.get(job['state'],'结果待核对'),
-            'message':job.get('message',''),'complete':False,'batch':None,'task_id':job.get('task_id')}
+            'message':job.get('message',''),'complete':False,'batch':None,'task_id':job.get('task_id'),
+            'state':job['state'],'account_name':(job.get('taobao_account') or {}).get('login_name')}
         if latest and latest.get('task_id')==(job.get('task_id') or job['id']) and valid(latest):
             outcome.update(label='本模块已完成，关联任务仍在进行' if active else '更新完成',complete=True,batch=batch(latest))
     elif latest:

@@ -15,6 +15,8 @@ class ModuleUpdateTests(unittest.TestCase):
         self.c=self.fixture;self.settings=self.c.settings
         patcher=patch('ecommerce.modules.collection.dispatch.dispatch_next',return_value=None)
         patcher.start();self.addCleanup(patcher.stop)
+        patcher=patch('ecommerce.web.routes.collection_jobs.selected_buyer',return_value=self.c.buyer)
+        patcher.start();self.addCleanup(patcher.stop)
 
     def test_nine_modules_new_terminal_request_and_same_submission_replay(self):
         """九模块只采自身；旧申请终态后新编号另开，同编号仍重放原申请。"""
@@ -80,6 +82,36 @@ class ModuleUpdateTests(unittest.TestCase):
         extra=self.c.client.get('/api/collections/products/123/jobs?module_updates=1').json
         self.assertNotIn('module_updates',plain)
         self.assertEqual(set(extra['module_updates']),set(MODULES));self.assertEqual(before,jobs.rows(self.settings))
+
+    def test_remaining_requires_fresh_scope_and_replays_original_receipt(self):
+        url='/api/collections/products/123/remaining'
+        headers={**self.c.headers,'X-Submission-Id':'a'*32}
+        preview=self.c.client.get(url).json['plan']
+        self.assertEqual(preview['modules'],list(MODULES))
+        self.assertEqual(jobs.rows(self.settings),[])
+        self.c.data.update(history=[{'id':10,'module':'video','status':'no_video'}],current_ids=[10])
+        body={'account_id':self.c.buyer['account_id'],'modules':preview['modules']}
+        conflict=self.c.client.post(url,json=body,headers=headers)
+        self.assertEqual(conflict.status_code,409)
+        self.assertEqual(conflict.json['code'],'remaining_plan_changed')
+        self.assertEqual(conflict.json['plan']['skipped_modules'],['video'])
+        self.assertEqual(jobs.rows(self.settings),[])
+        body['modules'] = conflict.json['plan']['modules']
+        submitted=self.c.client.post(url,json=body,headers=headers)
+        self.assertEqual(submitted.status_code,202)
+        self.assertEqual(submitted.json['modules'],body['modules'])
+        self.assertEqual(submitted.json['taobao_account'],self.c.buyer)
+        self.assertFalse(submitted.json['options']['all_reviews'])
+        self.assertFalse(submitted.json['options']['all_questions'])
+        self.c.data['no_entry_modules'] = list(MODULES)
+        repeated=self.c.client.post(url,json=body,headers=headers)
+        self.assertEqual(repeated.json['id'],submitted.json['id'])
+        receipt=self.c.client.get(url+'?submission_id='+'a'*32)
+        self.assertEqual(receipt.json['job']['id'],submitted.json['id'])
+        finished=self.c.client.post(url,json=body,headers={**self.c.headers,'X-Submission-Id':'b'*32})
+        self.assertEqual(finished.status_code,409)
+        self.assertEqual(finished.json['plan']['modules'],[])
+        self.assertEqual(len(jobs.rows(self.settings)),1)
 
     def test_worker_forwards_only_selected_module_and_explicit_unlimited(self):
         """实际工作流边界保持单模块，已确认不限量传入采集器且不清理旧结果。"""

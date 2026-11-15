@@ -35,5 +35,6 @@
 </tr>{% else %}<tr><td colspan="8" class="empty-row">没有符合条件的商品，可调整筛选条件。</td></tr>{% endfor %}
 </tbody></table></div>
 {{ pager(pagination) }}
+{% include 'collection_remaining_modal.html' %}
 {% else %}<section class="empty"><h2>采集数据库尚未启用</h2><p>启用 MySQL 采集存储后可查看商品。</p></section>{% endif %}
 {% endblock %}

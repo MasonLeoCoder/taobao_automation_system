@@ -29,7 +29,15 @@ def protect_request():
 @collection_jobs.errorhandler(BuyerUnavailable)
 def invalid_request(error):
     """返回可显示的输入或任务冲突；参数：异常；返回：409 JSON。"""
-    return jsonify(error=str(error)),409
+    detail = {'error': str(error)}
+    if isinstance(error,BuyerUnavailable):
+        detail['code'] = 'buyer_unavailable'
+    return jsonify(detail),409
+
+
+@collection_jobs.errorhandler(service.RemainingPlanChanged)
+def remaining_plan_changed(error):
+    return jsonify(error=str(error),code='remaining_plan_changed',plan=error.plan),409
 
 
 @collection_jobs.errorhandler(LookupError)
@@ -211,15 +219,39 @@ def recent(product_id):
 @collection_jobs.get('/api/collections/products/<product_id>/module-update/<module>')
 def check_update_submission(product_id,module):
     """提交超时后只读核查原编号；参数：商品、模块和提交编号；返回：原申请或空。"""
-    from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore, identifier
-    from ecommerce.infrastructure.tasks.ownership import execution_key
     settings=current_app.config['SETTINGS']
     service.validate(settings,product_id,module)
+    return submission_receipt(settings,product_id,module,'single')
+
+
+def submission_receipt(settings, product_id, module, mode):
+    from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore, identifier
+    from ecommerce.infrastructure.tasks.ownership import execution_key
     key=identifier(request.args.get('submission_id',''))
     row=CollectionJobStore(settings).submitted(execution_key(settings.for_platform('taobao')),key)
-    if row and (row['product_id']!=product_id or row['module']!=module):
+    if row and (row['product_id']!=product_id or row['module']!=module or row['mode']!=mode):
         raise ValueError('提交编号与当前商品模块不匹配')
     return jsonify(job=present(service.public_status(settings,row)) if row else None)
+
+
+@collection_jobs.route('/api/collections/products/<product_id>/remaining', methods=['GET','POST'])
+def remaining(product_id):
+    settings = current_app.config['SETTINGS']
+    if request.method == 'GET':
+        if 'submission_id' in request.args:
+            service.validate(settings,product_id)
+            return submission_receipt(settings,product_id,'remaining','remaining')
+        return jsonify(plan=service.plan(settings,product_id))
+    body = request.get_json()
+    if not isinstance(body,dict) or set(body) != {'account_id','modules'}:
+        raise ValueError('请选择淘宝账号并确认补采模块')
+    modules = body['modules']
+    if (not isinstance(modules,list) or not modules or any(module not in service.MODULES for module in modules)
+            or len(set(modules)) != len(modules)):
+        raise ValueError('本次确认的补采模块无效')
+    state = service.start_remaining(settings,product_id,expected_modules=modules,
+        submission_key=request.headers.get('X-Submission-Id'),taobao_account=selected_buyer(body))
+    return jsonify(present(state)),202
 
 
 @collection_jobs.post('/api/collections/products/<product_id>/module-update/<module>')

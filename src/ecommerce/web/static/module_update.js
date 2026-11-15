@@ -5,6 +5,7 @@
   const buttons=[...document.querySelectorAll('[data-module-update-open]')],notices=document.querySelector('[data-module-update-notices]');
   const overview=Boolean(document.querySelector('[data-collection-overview]'));
   const one=key=>modal.querySelector(`[data-update-${key}]`),confirm=one('confirm'),error=one('error'),range=document.getElementById('module-update-range');
+  const account=document.getElementById('module-update-account'),accountNote=document.getElementById('module-update-account-status');
   let models=client.moduleUpdates || null,known=Boolean(models),selected=null,sending=false,progress=false,uncertain=false,otherBuyer=false;
   const text=batch=>batch ? `批次 ${batch.id} · ${batch.time_text || '时间未记录'}` : '暂无有效资料';
   function link(parent,url,label){const a=document.createElement('a');a.className='ui-button ui-secondary';a.textContent=label;a.href=url;parent.append(a);}
@@ -40,16 +41,24 @@
     document.getElementById('module-update-title').textContent=progress ? `${model?.label || ''}更新进度` : `更新${model?.label || ''}`;
     one('latest').textContent=text(model?.latest_valid);
     one('confirm-body').hidden=progress;one('progress').hidden=!progress;
-    one('state').textContent=known ? outcome?.label || '正在核对本次结果' : '状态暂时无法读取';
+    const label=outcome?.complete || !outcome?.state ? outcome?.label : client.submittedLabel(outcome.state);
+    one('state').textContent=known ? [label || '正在核对本次结果',outcome?.account_name].filter(Boolean).join(' · ') : '状态暂时无法读取';
     one('message').textContent=outcome?.message || '当前资料保留，请通过下方入口查看进度。';
     one('actual-scope').textContent=`已有申请实际范围：${model?.scope || '待核对'}。新的范围选择尚未提交。`;
     bind('result',outcome?.batch?.url);bind('task',outcome?.task_url);bind('queue',model?.queue_url);
-    confirm.hidden=progress;confirm.disabled=!known || sending || uncertain || (model?.active && !otherBuyer);
+    confirm.hidden=progress;confirm.disabled=!known || sending || uncertain || (model?.active && !otherBuyer) || Boolean(account && (account.disabled || !client.usableBuyer(account)));
     if(one('other-buyer')){one('other-buyer').hidden=!progress || !model?.active;one('other-buyer').disabled=sending || uncertain;}
     confirm.textContent=sending ? '正在提交并核对…' : '确认更新';
     modal.querySelectorAll('[data-update-close]').forEach(b=>b.disabled=sending);
   }
   function redraw(){document.querySelectorAll('[data-update-notice]').forEach(n=>n.remove());render();}
+  async function loadAccounts(keepSelection=false){
+    if(!account)return;
+    const loaded=client.refreshBuyerOptions(account,accountNote,keepSelection);
+    redraw();await loaded;
+    if(modal.open)redraw();
+  }
+  account?.addEventListener('change',()=>{error.textContent='';redraw();});
   buttons.forEach(button=>button.addEventListener('click',()=>{
     if(!known || sending || document.querySelector('dialog[open]'))return;
     selected=button;otherBuyer=false;progress=Boolean(models[button.dataset.moduleUpdateOpen]?.active);error.textContent='';
@@ -59,23 +68,39 @@
     range.options[0].textContent=code==='reviews' ? '默认上限：100条有效评价' : '默认上限：50个问题';
     one('description').textContent=code==='skus' ? '重新采集本商品全部SKU、价格和可选状态，不受当前筛选或分页影响。' : `仅更新本商品的${models[code].label}模块。`;
     modal.showModal();redraw();
+    if(!progress)loadAccounts();
   }));
   const close=()=>{if(sending)return;modal.close();selected?.focus({preventScroll:true});};
-  one('other-buyer')?.addEventListener('click',()=>{otherBuyer=true;progress=false;error.textContent='';redraw();});
+  one('other-buyer')?.addEventListener('click',()=>{otherBuyer=true;progress=false;error.textContent='';redraw();loadAccounts();});
   modal.querySelectorAll('[data-update-close]').forEach(b=>b.addEventListener('click',close));modal.addEventListener('cancel',e=>{e.preventDefault();close();});
   confirm.addEventListener('click',async()=>{
-    if(!known || sending || uncertain || progress)return;
+    if(!known || sending || uncertain || progress || confirm.disabled)return;
     const module=selected.dataset.moduleUpdateOpen;
     sending=true;error.textContent='';redraw();
     try{
-      const job=await new Promise((resolve,reject)=>document.dispatchEvent(new CustomEvent('collection-module-update-request',{detail:{module,unlimited:['reviews','questions'].includes(module) && range.value==='all',resolve,reject}})));
-      models[module]={...models[module],active:!job.done,scope:job.options?.[module==='reviews' ? 'all_reviews':'all_questions'] ? '不限数量' : module==='reviews' ? '默认上限100条有效评价' : module==='questions' ? '默认上限50个问题' : '本商品对应模块',
-        outcome:{label:'申请已保存，正在核对结果',message:job.message || '',complete:false,batch:null}};
-      otherBuyer=false;progress=true;
-    }catch(failure){uncertain=Boolean(failure.uncertain);error.textContent=failure.message;}
+      const job=await new Promise((resolve,reject)=>document.dispatchEvent(new CustomEvent('collection-module-update-request',{detail:{module,accountId:client.usableBuyer(account),unlimited:['reviews','questions'].includes(module) && range.value==='all',resolve,reject}})));
+      showJob(module,job);
+    }catch(failure){
+      uncertain=Boolean(failure.uncertain);error.textContent=failure.message;
+      if(failure.code==='buyer_unavailable')await loadAccounts(true);
+    }
     finally{sending=false;redraw();}
   });
-  document.addEventListener('collection-module-update-checked',event=>{uncertain=false;error.textContent=event.detail.job ? '已找到原申请，正在刷新其实际进度。' : '原编号暂未查到申请，可再次确认；将沿用原编号核对。';if(event.detail.job)progress=true;});
+  function showJob(module,job){
+    models={...models,[module]:{...models?.[module],active:!job.done,
+      scope:job.options?.[module==='reviews' ? 'all_reviews':'all_questions'] ? '不限数量' : module==='reviews' ? '默认上限100条有效评价' : module==='questions' ? '默认上限50个问题' : '本商品对应模块',
+      outcome:{state:job.state,account_name:job.taobao_account?.login_name,message:job.message || '',complete:false,batch:null}}};
+    otherBuyer=false;progress=true;
+  }
+  document.addEventListener('collection-module-update-checked',event=>{
+    uncertain=false;
+    const {job,module}=event.detail;
+    if(selected?.dataset.moduleUpdateOpen===module){
+      error.textContent=job ? '' : '暂未查到原申请，再次确认将沿用原提交编号。';
+      if(job)showJob(module,job);
+    }
+    redraw();
+  });
   document.addEventListener('collection-module-updated',event=>{models=event.detail;known=Boolean(models);redraw();});
   document.addEventListener('collection-module-update-error',()=>{known=false;error.textContent='任务状态读取失败，保留资料，恢复连接后可继续查看。';redraw();});
   redraw();

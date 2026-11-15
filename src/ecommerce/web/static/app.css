@@ -49,6 +49,10 @@
 @media(max-width:800px){.collection-task-bar{left:15px;right:15px;bottom:10px}}
 .product-collection-actions{display:flex;gap:12px;align-items:center;flex-shrink:0;flex-wrap:wrap}
 .collection-plan-status{color:var(--muted);font-size:12px;margin:-12px 0 22px}
+.collection-dialog-account{display:grid;gap:6px}
+.collection-dialog-account p:empty,[data-remaining-feedback]:empty,[data-remaining-modules]:empty{display:none}
+#collection-remaining-dialog [data-remaining-modules]{display:flex;flex-wrap:wrap;gap:6px 18px;margin:8px 0;padding-inline-start:20px}
+#collection-remaining-dialog .ui-confirm-buttons{justify-content:flex-end}
 @media(max-width:1000px){.intro:has(.product-collection-actions){align-items:flex-start;flex-wrap:wrap}.product-collection-actions{flex-shrink:1}}
 
 /* SKU图片与规格明细同一行，不裁剪原图。 */

@@ -409,9 +409,16 @@ class WebCollectionBrowserTests(unittest.TestCase):
 
     def test_collect_remaining_skips_global_valid_recovers_progress_and_retry_skips_saved_module(self):
         """旧来源页面仍按商品全局跳过，部分完成后重新点击只补剩余模块。"""
+        self.fixture.app.config['COLLECTION_BUYER_SELECTION']=True
+        buyer={'account_id':'a'*32,'login_name':'合成买家甲'}
+        self.enterContext(patch('ecommerce.modules.account.buyers.choices',return_value=[
+            {'id':buyer['account_id'],'login_name':buyer['login_name'],'reason':''}]))
+        self.enterContext(patch('ecommerce.web.routes.collection_jobs.selected_buyer',return_value=buyer))
         self.page.goto('http://127.0.0.1/collections/products/123?observation=10')
-        button=self.page.get_by_role('button',name='采集所有（剩余 8 项）',exact=True)
-        button.click()
+        self.page.get_by_role('button',name='补采未完成模块（8）',exact=True).click()
+        remaining=self.page.get_by_role('dialog',name='补采未完成模块')
+        remaining.get_by_label('淘宝账号').select_option(buyer['account_id'])
+        remaining.get_by_role('button',name='确认补采').click()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('采集所有')
         row=jobs.rows(self.settings)[0]
         self.assertEqual(row['mode'],'remaining');self.assertNotIn('parameters',row['modules'])
@@ -431,11 +438,96 @@ class WebCollectionBrowserTests(unittest.TestCase):
         modal.get_by_role('button',name='停止',exact=True).click()
         self.assertEqual(self.command(row)['action'],'stop')
         row.update(state='cancelled',message='已停止，基本信息保留',result={'valid':False,'modules':[saved]});self.save(row)
-        expect(self.page.get_by_role('button',name='采集所有（剩余 7 项）',exact=True)).to_be_enabled(timeout=7000)
-        self.page.get_by_role('button',name='采集所有（剩余 7 项）',exact=True).click()
+        self.page.get_by_role('button',name='补采未完成模块（7）',exact=True).click()
+        remaining.get_by_label('淘宝账号').select_option(buyer['account_id'])
+        remaining.get_by_role('button',name='确认补采').click()
         expect(self.page.locator('#collection-task-bar')).to_contain_text('跳过 2 项',timeout=7000)
         latest=jobs.rows(self.settings)[0]
         self.assertNotIn('basic_info',latest['modules']);self.assertNotIn('parameters',latest['modules'])
+        self.assertEqual(self.errors,[])
+
+    def test_remaining_dialog_refreshes_changed_scope_and_keeps_selected_buyer(self):
+        self.fixture.app.config['COLLECTION_BUYER_SELECTION']=True
+        buyer={'account_id':'a'*32,'login_name':'合成买家甲'}
+        with (patch('ecommerce.modules.account.buyers.choices',return_value=[{'id':buyer['account_id'],'login_name':buyer['login_name'],'reason':''}]),
+              patch('ecommerce.web.routes.collection_jobs.selected_buyer',return_value=buyer)):
+            self.page.set_viewport_size({'width':390,'height':800})
+            self.page.goto('http://127.0.0.1/collections/products/123?module=overview')
+            self.page.locator('.collect-remaining').click()
+            modal=self.page.get_by_role('dialog',name='补采未完成模块')
+            confirm=modal.get_by_role('button',name='确认补采')
+            account=modal.get_by_label('淘宝账号')
+            expect(modal).to_contain_text('本次补采 8 项')
+            expect(modal).to_contain_text('评价最多 100 条')
+            expect(modal).to_contain_text('问大家最多 50 题')
+            expect(modal.get_by_role('link',name='账号管理')).to_have_count(0)
+            expect(confirm).to_be_disabled()
+            account.select_option(buyer['account_id'])
+            self.fixture.batch(80,'basic_info',product_id=1)
+            self.fixture.put('product_info_observations',id=80,batch_id=80,product_id=1,module='basic_info',
+                title='补采前完成基本信息',captured_at=self.fixture.now,field_states={})
+            self.fixture.put('product_current_sections',product_id=1,section='product_info',module='basic_info',batch_id=80)
+            confirm.click()
+            expect(modal).to_contain_text('补采范围已变化')
+            expect(modal).to_contain_text('本次补采 7 项')
+            expect(account).to_have_value(buyer['account_id'])
+            expect(self.page.locator('dialog[open]')).to_have_count(1)
+            self.assertEqual(jobs.rows(self.settings),[])
+            expect(confirm).to_be_enabled()
+            self.assertTrue(modal.evaluate('e => e.getBoundingClientRect().right <= innerWidth'))
+            confirm.evaluate('button => { button.click(); button.click(); }')
+            expect(modal).not_to_be_visible()
+            expect(self.page.locator('#collection-plan-status')).to_contain_text('合成买家甲')
+            rows=jobs.rows(self.settings)
+            self.assertEqual(len(rows),1)
+            self.assertNotIn('basic_info',rows[0]['modules'])
+            self.assertEqual(rows[0]['taobao_account'],buyer)
+        self.assertEqual(self.errors,[])
+
+    def test_module_update_selects_buyer_inline_and_recovers_lost_submission(self):
+        self.fixture.app.config['COLLECTION_BUYER_SELECTION']=True
+        buyer={'account_id':'a'*32,'login_name':'合成买家甲'}
+        options=[{'id':buyer['account_id'],'login_name':buyer['login_name'],'reason':''},
+                 {'id':'b'*32,'login_name':'合成买家乙','reason':'账号已停用'}]
+        posted=[]
+
+        def response_lost(route):
+            request=route.request
+            if request.method!='POST':
+                route.fallback();return
+            posted.append(request.post_data_json)
+            response=self.fixture.client.post('/api/collections/products/123/module-update/video',data=request.post_data_buffer,
+                headers={key:value for key,value in request.headers.items() if key.lower() not in {'host','content-length'}},
+                base_url='http://127.0.0.1')
+            self.assertEqual(response.status_code,202)
+            response.close()
+            route.fulfill(status=503,content_type='application/json',body='{}')
+
+        self.context.route('**/api/collections/products/123/module-update/video*',response_lost)
+        with (patch('ecommerce.modules.account.buyers.choices',return_value=options),
+              patch('ecommerce.web.routes.collection_jobs.selected_buyer',return_value=buyer)):
+            options[0]['reason']='待重新登录'
+            self.page.goto('http://127.0.0.1/collections/products/123?module=video')
+            open_update=self.page.locator('[data-module-update-open="video"]')
+            open_update.click()
+            modal=self.page.locator('[data-module-update-modal]')
+            confirm=modal.get_by_role('button',name='确认更新')
+            account=modal.get_by_label('淘宝账号')
+            expect(modal).to_contain_text('当前没有可用的淘宝账号')
+            expect(confirm).to_be_disabled()
+            modal.get_by_role('button',name='取消',exact=True).click()
+            options[0]['reason']=''
+            open_update.click()
+            expect(confirm).to_be_disabled()
+            expect(account.locator('option[value="'+'b'*32+'"]')).to_be_disabled()
+            expect(modal.get_by_role('link',name='账号管理')).to_have_count(0)
+            expect(self.page.locator('dialog[open]')).to_have_count(1)
+            account.select_option(buyer['account_id'])
+            confirm.evaluate('button => { button.click(); button.click(); }')
+            expect(modal.locator('[data-update-state]')).to_contain_text(buyer['login_name'])
+            expect(self.page.locator('#collection-buyer-dialog')).not_to_be_visible()
+            self.assertEqual(posted,[{'confirm':True,'unlimited':False,'account_id':buyer['account_id']}])
+            self.assertEqual(len(jobs.rows(self.settings)),1)
         self.assertEqual(self.errors,[])
 
     def test_reclassified_sku_is_viewable_skipped_and_not_overwritten_by_old_job(self):

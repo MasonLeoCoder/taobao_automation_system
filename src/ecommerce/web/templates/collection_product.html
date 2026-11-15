@@ -50,4 +50,5 @@
 {% if module=='questions' %}<div class="module-actions">{{ control_button('重新采集问大家' if selected else '采集问大家', {"type": "button", "class": "button action-button action-primary module-collect", "data-module": "questions"}) }}</div><p class="module-job-status" role="status" aria-live="polite"></p></section>{% endif %}
 {% endif %}
 {% include 'module_update_modal.html' %}
+{% include 'collection_remaining_modal.html' %}
 {% endblock %}

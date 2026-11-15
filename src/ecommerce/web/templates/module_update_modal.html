@@ -7,6 +7,7 @@
     <div data-update-confirm-body><p class="ui-form-note" data-update-description></p>
       <div data-update-range hidden><label for="module-update-range">本次采集数量</label>{% call select_control({'id':'module-update-range'}) %}<option value="limited">按默认上限</option><option value="all">不限数量</option>{% endcall %}<p class="ui-form-note">实际仍受平台可见内容及采集情况限制；不会启动AI分析。</p></div>
       <p class="ui-form-note">结果另存新批次，完整及部分完成的历史资料保留；当前资料需手动切换。</p>
+      {% if config.COLLECTION_BUYER_SELECTION %}<div class="collection-dialog-account"><label for="module-update-account">淘宝账号</label>{% call select_control({'id':'module-update-account','required':true,'aria-describedby':'module-update-account-status'}) %}<option value="">请选择账号</option>{% endcall %}<p class="ui-form-note" id="module-update-account-status" role="status"></p></div>{% endif %}
     </div>
     <div data-update-progress hidden><span class="ui-report-state is-active" data-update-state></span><p class="ui-form-note" data-update-message></p><p class="ui-form-note" data-update-actual-scope></p><div class="module-actions"><a class="ui-button ui-secondary" data-update-result hidden>查看新资料</a><a class="button action-button action-history" data-update-task hidden>查看更新任务</a><a class="ui-button ui-secondary" data-update-queue hidden>查看采集队列</a></div></div>
     <p class="ui-collection-reason" data-update-error role="alert"></p>

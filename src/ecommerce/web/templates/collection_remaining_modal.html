@@ -1,0 +1,20 @@
+{% if config.COLLECTION_BUYER_SELECTION %}
+<dialog id="collection-remaining-dialog" class="ui-modal ui-confirm-panel" aria-labelledby="collection-remaining-title">
+  <header class="ui-modal-header"><h2 id="collection-remaining-title">补采未完成模块</h2></header>
+  <form class="ui-confirm-form">
+    <div class="ui-confirm-body">
+      <p data-remaining-product></p>
+      <div><strong data-remaining-summary></strong><ul data-remaining-modules></ul><p class="ui-form-note" data-remaining-limits hidden></p></div>
+      <div class="collection-dialog-account"><label for="collection-remaining-account">淘宝账号</label>
+        {% call select_control({'id':'collection-remaining-account','required':true,'aria-describedby':'collection-remaining-account-status'}) %}<option value="">请选择账号</option>{% endcall %}
+        <p class="ui-form-note" id="collection-remaining-account-status" role="status"></p>
+      </div>
+      <p class="ui-collection-reason" data-remaining-feedback role="status"></p>
+    </div>
+    <div class="ui-confirm-footer"><div class="ui-confirm-buttons">
+      {{ control_button('取消',{'type':'button','data-remaining-cancel':true},'secondary') }}
+      {{ control_button('确认补采',{'type':'submit','data-remaining-confirm':true,'disabled':true},'primary') }}
+    </div></div>
+  </form>
+</dialog>
+{% endif %}

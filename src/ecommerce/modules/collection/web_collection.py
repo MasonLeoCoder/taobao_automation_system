@@ -16,6 +16,12 @@ MODULES=('basic_info','video','main_images','skus','parameters','detail_images',
 COMPLETE_STATES={'complete','downloaded','no_video','no_images','no_parameters','no_reviews','no_questions'}
 
 
+class RemainingPlanChanged(ValueError):
+    def __init__(self, current_plan):
+        super().__init__('补采范围已变化，请核对后再次确认' if current_plan['modules'] else '该商品已无待补采模块')
+        self.plan = current_plan
+
+
 def remaining_plan(data):
     """按商品全局有效分区计算剩余模块；参数：不带来源限制的商品资料；返回：有序计划。"""
     current=set(data['current_ids'])
@@ -144,10 +150,10 @@ def start(settings, product_id, module, *, submission_key=None, taobao_account=N
                   taobao_account=taobao_account)
 
 
-def start_remaining(settings,product_id,*,submission_key=None,taobao_account=None):
+def start_remaining(settings,product_id,*,submission_key=None,taobao_account=None,expected_modules=None):
     """互斥派发当前商品所有未完成模块；参数：配置、商品；返回：派发，不开启评价问答全量。"""
-    validate(settings,product_id)
-    return _start(settings,product_id,'remaining','remaining',submission_key=submission_key,taobao_account=taobao_account)
+    return _start(settings,product_id,'remaining','remaining',submission_key=submission_key,
+                  taobao_account=taobao_account,expected_modules=expected_modules)
 
 
 def start_sku_update(settings,product_id,*,submission_key=None,taobao_account=None):
@@ -168,7 +174,7 @@ def start_module_update(settings,product_id,module,*,unlimited=False,submission_
 
 def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cleanup_tasks=None,identifier=None,
            submission_key=None,resume_revision=None,origin='web',frozen_modules=None,reuse_pending_module=None,
-           taobao_account=None,startup_retry=None):
+           taobao_account=None,startup_retry=None,expected_modules=None):
     """先入库申请，再尝试领取；参数：配置、固定范围及来源；返回：数据库公开状态。"""
     from ecommerce.infrastructure.storage.collection_jobs import CollectionJobStore
     if settings.task_backend!='mysql' or settings.collection_backend!='mysql':
@@ -182,6 +188,7 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
                     or options is not None and prior.get('options')!=options
                     or prior.get('resume_task_id')!=resume_task_id or prior.get('resume_revision')!=resume_revision
                     or prior.get('startup_retry_of') != (startup_retry['id'] if startup_retry else None)
+                    or expected_modules is not None and prior.get('modules') != expected_modules
                     or (prior.get('taobao_account') or {}).get('account_id') != (taobao_account or {}).get('account_id')):
                 raise ValueError('同一个提交编号不能改变采集账号或范围')
             return public_status(settings,prior)
@@ -192,6 +199,8 @@ def _start(settings,product_id,module,mode,options=None,*,resume_task_id=None,cl
             'modules':options.get('modules',[]) if options else [module],'skipped_modules':[]}
         if mode=='keyword' and options.get('with_details'):
             selected['modules']=list(frozen_modules if frozen_modules is not None else MODULES)
+    if expected_modules is not None and selected['modules'] != expected_modules:
+        raise RemainingPlanChanged(selected)
     if mode!='keyword' and not selected['modules']:
         raise ValueError('该商品九个模块均有有效完成结果，无需采集')
     if options is None:

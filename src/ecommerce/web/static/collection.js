@@ -21,6 +21,7 @@
   let submitting = false;
   let stateKnown = false;
   let pendingUpdateCheck=null;
+  let latestRemainingJob=null;
   let lastConfirmed = null;
   let queuePaused = false;
   const historyStatuses = ['all','waiting','running','attention','stopped','completed','failed'];
@@ -36,24 +37,60 @@
   const startingJobs = new Set();
   const startFeedback = new Map();
   const pendingSubmissions = new Map();
+  const buyerLoads = new WeakMap();
+  const usableBuyer = select => select?.value && !select.selectedOptions[0]?.disabled ? select.value : '';
+  const submissionSignature = (url, body) => `${url}:${JSON.stringify(body)}`;
   const endpoint = job => job.status_url || `/api/collection-jobs/${job.id}`;
   const targetLabel = job => job.mode === 'keyword' ? `关键词“${job.options.keyword}”` : `商品 ${job.product_id}`;
   const stateLabel = job => job.account_wait ? '账号待处理' : job.failures?.length && job.done ? '已结束，存在模块错误' : job.done && job.state === 'needs_attention' && (job.task_status === 'succeeded' || job.history_status === 'completed') ? '已结束（结果待核对）' : job.halted ? '采集已中断（保留现场）' : job.skipped ? '已跳过（未找到入口）' : job.state === 'succeeded' && job.skipped_count ? '已结束（含跳过项目）' : states[job.state] || job.state;
   let choosingBuyer = false;
 
   async function api(url, body) {
-    const submission = body === undefined ? null : `${url}:${JSON.stringify(body)}`;
+    const submission = body === undefined ? null : submissionSignature(url,body);
     if (submission && !pendingSubmissions.has(submission)) pendingSubmissions.set(submission,crypto.randomUUID().replaceAll('-',''));
-    const signal=url.includes('/module-update/') ? AbortSignal.timeout(15000) : undefined;
+    const verifiedUpdate = url.includes('/module-update/') || /\/remaining(?:\?|$)/.test(url);
+    const signal=verifiedUpdate ? AbortSignal.timeout(15000) : undefined;
     const response = await fetch(url, body === undefined ? {cache:'no-store',signal} : {
       method:'POST',signal,headers:{'Content-Type':'application/json','X-Collection-Token':client.dataset.token,'X-Submission-Id':pendingSubmissions.get(submission)},body:JSON.stringify(body)
     });
     const value = await response.json().catch(() => ({}));
-    if(response.ok && url.includes('/module-update/') && (body === undefined ? !Object.hasOwn(value,'job') : !value.id))throw new Error('响应未完整返回，正在核对原申请');
-    if (!response.ok) { const error=new Error(value.error || (response.status === 403 ? '操作令牌已失效，请刷新页面' : `请求失败（${response.status}），请稍后重试`));error.status=response.status;throw error; }
+    if(response.ok && verifiedUpdate && (body !== undefined ? !value.id : url.includes('submission_id=') ? !Object.hasOwn(value,'job') : !value.plan))throw new Error('响应未完整返回，请稍后重试');
+    if (!response.ok) { const error=new Error(value.error || (response.status === 403 ? '操作令牌已失效，请刷新页面' : `请求失败（${response.status}），请稍后重试`));Object.assign(error,{status:response.status,code:value.code,plan:value.plan});throw error; }
     if (submission) pendingSubmissions.delete(submission);
     return value;
   }
+
+  async function refreshBuyerOptions(select,note,keepSelection=false) {
+    const previous = keepSelection ? usableBuyer(select) : '';
+    const request = {};
+    buyerLoads.set(select,request);
+    select.replaceChildren(new Option('请选择账号',''));
+    select.disabled = true;
+    note.textContent = '正在读取淘宝账号…';
+    try {
+      const {accounts} = await api('/api/collection-buyer-accounts');
+      if (buyerLoads.get(select) !== request) return;
+      for (const account of accounts) {
+        const option = new Option(account.reason ? `${account.login_name} · ${account.reason}` : account.login_name,account.id);
+        option.disabled = Boolean(account.reason);
+        select.add(option);
+      }
+      if (accounts.some(account => account.id === previous && !account.reason)) select.value = previous;
+      note.textContent = accounts.some(account => !account.reason) ? '' : '当前没有可用的淘宝账号。';
+    } catch {
+      if (buyerLoads.get(select) === request) note.textContent = '淘宝账号读取失败，请重新打开弹窗后重试。';
+    } finally {
+      if (buyerLoads.get(select) === request) select.disabled = false;
+    }
+  }
+  client.refreshBuyerOptions = refreshBuyerOptions;
+  client.usableBuyer = usableBuyer;
+
+  function submittedLabel(state) {
+    if (state === 'queued' || state === 'paused') return '已加入采集队列';
+    return states[state] || '采集申请已保存';
+  }
+  client.submittedLabel = submittedLabel;
 
   async function buyerBody(body) {
     if (!buyerDialog) return body;
@@ -283,6 +320,7 @@
       button.disabled = submitting || !stateKnown || count === 0;
       button.textContent = current?.mode === 'remaining' && current.product_id === id ? '正在补采未完成模块…' : count ? (button.dataset.product || button.hasAttribute('data-detail-plan') ? `补采未完成模块（${count}）` : `采集所有（剩余 ${count} 项）`) : button.hasAttribute('data-detail-plan') ? '所选模块无需补采' : '已全部采集';
     });
+    if(latestRemainingJob)showRemainingStatus(tracked.get(latestRemainingJob));
     // 一项模块只展示最新任务，批量结果与旧单模块任务不会互相覆盖。
     const latest = new Map();
     jobs.forEach(job => cardsFor(job).forEach(card => {
@@ -572,7 +610,7 @@
     busy = true;
     const requestedHistoryVersion = historyVersion;
     try {
-      if(pendingUpdateCheck) await checkModuleSubmission(pendingUpdateCheck);
+      if(pendingUpdateCheck) await checkSubmission(pendingUpdateCheck);
       const active = await api('/api/collection-jobs/active');
       active.jobs.forEach(job => tracked.set(job.id,job));
       if (workspace) {
@@ -674,32 +712,43 @@
     }
   }
 
-  async function checkModuleSubmission(check){
-    const value=await api(`/api/collections/products/${product}/module-update/${check.module}?submission_id=${check.key}`);
-    if(value.job)tracked.set(value.job.id,value.job);
-    document.dispatchEvent(new CustomEvent('collection-module-update-checked',{detail:value}));
-    pendingUpdateCheck=null;return value.job;
+  async function checkSubmission(check,notify=true){
+    const {job}=await api(`${check.url}?submission_id=${check.key}`);
+    if(job){tracked.set(job.id,job);pendingSubmissions.delete(check.signature);}
+    if(pendingUpdateCheck===check){pendingUpdateCheck=null;if(notify)check.onChecked(job);}
+    return job;
+  }
+
+  async function submitChecked(url,body,onChecked){
+    const signature=submissionSignature(url,body);
+    try {
+      const job=await api(url,body);
+      tracked.set(job.id,job);
+      return job;
+    } catch(error) {
+      if(error.status && error.status<500){pendingSubmissions.delete(signature);throw error;}
+      pendingUpdateCheck={url,key:pendingSubmissions.get(signature),signature,onChecked};
+      let job;
+      try { job=await checkSubmission(pendingUpdateCheck,false); }
+      catch {
+        const failure=new Error('正在核对原申请是否已入队，请稍候。');
+        failure.uncertain=true;
+        throw failure;
+      }
+      if(job)return job;
+      throw new Error('暂未查到原申请，再次确认将沿用原提交编号。');
+    }
   }
   document.addEventListener('collection-module-update-request',async event=>{
-    const {resolve,reject,module,unlimited}=event.detail;
+    const {resolve,reject,module,unlimited,accountId}=event.detail;
     if(!product || !stateKnown || submitting || pendingUpdateCheck){reject(new Error('任务状态尚未确认，请稍后再试。'));return;}
+    if(buyerDialog && !accountId){reject(new Error('请选择可用的淘宝账号。'));return;}
     submitting=true;
     const url=`/api/collections/products/${product}/module-update/${module}`;
-    let signature;
     try{
-      const body=await buyerBody({confirm:true,unlimited});
-      signature=`${url}:${JSON.stringify(body)}`;
-      const job=await api(url,body);tracked.set(job.id,job);resolve(job);
-    }catch(error){
-      if(!signature || (error.status && error.status<500)){pendingSubmissions.delete(signature);reject(error);}
-      else{
-        pendingUpdateCheck={module,key:pendingSubmissions.get(signature)};
-        try{
-          const job=await checkModuleSubmission(pendingUpdateCheck);
-          if(job){pendingSubmissions.delete(signature);resolve(job);}
-          else reject(new Error('尚未查到原申请。可再次确认，将沿用原提交编号核对，不会自动重发。'));
-        }catch(checkError){const failure=new Error('提交结果尚未确认，正在只读核对原申请；暂不重复提交。');failure.uncertain=true;reject(failure);}
-      }
+      const body=accountId ? {confirm:true,unlimited,account_id:accountId} : {confirm:true,unlimited};
+      resolve(await submitChecked(url,body,job=>document.dispatchEvent(new CustomEvent('collection-module-update-checked',{detail:{job,module}}))));
+    }catch(error){reject(error);
     }
     finally{submitting=false;await refresh();}
   });
@@ -741,7 +790,90 @@
       }
     }
   }));
-  document.querySelectorAll('.collect-remaining').forEach(button => button.addEventListener('click',async () => {
+  function showRemainingStatus(job){
+    const note=document.getElementById('collection-plan-status');
+    if(!job || !note)return;
+    note.textContent=[`商品 ${job.product_id}`,submittedLabel(job.state),job.taobao_account?.login_name,`${job.total_count} 个模块`].filter(Boolean).join(' · ');
+  }
+
+  const remainingDialog=document.getElementById('collection-remaining-dialog');
+  const remainingButtons=document.querySelectorAll('.collect-remaining');
+  if(remainingDialog){
+    const element=name=>remainingDialog.querySelector(`[data-remaining-${name}]`);
+    const select=document.getElementById('collection-remaining-account'),accountNote=document.getElementById('collection-remaining-account-status');
+    const confirm=element('confirm'),cancel=element('cancel'),feedback=element('feedback');
+    let selection=null;
+    function refreshControls(){
+      confirm.disabled=!selection?.plan?.modules.length || !usableBuyer(select) || select.disabled || selection.sending || selection.uncertain;
+      cancel.disabled=Boolean(selection?.sending);
+    }
+    function showPlan(request,currentPlan){
+      request.plan=currentPlan;
+      if(request.productId===product)plan=currentPlan;else catalogPlans.set(request.productId,currentPlan);
+      const modules=currentPlan.modules;
+      element('summary').textContent=modules.length ? `本次补采 ${modules.length} 项` : '该商品已无待补采模块';
+      element('modules').replaceChildren(...modules.map(module=>{
+        const item=document.createElement('li');item.textContent=labels[module];return item;
+      }));
+      const limits=[];
+      if(modules.includes('reviews'))limits.push('评价最多 100 条');
+      if(modules.includes('questions'))limits.push('问大家最多 50 题');
+      element('limits').hidden=!limits.length;
+      element('limits').textContent=limits.join(' · ');
+      refreshControls();
+    }
+    remainingButtons.forEach(button=>button.addEventListener('click',async ()=>{
+      if(submitting || pendingUpdateCheck || !stateKnown || document.querySelector('dialog[open]'))return;
+      const productId=button.dataset.product || product;
+      const request={productId,url:`/api/collections/products/${productId}/remaining`,plan:null,sending:false,uncertain:false};
+      selection=request;
+      element('product').textContent=`商品 ${productId}`;
+      element('summary').textContent='正在核对补采范围…';
+      element('modules').replaceChildren();element('limits').hidden=true;
+      feedback.textContent='';
+      const accountLoad=refreshBuyerOptions(select,accountNote);
+      remainingDialog.showModal();refreshControls();
+      const planLoad=api(request.url).then(value=>{
+        if(selection===request && remainingDialog.open)showPlan(request,value.plan);
+      }).catch(error=>{
+        if(selection===request && remainingDialog.open){element('summary').textContent='暂未确认补采范围';feedback.textContent=error.message;}
+      });
+      await Promise.all([accountLoad,planLoad]);
+      if(selection===request && remainingDialog.open)refreshControls();
+    }));
+    select.addEventListener('change',refreshControls);
+    cancel.addEventListener('click',()=>{if(!selection?.sending)remainingDialog.close();});
+    remainingDialog.addEventListener('cancel',event=>{if(selection?.sending)event.preventDefault();});
+    function accepted(request,job){
+      latestRemainingJob=job.id;
+      showRemainingStatus(job);
+      if(selection===request && remainingDialog.open)remainingDialog.close();
+    }
+    remainingDialog.querySelector('form').addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(!selection || confirm.disabled || submitting || pendingUpdateCheck)return;
+      const request=selection;
+      const body={account_id:usableBuyer(select),modules:request.plan.modules};
+      request.sending=true;submitting=true;feedback.textContent='';refreshControls();
+      try{
+        const job=await submitChecked(request.url,body,found=>{
+          request.uncertain=false;
+          if(found)accepted(request,found);
+          else if(selection===request && remainingDialog.open){
+            feedback.textContent='暂未查到原申请，再次确认将沿用原提交编号。';refreshControls();
+          }
+        });
+        accepted(request,job);
+      }catch(error){
+        feedback.textContent=error.message;
+        request.uncertain=Boolean(error.uncertain && pendingUpdateCheck);
+        if(error.code==='remaining_plan_changed')showPlan(request,error.plan);
+        if(error.code==='buyer_unavailable')await refreshBuyerOptions(select,accountNote,true);
+      }finally{
+        request.sending=false;submitting=false;refreshControls();render();await refresh();
+      }
+    });
+  }else remainingButtons.forEach(button => button.addEventListener('click',async () => {
     submitting = true; render();
     const note = document.getElementById('collection-plan-status');
     try {
