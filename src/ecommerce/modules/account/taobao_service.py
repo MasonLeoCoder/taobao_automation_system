@@ -12,7 +12,8 @@ def authenticate(context, page, settings, allow_login=True, *, on_login_required
     """确认淘宝在线会话，只有复核通过后才保存状态。"""
     from ecommerce.modules.account import buyers
     if execution := buyers.current():
-        return buyers.authenticate(execution[0], execution[1], page)
+        selected, row, opened = execution
+        return buyers.authenticate(selected, row, page, reuse_home=page is opened[1])
     try:
         authenticated = check_login(page, settings.timeout_ms)
         if not authenticated:

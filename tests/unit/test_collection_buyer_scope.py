@@ -1,4 +1,5 @@
 """验证淘宝身份核验与共用队列键的执行边界。"""
+from contextlib import ExitStack, contextmanager
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
@@ -10,25 +11,78 @@ class CollectionBuyerScopeTests(TestCase):
     def test_environment_lock_stays_fixed_and_browser_uses_selected_profile(self):
         settings, browser, row = Mock(), Mock(), {'id':'a' * 32, 'login_name':'买家甲'}
         buyer = {'account_id':row['id'], 'login_name':row['login_name']}
+        opened = Mock(), Mock()
+        stages = []
+
+        @contextmanager
+        def connect(actual):
+            self.assertIs(actual, browser)
+            stages.append('open')
+            yield opened
+            stages.append('close')
+
         def runner(actual, name, action, **options):
             self.assertIs(actual, settings)
             self.assertEqual(options['buyer_scope'], buyer)
-            options['prepare']()
-            return action()
-        with (patch.object(buyers,'resolve',return_value=(browser,row)), patch.object(buyers,'probe')):
-            result = buyers.run(settings,'collection.taobao.collect',lambda: buyers.browser_settings(settings),
+            with ExitStack() as resources:
+                options['prepare'](resources)
+                return action()
+
+        def collect():
+            stages.append('collect')
+            return buyers.collection_browser(settings, on_attention=attention)
+
+        attention = Mock()
+        with (patch.object(buyers,'resolve',return_value=(browser,row)),
+              patch.object(buyers,'open_browser',side_effect=connect) as launch,
+              patch.object(buyers,'probe') as probe, patch.object(buyers,'browser_session') as guard):
+            result = buyers.run(settings,'collection.taobao.collect',collect,
                                 buyer=buyer,runner=runner)
-        self.assertIs(result,browser)
-        self.assertIs(buyers.browser_settings(settings),settings)
+            self.assertIs(result,guard.return_value)
+            self.assertEqual(stages,['open','collect','close'])
+            launch.assert_called_once_with(browser)
+            probe.assert_called_once_with(browser,row,opened)
+            guard.assert_called_once_with(browser,on_attention=attention,opened=opened)
+        self.assertIsNone(buyers.current())
+
+    def test_expired_preflight_closes_browser_before_creating_execution(self):
+        settings, selected, page = Mock(), Mock(), Mock()
+        row = {'id':'a' * 32, 'login_name':'买家甲'}
+        action, closed = Mock(), Mock()
+
+        @contextmanager
+        def connect(actual):
+            try:
+                yield Mock(), page
+            finally:
+                closed()
+
+        def runner(actual, name, work, **options):
+            with ExitStack() as resources:
+                options['prepare'](resources)
+                return work()
+
+        from contextlib import nullcontext
+        with (patch.object(buyers,'resolve',return_value=(selected,row)),
+              patch.object(buyers,'open_browser',side_effect=connect),
+              patch.object(buyers,'browser_session',side_effect=lambda *args, opened, **kwargs: nullcontext(opened)),
+              patch.object(buyers,'check_login',return_value=False),
+              patch.object(buyers,'is_login_required',return_value=True), patch.object(buyers,'AccountStore') as store):
+            with self.assertRaisesRegex(BuyerUnavailable,'重新登录原账号'):
+                buyers.run(settings,'collection.taobao.collect',action,buyer={'account_id':row['id']},runner=runner)
+        closed.assert_called_once()
+        action.assert_not_called()
+        store.return_value.change_state.assert_called_once_with(row,'require_login')
 
     def test_wrong_identity_cannot_emit_verified_event_or_save_session(self):
         settings, page, session = Mock(), Mock(), Mock()
         row = {'id':'a' * 32, 'login_name':'买家甲'}
-        with (patch.object(buyers,'check_login',return_value=True),
+        with (patch.object(buyers,'is_authenticated',return_value=True), patch.object(buyers,'check_login') as navigate,
               patch.object(buyers,'read_buyer_nickname',return_value='买家乙'),
               patch.object(buyers,'save_session') as save, patch.object(buyers,'current_events',return_value=session)):
             with self.assertRaisesRegex(BuyerUnavailable,'实际为「买家乙」'):
-                buyers.authenticate(settings,row,page)
+                buyers.authenticate(settings,row,page,reuse_home=True)
+        navigate.assert_not_called()
         save.assert_not_called()
         session.append.assert_not_called()
 

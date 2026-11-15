@@ -11,8 +11,8 @@ from ecommerce.infrastructure.storage.platform_accounts import AccountStore
 from ecommerce.infrastructure.tasks.events import current_events, storage_checkpoint
 from ecommerce.modules.account.managed import account_session_directory
 from ecommerce.platforms.taobao.identity import read_buyer_nickname
-from ecommerce.platforms.taobao.login import check_login, is_login_required
-from ecommerce.platforms.taobao.session import browser_session
+from ecommerce.platforms.taobao.login import check_login, is_authenticated, is_login_required
+from ecommerce.platforms.taobao.session import browser_session, open_browser
 from ecommerce.platforms.taobao.verification import active_guard
 from ecommerce.shared.exceptions import BuyerUnavailable, NeedsAttention, TaskStopped
 from ecommerce.shared.time import BEIJING
@@ -24,9 +24,13 @@ def current():
     return _ACTIVE_BUYER.get()
 
 
-def browser_settings(settings):
+def collection_browser(settings, on_attention=None):
+    """将预检浏览器交给实际采集，旧入口仍按原方式启动。"""
     execution = current()
-    return execution[0] if execution is not None else settings
+    if execution is None:
+        return browser_session(settings, on_attention=on_attention)
+    selected, _, opened = execution
+    return browser_session(selected, on_attention=on_attention, opened=opened)
 
 
 def run(settings, name, action, *, buyer, runner, **kwargs):
@@ -35,10 +39,12 @@ def run(settings, name, action, *, buyer, runner, **kwargs):
         return runner(settings, name, action, **kwargs)
     execution = None
 
-    def prepare():
+    def prepare(resources):
         nonlocal execution
-        execution = resolve(settings, buyer)
-        probe(*execution)
+        selected, row = resolve(settings, buyer)
+        opened = resources.enter_context(open_browser(selected))
+        probe(selected, row, opened)
+        execution = selected, row, opened
 
     def work():
         token = _ACTIVE_BUYER.set(execution)
@@ -126,9 +132,9 @@ def recheck_login(settings, row, guard):
         raise BuyerUnavailable(f'预期账号「{row["login_name"]}」，复核为「{nickname}」，保留原会话')
 
 
-def probe(settings, row):
+def probe(settings, row, opened):
     """在创建实际执行之前识别明确掉线，保留排队申请。"""
-    with browser_session(settings, hold_on_attention=False) as (_, page):
+    with browser_session(settings, hold_on_attention=False, opened=opened) as (_, page):
         try:
             logged_in = check_login(page, settings.timeout_ms, stop_on_login_required=True)
             login_required = not logged_in and is_login_required(page)
@@ -141,9 +147,13 @@ def probe(settings, row):
             expired(settings, row)
 
 
-def authenticate(settings, row, page):
+def authenticate(settings, row, page, *, reuse_home=False):
     """执行前核对完整昵称并等待账号证据写入数据库。"""
-    if not check_login(page, settings.timeout_ms, stop_on_login_required=True):
+    guard = active_guard()
+    if reuse_home and guard is not None:
+        guard.checkpoint('核对淘宝登录账号')
+    authenticated = reuse_home and is_authenticated(page)
+    if not authenticated and not check_login(page, settings.timeout_ms, stop_on_login_required=True):
         if is_login_required(page):
             expired(settings, row)
         raise BuyerUnavailable('暂未能核对淘宝登录账号，请检查页面后用原账号重试')
@@ -163,7 +173,6 @@ def authenticate(settings, row, page):
     })
     events.collection_barrier = events.append(operation)
     storage_checkpoint('保存淘宝买家账号核验记录')
-    guard = active_guard()
     if guard:
         guard.login_mode = False
         guard.on_account_login_required = lambda: recheck_login(settings, row, guard)

@@ -671,7 +671,8 @@ class TaobaoGuard:
                     raise self.failure
                 previous_blockage = blockage
                 blockage = self._scan()
-                if blockage is None and previous_blockage.kind == 'login' and self.on_account_login_required:
+                if (blockage is None and previous_blockage.kind in {'login', 'verification'}
+                        and self.on_account_login_required):
                     self._review_account_login(previous_blockage)
                 if blockage is None and self.resume_check is not None:
                     try:

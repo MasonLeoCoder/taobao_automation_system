@@ -5,11 +5,11 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from playwright.sync_api import sync_playwright
 
@@ -90,6 +90,65 @@ class TaobaoBrowserGuardTests(unittest.TestCase):
             self.page.locator('iframe').evaluate("e=>e.style.display='block'")
             with self.assertRaises(NeedsAttention):
                 guard.perform("读取", lambda: self.fail("验证未处理不能执行"))
+
+    def test_collection_handles_preflight_verification_in_original_browser(self):
+        from ecommerce.modules.account import buyers, taobao_service
+
+        challenge = '.J_MIDDLEWARE_FRAME_WIDGET'
+        self.responses['/'] = (200, {}, BODY + '<div class=J_MIDDLEWARE_FRAME_WIDGET>安全验证</div>')
+        settings = replace(load_settings(root=Path(self.temp.name)).for_platform('taobao'), headless=True)
+        account = {'id': 'a' * 32, 'login_name': '测试账号'}
+        opened, messages = [], []
+
+        @contextmanager
+        def connect(actual):
+            opened.append(actual)
+            yield self.context, self.page
+
+        def runner(actual, name, action, **options):
+            with ExitStack() as resources:
+                options['prepare'](resources)
+                self.assertTrue(self.page.locator(challenge).is_visible())
+                return action()
+
+        def attention(message):
+            messages.append(message)
+            self.assertTrue(self.page.locator(challenge).is_visible())
+            self.page.locator(challenge).evaluate('e => e.remove()')
+            return '继续'
+
+        def collect():
+            with buyers.collection_browser(settings, on_attention=attention) as (context, page):
+                self.assertIs(taobao_service.authenticate(context, page, settings), self.page)
+                return page.get_by_role('button').is_visible()
+
+        with (patch.object(buyers, 'resolve', return_value=(settings, account)),
+              patch.object(buyers, 'open_browser', side_effect=connect),
+              patch.object(buyers, 'read_buyer_nickname', return_value=account['login_name']) as nickname,
+              patch.object(buyers, 'current_events', return_value=Mock()) as events,
+              patch.object(buyers, 'save_session'),
+              patch('ecommerce.platforms.taobao.session.open_browser', side_effect=AssertionError('采集重复打开浏览器'))):
+            self.assertTrue(buyers.run(settings, 'collection.taobao.collect', collect,
+                                      buyer={'account_id': account['id']}, runner=runner))
+        self.assertEqual(opened, [settings])
+        self.assertEqual(len(messages), 1)
+        nickname.assert_called_once_with(self.page)
+        events.return_value.append.assert_called_once()
+
+    def test_verification_resume_rechecks_account_and_business_page_before_action(self):
+        self.page.evaluate("document.body.insertAdjacentHTML('beforeend', '<div class=J_MIDDLEWARE_FRAME_WIDGET>滑块</div>')")
+        order = []
+
+        def attention(message):
+            order.append('feedback')
+            self.page.locator('.J_MIDDLEWARE_FRAME_WIDGET').evaluate('e => e.remove()')
+            return '继续'
+
+        with self.guard(attention) as guard:
+            guard.on_account_login_required = lambda: order.append('account')
+            guard.resume_check = lambda: order.append('page') or True
+            guard.perform('采集', lambda: order.append('collect'))
+        self.assertEqual(order, ['feedback', 'account', 'page', 'collect'])
 
     def test_managed_account_ignores_a_plain_embedded_login_link(self):
         self.page.evaluate("""document.body.insertAdjacentHTML('beforeend',

@@ -1,6 +1,7 @@
 """所有浏览器任务共用的同步执行入口。"""
 
 import logging
+from contextlib import ExitStack
 from dataclasses import dataclass
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -77,7 +78,7 @@ def _run_mysql_task(settings,name,action,*,task_id=None,job_claim_token=None,qia
     prepared = prepare is None
     try:
         store.initialize()
-        with shop_lock(settings.profile_path):
+        with shop_lock(settings.profile_path), ExitStack() as resources:
             replay_events(settings,store)
             store.recover_interrupted(execution_key(settings),owner_alive)
             if qianniu_scope is not None and task_id and store.get_task(task_id) is not None:
@@ -96,7 +97,7 @@ def _run_mysql_task(settings,name,action,*,task_id=None,job_claim_token=None,qia
                             or pending['stop_requested']):
                         raise TaskStopped('采集领取已失效，未打开浏览器')
                 atomic_json(session.active_path,session.owner)
-                prepare()
+                prepare(resources)
                 prepared = True
             token=_CURRENT_TASK.set((store,session.task_id))
             try:
