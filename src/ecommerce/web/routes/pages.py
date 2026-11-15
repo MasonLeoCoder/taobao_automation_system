@@ -437,8 +437,12 @@ def collection_search(task_id):
 @pages.get('/tasks/<task_id>')
 def task_detail(task_id):
     """展示资料关联任务；参数：任务编号；返回：只读任务详情。"""
-    data=browse_query('task',task_id=task_id)
     settings=current_app.config['SETTINGS']
+    if settings.collection_backend != 'mysql':
+        job = current_app.extensions['product_listing'].jobs_for_tasks([task_id]).get(task_id)
+        if job:
+            return redirect(url_for('product_listing.index', job=job['id']))
+    data=browse_query('task',task_id=task_id)
     listing_job = None
     sycm_job = None
     if data['task']['name'] in {'product.open', 'product.submit'}:

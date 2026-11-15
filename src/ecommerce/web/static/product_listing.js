@@ -376,7 +376,7 @@
     node('message').textContent = task.message;
     node('item').hidden = !task.item_id;
     node('item').textContent = task.item_id ? `平台商品编号：${task.item_id}` : '';
-    node('log').hidden = !task.task_id;
+    node('log').hidden = !task.task_id || root.dataset.taskDetails === 'false';
     if (task.task_id) node('log').href = `${root.dataset.tasks}/${encodeURIComponent(task.task_id)}`;
     node('evidence').hidden = !task.evidence;
     if (task.evidence) node('evidence').href = `${base}/${id}/evidence/${task.evidence}`;

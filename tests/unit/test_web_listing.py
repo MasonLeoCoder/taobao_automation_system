@@ -134,8 +134,15 @@ class WebListingTests(TestCase):
             history = workbench.root / identifier / 'state.json'
             self.assertFalse(history.exists())
             self.open_publish.assert_not_called()
-            history.write_text(json.dumps({'phase':'succeeded', 'outcome':'filled'}), encoding='utf-8')
+            task_id = 'f' * 32
+            history.write_text(json.dumps({'phase':'succeeded', 'outcome':'filled', 'task_id':task_id}), encoding='utf-8')
             self.assertEqual(self.client.get(url).json['task']['outcome'], 'filled')
+            listing_history = self.client.get('/tasks?view=listing')
+            self.assertIn(f'/tasks/{task_id}', listing_history.get_data(as_text=True))
+            task_page = self.client.get(f'/tasks/{task_id}', follow_redirects=True)
+            self.assertEqual(task_page.status_code, 200)
+            self.assertEqual(task_page.request.path, '/plans/listing')
+            self.assertEqual(task_page.request.args['job'], identifier)
 
     def test_listing_history_filters_and_preserves_attribution(self):
         workbench = self.app.extensions['product_listing']
