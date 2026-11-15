@@ -1,5 +1,6 @@
 """单商品网页后台执行；已启动的导入单只运行一次，进程退出后不重放。"""
 from dataclasses import replace
+from datetime import datetime
 import json
 from logging import getLogger
 import os
@@ -16,16 +17,61 @@ from ecommerce.infrastructure.tasks.ownership import atomic_json, owner_alive, p
 from ecommerce.infrastructure.tasks.runner import current_task, run_task
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.platforms.qianniu.product_review import read_listing_fields, read_listing_media
+from ecommerce.platforms.qianniu.identity import read_editor_account, read_shop_identity
+from ecommerce.platforms.qianniu.login import LoginStatus, inspect_login, is_login_required
+from ecommerce.infrastructure.storage.platform_accounts import AccountStore
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
+from ecommerce.shared.time import BEIJING
 from .service import open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
 from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
 from .listing_profiles import PROFILES, support
 from .listing_video import ADAPTED_VIDEO
+from .listing_accounts import account_settings, listing_target, selected_account
 
 _ID = re.compile('[0-9a-f]{32}')
 _ACTIVE = {'queued', 'running', 'waiting'}
+LISTING_RESULTS = {'warehouse': '已入仓', 'uncertain': '结果待核对', 'filled': '已填写，未提交'}
+
+
+def read_listing_state(path):
+    """兼容 Windows 上原子替换状态文件时的短暂占用。"""
+    for attempt in range(3):
+        try:
+            return json.loads(path.read_text(encoding='utf-8'))
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(.02 * (attempt + 1))
+
+
+def listing_records(root):
+    """读取已启动任务的上架摘要，跳过无法识别的历史残件。"""
+    if not root.is_dir():
+        return
+    for path in root.iterdir():
+        if not _ID.fullmatch(path.name) or path.resolve().parent != root.resolve():
+            continue
+        try:
+            state = read_listing_state(path / 'state.json')
+            task_id = state.get('task_id')
+            if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
+                continue
+            manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+            preview = manifest['preview']
+            outcome = state.get('outcome')
+            yield {'id': path.name, 'task_id': task_id, 'target': manifest.get('listing_target'),
+                   'title': state.get('titles', {}).get('title', preview.get('title', '')),
+                   'code': state.get('submitted_code', preview.get('code', '')), 'item_id': state.get('item_id'),
+                   'outcome': outcome, 'label': LISTING_RESULTS.get(outcome, '未确认填写完成'),
+                   'created_at': state.get('created_at', ''), 'warehouse_at': state.get('warehouse_at'),
+                   'used_at': state.get('warehouse_at') or state.get('filled_at') or state.get('created_at', ''),
+                   'verified_identity': state.get('verified_identity'),
+                   'waiting': state['phase'] == 'waiting' and bool(state.get('prompt'))
+                              and owner_alive(state['pid'], state['process_started']) is not False}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
 
 
 class ListingConflict(ValueError):
@@ -73,13 +119,18 @@ class ListingWorkbench:
             raise LookupError('找不到这份商品资料')
         return path
 
-    def preflight(self, uploads, **form):
+    def preflight(self, uploads, *, account_id=None, shop_id=None, **form):
         """执行离线预检；参数：文件和导航信息；返回：错误或已封存资料。"""
+        target = None
+        if self.settings.task_backend == 'mysql':
+            row = selected_account(self.settings, account_id, shop_id)
+            account_settings(self.settings, row)
+            target = listing_target(row)
         if self.settings.collection_backend != 'mysql':
-            return import_materials(self.root, uploads, **form)
+            return import_materials(self.root, uploads, **form, **({'target': target} if target else {}))
         binding = category_binding(self.settings, form.get('category'))
         return import_materials(self.root, uploads, **form, binding=binding,
-                                profile=PROFILES[binding['profile']])
+                                profile=PROFILES[binding['profile']], target=target)
 
     def snapshot(self, identifier):
         """读当前资料和任务状态；参数：导入编号；返回：不含内部路径的网页结果。"""
@@ -87,7 +138,7 @@ class ListingWorkbench:
         manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
         manifest.pop('hashes')
         state = path / 'state.json'
-        task = json.loads(state.read_text(encoding='utf-8')) if state.is_file() else None
+        task = read_listing_state(state) if state.is_file() else None
         if not task and manifest['preview'].get('allow_submit') is False:
             profile = PROFILES.get((manifest.get('category_binding') or {}).get('profile'))
             if profile and profile.allow_submit:
@@ -109,29 +160,38 @@ class ListingWorkbench:
 
     def jobs_for_tasks(self, task_ids):
         """查找当前环境任务对应的网页导入单，也兼容此前启动的任务。"""
-        remaining = set(task_ids)
-        jobs = {}
-        if not remaining or not self.root.is_dir():
-            return jobs
-        for path in self.root.iterdir():
-            if not _ID.fullmatch(path.name) or path.resolve().parent != self.root.resolve():
-                continue
-            try:
-                state = json.loads((path / 'state.json').read_text(encoding='utf-8'))
-                task_id = state.get('task_id') if isinstance(state, dict) else None
-                if not isinstance(task_id, str) or task_id not in remaining:
-                    continue
-                task = self.snapshot(path.name)['task']
-            except (OSError, LookupError, ValueError, KeyError, TypeError):
-                continue
-            if task and task.get('task_id') == task_id:
-                jobs[task_id] = {'id': path.name, 'waiting': task['phase'] == 'waiting' and bool(task['prompt'])}
-                remaining.remove(task_id)
-                if not remaining:
-                    break
-        return jobs
+        ids = set(task_ids)
+        return {row['task_id']: row for row in listing_records(self.root) if row['task_id'] in ids} if ids else {}
 
-    def start(self, identifier, submit, *, titles=None, sku_titles=None):
+    def history(self, filters, page):
+        from ecommerce.shared.pagination import PAGE_SIZE, pagination
+        records = []
+        terms = {key: value.casefold() for key, value in filters.items() if value and key != 'outcome'}
+        for row in listing_records(self.root):
+            target = row['target'] or {}
+            searchable = {**row, 'account': target.get('login_name', ''), 'shop':
+                          ' '.join(target.get(key, '') for key in ('shop_name', 'platform_shop_id'))}
+            if filters.get('outcome') and row['outcome'] != filters['outcome']:
+                continue
+            if all(value in str(searchable.get(key) or '').casefold() for key, value in terms.items()):
+                records.append(row)
+        records.sort(key=lambda row: (row['created_at'], row['task_id']), reverse=True)
+        return records[(page - 1)*PAGE_SIZE:page*PAGE_SIZE], pagination(len(records), page)
+
+    def last_used_accounts(self):
+        result = {}
+        used_at = {}
+        for row in listing_records(self.root):
+            target = row['target']
+            if not target or row['outcome'] not in ('warehouse', 'filled'):
+                continue
+            shop_id = target['shop_id']
+            if row['used_at'] and row['used_at'] > used_at.get(shop_id, ''):
+                result[shop_id] = target['account_id']
+                used_at[shop_id] = row['used_at']
+        return result
+
+    def start(self, identifier, submit, *, titles=None, sku_titles=None, account_id=None, shop_id=None):
         """领取一份已确认的预检快照；参数：编号和明确布尔值；返回：现有或新任务状态。"""
         if type(submit) is not bool:
             raise ValueError('请选择本次是否提交到仓库')
@@ -142,6 +202,11 @@ class ListingWorkbench:
             if (path / 'state.json').exists():
                 return self.snapshot(identifier)
             manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+            if self.settings.task_backend == 'mysql':
+                target = manifest.get('listing_target')
+                if not target or (account_id, shop_id) != (target['account_id'], target['shop_id']):
+                    raise ListingConflict('所选账号或店铺与预检不一致，请重新预检')
+                account_settings(self.settings, selected_account(self.settings, account_id, shop_id))
             check_binding(self.settings, manifest)
             binding = manifest.get('category_binding')
             if submit and binding and not PROFILES[binding['profile']].allow_submit:
@@ -149,7 +214,8 @@ class ListingWorkbench:
             state = {'phase': 'queued', 'outcome': None, 'task_id': None, 'item_id': None,
                      'submit': submit, 'submit_attempted': False, 'prompt': None, 'evidence': None,
                      'message': '等待后台取得千牛会话', 'pid': os.getpid(),
-                     'process_started': process_started_at(os.getpid())}
+                     'process_started': process_started_at(os.getpid()),
+                     'created_at': datetime.now(BEIJING).isoformat()}
             if titles is not None:
                 if not isinstance(titles, dict) or set(titles) != {'title', 'guide'}:
                     raise ValueError('请提供宝贝标题和导购标题')
@@ -223,6 +289,8 @@ class _ListingRun:
     def __init__(self, settings, path, state):
         self.settings, self.path, self.state = settings, path, state
         self.manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+        self.target = self.manifest.get('listing_target')
+        self.managed_account = None
         self.preview = {**self.manifest['preview'], **state.get('titles', {})}
         self.sku_titles = {row['name']: state['sku_titles'].get(row['sku_key'], '')
                            for row in sku_specs(self.preview)} if 'sku_titles' in state else None
@@ -233,6 +301,56 @@ class _ListingRun:
         self.click_in_progress = False
         self.local_log = None
         self.editor_page = None
+
+    def authenticate_managed(self, page):
+        """核对专用会话中的当前账号及店铺，登录失效时释放窗口。"""
+        status = inspect_login(page)
+        if status is LoginStatus.REQUIRED:
+            self.require_login()
+        if status is not LoginStatus.AUTHENTICATED:
+            raise NeedsAttention('暂时无法确认千牛会话，任务已暂停')
+        identity = read_shop_identity(page)
+        if identity is None and is_login_required(page):
+            self.require_login()
+        self.verify_identity(identity)
+        return page
+
+    def require_login(self):
+        AccountStore(self.settings).change_state(self.managed_account, 'require_login')
+        if self.state['submit_attempted']:
+            raise NeedsAttention('千牛会话已失效，请到原店人工核对提交结果')
+        raise NeedsAttention('千牛会话已失效。请到账号管理重新登录原账号，核对千牛是否仍保留商品编辑现场；现场丢失时请重新预检和填写')
+
+    def verify_identity(self, identity):
+        if identity is None or not identity.login_name:
+            raise NeedsAttention('无法核实当前千牛账号和店铺，任务已暂停')
+        if identity.login_name != self.target['login_name']:
+            raise NeedsAttention(f'千牛账号不符：预期 {self.target["login_name"]}，实际 {identity.login_name}')
+        if identity.shop_id != self.target['platform_shop_id']:
+            raise NeedsAttention(f'千牛店铺不符：预期店铺 ID {self.target["platform_shop_id"]}，实际 {identity.shop_id}')
+        self.update(verified_identity={'login_name': identity.login_name, 'platform_shop_id': identity.shop_id,
+                                      'verified_at': datetime.now(BEIJING).isoformat()})
+
+    def verify_editor_identity(self, page):
+        """用同一会话的店铺信息页交叉核对编辑页顶栏，保留编辑现场。"""
+        if is_login_required(page):
+            self.require_login()
+        account = read_editor_account(page)
+        if account is None:
+            raise NeedsAttention('无法核对千牛编辑页顶栏的账号及店铺，已暂停入仓')
+        verifier = page.context.new_page()
+        try:
+            identity = read_shop_identity(verifier)
+            if identity is None and is_login_required(verifier):
+                self.require_login()
+        finally:
+            verifier.close()
+        if identity is None or not identity.login_name:
+            raise NeedsAttention('无法读取千牛店铺 ID 及完整登录名，已暂停入仓')
+        expected = (identity.shop_name, identity.login_name.rsplit(':', 1)[-1])
+        if account != expected or read_editor_account(page) != expected:
+            raise NeedsAttention('千牛编辑页的账号或店铺与店铺信息页不一致，已暂停入仓')
+        self.verify_identity(identity)
 
     def update(self, **values):
         """原子保存当前进度；参数：状态更新；返回：无。"""
@@ -273,7 +391,7 @@ class _ListingRun:
             getLogger(__name__).warning('未能保存千牛现场截图，保留人工提示')
         return None
 
-    def _wait(self, message, actions, *, page=None, differences=None, kind='manual', context=None):
+    def _wait(self, message, actions, *, page=None, differences=None, kind='manual', context=None, related_tasks=None):
         """等待当前提示的专用反馈；返回：明确操作，关闭网页不算反馈。"""
         previous = self.state if self.state['phase'] == 'waiting' else None
         evidence = self._screenshot(page=page, message=message)
@@ -281,6 +399,8 @@ class _ListingRun:
                    .replace('输入“确认”', '点击「确认弹窗」').replace('输入“取消”', '点击「取消弹窗」'))
         prompt = {'id': uuid4().hex, 'kind': kind, 'actions': actions, 'differences': differences or [],
                   'evidence': evidence}
+        if related_tasks:
+            prompt['related_tasks'] = related_tasks
         self.update(phase='waiting', prompt=prompt, message=message,
                     evidence=evidence or self.state['evidence'])
         if session := current_events():
@@ -327,11 +447,15 @@ class _ListingRun:
             self._wait('提交点击期间出现验证，无法确定是否已提交。请先核对仓库；程序不会继续这次点击。',
                        ['finish'], page=request.page)
             raise NeedsAttention('提交结果待核实，未重放提交')
+        if self.target and is_login_required(request.page):
+            self.require_login()
         self._wait(f'{request.step}：请在千牛窗口手动处理验证，处理后回网页点击「完成」。', ['continue'], page=request.page)
 
     def attention(self, message):
         """处理千牛普通及原生弹窗；参数：守卫说明；返回：本次明确决定。"""
         native = message.startswith(('【需要人工决定原生弹窗】', '【原生弹窗尚未决定】'))
+        if self.target and not native and not self.click_in_progress and is_login_required(self.editor_page):
+            self.require_login()
         if self.click_in_progress and not native:
             self._wait(f'{message}\n提交点击期间出现中断，请核对仓库，程序不会重放提交。', ['finish'])
             raise NeedsAttention('提交结果待核实，未重放提交')
@@ -416,7 +540,8 @@ class _ListingRun:
             getLogger(__name__).info('已回读核对品牌、商品属性、价格和商家编码，以及 %d 条 SKU 和匹配图片',
                                      len(actual['skus']))
         self.sku_media = actual['sku_media']
-        self.update(outcome='filled', notes=self.notes, message='已填写，尚未提交')
+        self.update(outcome='filled', filled_at=datetime.now(BEIJING).isoformat(),
+                    notes=self.notes, message='已填写，尚未提交')
         if not self.state['submit']:
             self._wait('已填写，未提交。可在千牛检查，检查完点击「结束检查」。', ['finish'], page=page, kind='finish')
 
@@ -468,6 +593,8 @@ class _ListingRun:
 
     def before_click(self, page):
         """核对实际商品页并等待差异批准；参数：提交页；返回：仅已核对时放行。"""
+        if self.target and is_login_required(page):
+            self.require_login()
         actual, differences = self._comparison(page)
         while True:
             check_binding(self.settings, self.manifest)
@@ -493,8 +620,23 @@ class _ListingRun:
             storage_checkpoint('提交到仓库前核对任务状态')
             updated, new_differences = self._comparison(page)
             if not title_differences and actual == updated and differences == new_differences:
+                if self.target:
+                    self.warn_pending_submission(page, updated['code'])
+                    self.verify_editor_identity(page)
+                    if self._comparison(page) != (updated, new_differences):
+                        raise NeedsAttention('核对期间商品内容发生变化，请重新核对填写结果')
                 return
             actual, differences = updated, new_differences
+
+    def warn_pending_submission(self, page, code):
+        related = [row['task_id'] for row in listing_records(self.path.parent)
+                   if row['id'] != self.path.name and row['outcome'] == 'uncertain' and row['target']
+                   and row['target']['shop_id'] == self.target['shop_id'] and code and row['code'] == code]
+        if related and self._wait('同一店铺和商家编码有入仓结果待核对。请先到千牛仓库人工核对，再决定是否提交本次商品。',
+                ['approve', 'fill_only'], page=page, kind='duplicate', related_tasks=related) != 'approve':
+            self._wait('已填写，未提交。检查完成后可关闭千牛窗口。', ['finish'], page=page, kind='finish')
+            raise TaskStopped('已填写，用户选择不提交')
+        self.update(submitted_code=code)
 
     def click_intent(self):
         """持久标记一次不可重放的提交意图；参数：无；返回：写入成功后允许点击。"""
@@ -503,7 +645,8 @@ class _ListingRun:
             raise NeedsAttention('已记录提交意图，只能核对结果，不会重复提交')
         self.update(submit_attempted=True, outcome='uncertain', message='正在提交到仓库并核对结果')
         if session := current_events():
-            operation = session.operation('event', 'listing_submit_intent', '已标记一次入仓提交；异常只核对结果')
+            operation = session.operation('event', 'listing_submit_intent', '已标记一次入仓提交；异常只核对结果',
+                                          details=self.state.get('verified_identity'))
             session.collection_barrier = session.append(operation)
             storage_checkpoint('记录商品提交意图')
         self.click_in_progress = True
@@ -517,6 +660,7 @@ class _ListingRun:
         if result.status == 'succeeded':
             evidence = self._screenshot(page=result.page)
             self.update(outcome='warehouse', item_id=result.item_id, message=result.message,
+                        warehouse_at=datetime.now(BEIJING).isoformat(),
                         evidence=evidence or self.state['evidence'])
             if session := current_events():
                 session.emit('listing_warehouse', result.message, details={'item_id': result.item_id})
@@ -549,7 +693,11 @@ class _ListingRun:
                 if (not video or not video.is_file() or video.resolve().parent != self.path.resolve() / 'video_adapted'
                         or digest(video) != self.manifest['hashes'].get(f'video_adapted/{ADAPTED_VIDEO}')):
                     raise NeedsAttention('已确认的视频上传副本发生变化，请重新导入并自检')
-            return open_publish(self.settings, keyword=self.preview['keyword'], category=self.preview['category'],
+            browser_settings = self.settings
+            if self.target:
+                self.managed_account = selected_account(self.settings, self.target['account_id'], self.target['shop_id'])
+                browser_settings = account_settings(self.settings, self.managed_account)
+            return open_publish(browser_settings, keyword=self.preview['keyword'], category=self.preview['category'],
                 brand=self.preview['brand'], main_images_dir=str(self.path / 'main'),
                 portrait_images_dir=str(self.path / 'portrait') if files['portrait'] else None,
                 detail_images_dir=str(self.path / 'detail') if files['detail'] else None,
@@ -560,7 +708,8 @@ class _ListingRun:
                 **({'sku_titles': self.sku_titles} if self.sku_titles is not None else {}),
                 **({'title_overrides': self.state['titles']} if 'titles' in self.state else {}))
         try:
-            result = run_task(self.settings, 'product.submit' if self.state['submit'] else 'product.open', work)
+            result = run_task(self.settings, 'product.submit' if self.state['submit'] else 'product.open',
+                              work, **({'listing_scope': self.target} if self.target else {}))
             message = ('提交结果待核实；请检查千牛仓库，未重复提交' if self.state['outcome'] == 'uncertain'
                        else result.message)
             if self.local_log:

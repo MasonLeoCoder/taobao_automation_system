@@ -7,12 +7,13 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 from werkzeug.exceptions import HTTPException
 from ecommerce.modules.product.web_materials import CATEGORY, GROUPS, LIMIT, MAX_FILES
 from ecommerce.modules.product.web_listing import ListingConflict, category_binding
+from ecommerce.modules.product.listing_accounts import account_problem, listing_accounts
 from ecommerce.modules.product.listing_logs import MAX_CURSOR
 from ecommerce.infrastructure.storage import publish_categories
 from ecommerce.modules.product.listing_profiles import LINT_ROLLER, PROFILES, support
 from ecommerce.modules.product.listing_templates import build_material_bundle, template_for
 from ecommerce.modules.product.title_generation import TitleGeneration
-from ecommerce.shared.exceptions import TaskBusy
+from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
 
 product_listing = Blueprint('product_listing', __name__)
 
@@ -33,7 +34,7 @@ def protect_listing():
             abort(415, description='请先选择并导入商品文件夹')
         request.max_content_length = LIMIT + 1024**2
         request.max_form_memory_size = 512 * 1024
-        request.max_form_parts = MAX_FILES + 3
+        request.max_form_parts = MAX_FILES + 5
     elif not request.is_json:
         abort(415, description='请通过上架工作台操作')
 
@@ -46,9 +47,10 @@ def http_error(error):
 
 @product_listing.errorhandler(ValueError)
 @product_listing.errorhandler(TaskBusy)
+@product_listing.errorhandler(NeedsAttention)
 def listing_error(error):
     """返回预检或状态错误；参数：异常；返回：提示及状态。"""
-    return jsonify(error=str(error)), 409 if isinstance(error, (ListingConflict, TaskBusy)) else 422
+    return jsonify(error=str(error)), 409 if isinstance(error, (ListingConflict, TaskBusy, NeedsAttention)) else 422
 
 
 @product_listing.errorhandler(LookupError)
@@ -77,10 +79,22 @@ def index():
         profile = PROFILES.get(row['listing_profile_key'])
         choices.append(dict(row, support=state, has_template=bool(template),
                             keyword=(profile.search_keyword if profile else None) or row['name']))
+    account_choices = {}
+    last_used = workbench().last_used_accounts() if settings.task_backend == 'mysql' else {}
+    for row in listing_accounts(settings):
+        shop = account_choices.setdefault(row['shop_id'], {
+            'id': row['shop_id'], 'name': row['shop_name'], 'platform_id': row['platform_shop_id'], 'accounts': [],
+        })
+        reason = account_problem(settings, row)
+        shop['accounts'].append({'id': row['id'], 'name': row['login_name'], 'reason': reason,
+                                 'recent': not reason and last_used.get(row['shop_id']) == row['id']})
+    for shop in account_choices.values():
+        shop['accounts'].sort(key=lambda row: (bool(row['reason']), not row['recent'], row['name'].casefold(), row['id']))
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
         use_catalog=use_catalog, choices=choices, can_submit=settings.environment != 'verify',
-        title_generation_enabled=use_catalog)
+        title_generation_enabled=use_catalog, managed_accounts=settings.task_backend == 'mysql',
+        listing_shops=sorted(account_choices.values(), key=lambda shop: (shop['name'], shop['platform_id'])))
 
 
 @product_listing.get('/api/listing/template')
@@ -106,7 +120,10 @@ def download_template():
 @product_listing.post('/api/listing/preflight')
 def preflight():
     """导入选中的素材并自检；参数：文件分组和导航信息；返回：预检结果。"""
-    if (set(request.files) - GROUPS.keys() or set(request.form) != {'keyword', 'category', 'brand'}
+    fields = {'keyword', 'category', 'brand'}
+    if current_app.config['SETTINGS'].task_backend == 'mysql':
+        fields |= {'account_id', 'shop_id'}
+    if (set(request.files) - GROUPS.keys() or set(request.form) != fields
             or any(len(values) != 1 for _, values in request.form.lists())):
         abort(400, description='预检表单或素材分组不完整')
     try:
@@ -144,14 +161,15 @@ def logs(identifier):
 def start(identifier):
     """在后台启动一次已预检导入；参数：编号及仓库开关；返回：当前状态。"""
     data = request.get_json()
-    if not isinstance(data, dict) or 'submit' not in data or set(data) - {'submit', 'titles', 'sku_titles'}:
+    if not isinstance(data, dict) or 'submit' not in data or set(data) - {'submit', 'titles', 'sku_titles', 'account_id', 'shop_id'}:
         abort(400, description='请明确本次是否提交到仓库')
     if 'titles' in data and not isinstance(data['titles'], dict):
         abort(400, description='标题参数无效')
     if 'sku_titles' in data and not isinstance(data['sku_titles'], dict):
         abort(400, description='SKU 搜索标题参数无效')
+    target = {key: data.get(key) for key in ('account_id', 'shop_id')} if current_app.config['SETTINGS'].task_backend == 'mysql' else {}
     return jsonify(workbench().start(identifier, data['submit'], titles=data.get('titles'),
-                                     sku_titles=data.get('sku_titles'))), 202
+                                     sku_titles=data.get('sku_titles'), **target)), 202
 
 
 @product_listing.get('/api/listing/<identifier>/titles/source')

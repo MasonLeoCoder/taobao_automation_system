@@ -4,6 +4,7 @@
   if (!root) return;
   const node = name => document.getElementById(`listing-${name}`);
   const base = root.dataset.api.replace(/\/preflight$/, '');
+  const shops = JSON.parse(document.getElementById('listing-shop-data')?.textContent || '[]');
   const token = document.querySelector('meta[name="workbench-token"]').content;
   const labels = Object.fromEntries([...node('mapping').querySelectorAll('[data-material]')].map(e => [e.dataset.material, e.dataset.label]));
   const aliases = {main:['1-1主图','1:1主图','1比1主图'], portrait:['3-4主图','3:4主图','3比4主图'], detail:['详情图'], sku:['sku图','sku图片']};
@@ -15,6 +16,7 @@
   const active = ['queued','running','waiting'];
   const phases = {queued:'等待启动', running:'执行中', waiting:'等待人工处理', succeeded:'已完成', failed:'执行失败', cancelled:'已结束', interrupted:'执行中断', needs_attention:'需要人工核对'};
   let fileMap = new Map(), dirs = new Map(), id = null, timer, busy = false, sentPrompt, seenPrompt, currentPrompt;
+  let listingTarget = null;
   let logOwner = null, logBusy = false, logAgain = false, logReady = false, oldest = null, latest = 0, hasOlder = false;
 
   async function api(url, body) {
@@ -67,13 +69,19 @@
     if (seenPrompt === prompt.id) return;
     seenPrompt = prompt.id;
     const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异', titles:'请修正千牛标题',
-      receipt:'请核对提交结果', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对',
+      receipt:'请核对提交结果', duplicate:'已有入仓结果待核对', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对',
       video:'请核对商品视频', video_ratio:'视频比例需要处理', specifications:'请核对分层规格',
       main_image:'请核对当前主图', manual:'需要人工处理'};
     node('manual-dialog-title').textContent = titles[prompt.kind] || titles.manual;
     node('manual-message').textContent = task.message + (terminal && !task.prompt ? '\n当前任务已结束，不能从该步骤自动继续。' : '');
     const diff = node('manual-differences');
     diff.replaceChildren(...(prompt.differences || []).map(value => element('li',value)));
+    for (const taskId of prompt.related_tasks || []) {
+      const link = element('a', '查看原任务 ' + taskId.slice(0, 12));
+      link.href = root.dataset.tasks + '/' + encodeURIComponent(taskId);
+      link.target = '_blank'; link.rel = 'noopener';
+      const entry = element('li'); entry.append(link); diff.append(entry);
+    }
     diff.hidden = !diff.childElementCount;
     node('manual-evidence').hidden = !prompt.evidence;
     if (prompt.evidence) node('manual-evidence').href = `${base}/${id}/evidence/${prompt.evidence}`;
@@ -81,7 +89,8 @@
     const buttons = node('manual-actions');
     buttons.replaceChildren();
     for (const action of prompt.actions) {
-      const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',approve:'确认差异并提交到仓库',
+      const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',
+        approve:prompt.kind === 'duplicate' ? '已人工核对，继续本次提交' : '确认差异并提交到仓库',
         recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',skip_video:'跳过视频',
         finish:['specifications','main_image','video_ratio'].includes(prompt.kind) ? '结束本次任务' :
           task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
@@ -289,7 +298,16 @@
       node('title').value = preview.title || '';
       node('guide').value = preview.guide || '';
     }
-    const summary = [['类目',preview.category],['品牌',preview.brand],['商家编码',preview.code],['一口价',preview.price],['店铺分类',preview.shop_categories?.join('、')]];
+    const target = data.listing_target;
+    listingTarget = target;
+    if (target && node('shop') && !node('shop').value) {
+      node('shop').value = target.shop_id;
+      node('shop').dispatchEvent(new Event('change'));
+      updateAccountOptions(target.account_id);
+    }
+    const summary = [['目标店铺',target && `${target.shop_name} · ${target.platform_shop_id}`],
+      ['千牛账号',target?.login_name],['类目',preview.category],['品牌',preview.brand],['商家编码',preview.code],
+      ['一口价',preview.price],['店铺分类',preview.shop_categories?.join('、')]];
     if (!titles) summary.unshift(['宝贝标题',preview.title],['导购标题',preview.guide]);
     node('summary').replaceChildren(...summary.filter(([, value]) => value).map(([label,value]) => {
       const box = element('div'); box.className = 'listing-summary-entry'; box.append(element('strong',label),element('span',value)); return box;
@@ -346,7 +364,10 @@
     node('submit-note').hidden = preview.allow_submit !== false;
     updateStartLabel();
     const validTitles = checkTitles();
-    node('start').disabled = !data.id || !!task || busy || !validTitles;
+    node('start').disabled = !data.id || !!task || busy || !validTitles || !targetMatches();
+    if (!task && data.id && !targetMatches()) {
+      startError('这份预检的店铺或账号当前不可用，请选中可用账号后重新预检。');
+    }
     node('action').hidden = !!task;
     node('task').hidden = !task;
     if (!task) return;
@@ -402,6 +423,7 @@
     clearTimeout(timer); remember(null); node('review').hidden = true; node('task').hidden = true;
     root.dispatchEvent(new CustomEvent('listing:review'));
     currentPrompt = seenPrompt = sentPrompt = null;
+    listingTarget = null;
     node('manual-open').hidden = true; node('feedback-note').textContent = '';
     logOwner = oldest = null; latest = 0; logBusy = logAgain = logReady = hasOlder = false;
     node('log-rows').replaceChildren(); node('log-older').hidden = true;
@@ -444,7 +466,7 @@
       node('folder-change').hidden = !selected;
       folderName.closest('.listing-folder-card').classList.toggle('is-selected',selected);
     }
-    node('preflight').disabled = !fileMap.size || (node('category') && !node('category').value);
+    updatePreflight();
     const mapping = node('mapping');
     mapping.dispatchEvent(new Event('ui:controls-remove',{bubbles:true}));
     const customFolders = [...dirs.keys()].filter(path => !knownFolders.has(folderAlias(path)) &&
@@ -476,6 +498,45 @@
   }
 
   node('folder').addEventListener('change',chooseFolder);
+  function updatePreflight() {
+    node('preflight').disabled = !fileMap.size || (node('category') && !node('category').value) ||
+      (node('shop') && (!node('shop').value || !node('account').value));
+  }
+  function targetMatches() {
+    return !node('shop') || (node('shop').value === listingTarget?.shop_id &&
+      node('account').value === listingTarget?.account_id);
+  }
+  function updateAccountOptions(wanted = '') {
+    const field = node('account-field');
+    const old = node('account');
+    const select = old.cloneNode(false);
+    const shop = shops.find(row => row.id === node('shop').value);
+    field.dispatchEvent(new Event('ui:controls-remove', {bubbles:true}));
+    select.classList.remove('ui-searchable-native');
+    select.disabled = !shop;
+    select.dataset.placeholder = shop ? '选择千牛账号' : '先选择店铺';
+    select.add(new Option(select.dataset.placeholder, ''));
+    for (const unavailable of [false, true]) {
+      const group = element('optgroup');
+      group.label = unavailable ? '不可用账号' : '可用账号';
+      for (const account of shop?.accounts || []) {
+        if (!!account.reason !== unavailable) continue;
+        const option = new Option(account.name + (account.reason ? ' · ' + account.reason :
+          account.recent ? ' · 上次使用' : ''), account.id);
+        option.disabled = !!account.reason;
+        group.append(option);
+      }
+      if (group.children.length) select.append(group);
+    }
+    old.replaceWith(select);
+    if ([...select.options].some(option => option.value === wanted && !option.disabled)) select.value = wanted;
+    field.dispatchEvent(new Event('ui:controls-added', {bubbles:true}));
+    node('account-note').hidden = shops.length > 0 && (!shop || shop.accounts.some(account => !account.reason));
+    node('account-note-text').textContent = shop ? '该店铺暂无可用千牛账号。' : '当前环境暂无已登记的千牛店铺账号。';
+    updatePreflight();
+  }
+  node('shop')?.addEventListener('change', () => updateAccountOptions());
+  if (node('shop')) updateAccountOptions();
   function updateTemplateLink() {
     const selected = node('category').selectedOptions[0];
     const link = node('template-download');
@@ -499,7 +560,7 @@
     const selected = node('category').selectedOptions[0];
     updateTemplateLink();
     node('keyword').value = selected?.dataset.searchKeyword || '';
-    node('preflight').disabled = !fileMap.size || !node('category').value;
+    updatePreflight();
     node('import-note').textContent = '类目已更换，请确认素材并重新自检。';
   });
   node('manual-close').addEventListener('click',() => node('manual-dialog').close());
@@ -508,10 +569,11 @@
   node('import').addEventListener('change',event => {
     if (event.target.matches('select[data-listing-role]')) showRecognized();
     if (event.target !== node('folder') && id && !busy) resetReview();
+    if (event.target.matches('#listing-account, #listing-shop')) updatePreflight();
   });
   node('import').addEventListener('submit',async event => {
     event.preventDefault();
-    if (busy || !fileMap.size) return;
+    if (busy || !fileMap.size || node('preflight').disabled) return;
     const form = new FormData(node('import'));
     const selections = [...node('mapping').querySelectorAll('select')];
     if (selections.some(select => !select.value)) {
@@ -541,7 +603,7 @@
   node('submit').addEventListener('change',updateStartLabel);
   node('titles')?.addEventListener('input',() => {
     startError();
-    node('start').disabled = !checkTitles() || !id || busy;
+    node('start').disabled = !checkTitles() || !id || busy || !targetMatches();
   });
   node('skus').addEventListener('input', event => {
     const field = event.target;
@@ -549,7 +611,7 @@
     skuDraft[field.dataset.skuKey] = {...skuDraft[field.dataset.skuKey], title:field.value, manual:true};
     saveSkuDraft();
     startError();
-    node('start').disabled = !checkTitles() || !id || busy;
+    node('start').disabled = !checkTitles() || !id || busy || !targetMatches();
   });
   root.addEventListener('listing:sku-result', ({detail}) => {
     const {job, attempt, rows, autoFill, previousEdits} = detail;
@@ -570,12 +632,16 @@
       }
       saveSkuDraft();
     }
-    node('start').disabled = !checkTitles();
+    node('start').disabled = !checkTitles() || !targetMatches();
   });
   node('start').addEventListener('click',async () => {
-    if (!id || busy || !checkTitles()) return;
+    if (!id || busy || !checkTitles() || !targetMatches()) return;
     startError();
     const body = {submit:node('submit').checked};
+    if (node('shop')) {
+      body.shop_id = node('shop').value;
+      body.account_id = node('account').value;
+    }
     if (node('titles')) {
       body.titles = {title:node('title').value, guide:node('guide').value};
       node('titles').disabled = true;
@@ -592,7 +658,7 @@
       startError(error.message); node('import-fields').disabled = false;
       if (node('titles')) node('titles').disabled = false;
       skuFields.forEach(field => { field.disabled = false; });
-      node('start').disabled = !checkTitles();
+      node('start').disabled = !checkTitles() || !targetMatches();
     } finally { busy = false; }
   });
   const saved = new URL(location.href).searchParams.get('job');

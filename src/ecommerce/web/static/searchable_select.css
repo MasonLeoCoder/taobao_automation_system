@@ -5,3 +5,4 @@
 @media(max-width:700px){.sa-keyword-field{flex:1;min-width:140px;width:auto}.ss-heading{padding-top:14px}.ss-option{min-height:calc(var(--control-height) + 6px)}.ss-popover .ss-input{font-size:var(--control-mobile-font-size)}.ss-keyboard-hint{display:none}.ss-footer{font-size:10px}.ss-trigger{min-height:var(--control-height)}}
 @media(prefers-reduced-motion:reduce){.ss-trigger,.ss-chevron{transition:none}}
 .ss-option[aria-disabled="true"] { opacity:.55; cursor:default; }
+.ss-group-label { margin:8px 10px 4px; color:var(--control-label); font-size:12px; font-weight:600; }

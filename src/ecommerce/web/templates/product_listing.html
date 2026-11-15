@@ -23,6 +23,22 @@
     </div>
     <form id="listing-import">
       <fieldset id="listing-import-fields">
+        {% if managed_accounts %}
+        <div class="listing-fields" id="listing-target-fields">
+          {% call ui.field('目标店铺') %}{% call ui.select_control({'id':'listing-shop','name':'shop_id','required':true,'data-searchable-select':'true'}) %}
+            <option value="">请选择目标店铺</option>
+            {% for shop in listing_shops %}<option value="{{ shop.id }}">{{ shop.name }} · {{ shop.platform_id }}</option>{% endfor %}
+          {% endcall %}{% endcall %}
+          {% call ui.field('千牛账号', {'id':'listing-account-field'}) %}
+            {% call ui.select_control({'id':'listing-account','name':'account_id','required':true,'disabled':true,
+              'data-searchable-select':'true','data-search-disabled':'true','data-show-disabled':'true','data-option-groups':'true'}) %}
+              <option value="">先选择店铺</option>
+            {% endcall %}
+          {% endcall %}
+        </div>
+        <script id="listing-shop-data" type="application/json">{{ listing_shops|tojson }}</script>
+        <p id="listing-account-note" class="ui-form-note" aria-live="polite" {% if listing_shops %}hidden{% endif %}><span id="listing-account-note-text">当前环境暂无已登记的千牛店铺账号。</span><a href="{{ url_for('platform_accounts.index') }}">前往账号管理</a></p>
+        {% endif %}
         <div class="listing-fields">
           {% if use_catalog %}
             {% call ui.field('千牛类目') %}{% call ui.select_control({'id':'listing-category','name':'category','required':true,'data-searchable-select':'true','data-search-disabled':'true'}) %}

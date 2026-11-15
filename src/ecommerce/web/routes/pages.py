@@ -16,6 +16,17 @@ def home():
 def tasks():
     """按页展示全部任务；参数：页码；返回：每页20条的任务页面。"""
     try:
+        if request.args.get('view') == 'listing':
+            from ecommerce.modules.product.web_listing import LISTING_RESULTS
+            filters = {key: request.args.get(key, '').strip() for key in
+                       ('title', 'code', 'item_id', 'account', 'shop', 'outcome')}
+            if any(len(term) > 200 for term in filters.values()):
+                raise ValueError('每个搜索条件最多输入 200 个字符')
+            if filters['outcome'] and filters['outcome'] not in LISTING_RESULTS:
+                raise ValueError('请选择有效的入仓结果')
+            rows, pagination = current_app.extensions['product_listing'].history(filters, integer_arg('page', 1))
+            return render_template('listing_history.html', active='tasks', rows=rows, filters=filters,
+                                   results=LISTING_RESULTS, pagination=pagination)
         data=task_history(current_app.config['SETTINGS'],integer_arg('page',1),sort_by=request.args.get('sort'),order=request.args.get('order'))
     except ValueError as error:
         abort(400,description=str(error))
@@ -23,7 +34,8 @@ def tasks():
         abort(404,description='任务页不存在')
     listing_jobs = current_app.extensions['product_listing'].jobs_for_tasks(
         task['id'] for task in data['tasks'] if task['name'] in {'product.open', 'product.submit'})
-    return render_template("tasks.html", active="tasks",pagination=data, listing_jobs=listing_jobs, **data)
+    return render_template("tasks.html", active="tasks", pagination=data, listing_jobs=listing_jobs,
+                           listing_history_available=True, **data)
 
 
 @pages.get("/modules/<key>")

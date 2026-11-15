@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "pagination.html" import pager with context %}
+{% from "form_controls.html" import input_control, select_control, control_button with context %}
+{% block title %}上架记录{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ url_for('static', filename='product_listing.css') }}">{% endblock %}
+{% block breadcrumb %}任务记录 / 上架记录{% endblock %}
+{% block content %}
+<section class="intro">
+  <div><h1>上架记录</h1><p>查看网页填写及入仓任务的商品、店铺和操作账号。</p></div>
+  <a class="ui-button ui-secondary" href="{{ url_for('pages.tasks') }}">全部任务</a>
+</section>
+<section class="panel">
+  <form method="get" action="{{ url_for('pages.tasks') }}" class="filter-bar listing-history-filters" aria-label="搜索上架记录">
+    <input type="hidden" name="view" value="listing">
+    {% for key, label in [('title', '商品标题'), ('code', '商家编码'), ('item_id', '千牛商品 ID'), ('account', '千牛登录名'), ('shop', '店铺名称或 ID')] %}
+      <label>{{ label }}{{ input_control({'name': key, 'value': filters[key], 'maxlength': '200'}) }}</label>
+    {% endfor %}
+    <label>入仓结果
+      {% call select_control({'name': 'outcome'}, '入仓结果') %}
+        <option value="">全部结果</option>
+        {% for value, label in results.items() %}<option value="{{ value }}"{% if filters.outcome == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      {% endcall %}
+    </label>
+    {{ control_button('搜索', {'type': 'submit', 'class': 'ui-button ui-primary'}) }}
+    <a class="ui-button ui-secondary" href="{{ url_for('pages.tasks', view='listing') }}">清除条件</a>
+  </form>
+</section>
+{% if rows %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>商品</th><th>千牛商品 ID</th><th>店铺</th><th>千牛登录名</th><th>入仓结果</th><th>操作</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td>{{ row.title or '未知商品' }}{% if row.code %}<small>商家编码 {{ row.code }}</small>{% endif %}</td>
+        <td>{{ row.item_id or '—' }}</td>
+        <td>{% if row.target %}{{ row.target.shop_name }}<small>{{ row.target.platform_shop_id }}</small>{% else %}未知{% endif %}</td>
+        <td>{{ row.target.login_name if row.target else '未知' }}</td>
+        <td>{{ row.label }}</td>
+        <td><a href="{{ url_for('pages.task_detail', task_id=row.task_id, return_to=current_location()) }}">任务详情</a>
+          {% if row.waiting %}<small><a href="{{ url_for('product_listing.index', job=row.id) }}">继续处理</a></small>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ pager(pagination) }}
+{% else %}
+<section class="empty"><h2>没有符合条件的上架记录</h2></section>
+{% endif %}
+{% endblock %}

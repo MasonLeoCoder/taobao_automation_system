@@ -32,16 +32,17 @@ class LoginStatus(Enum):
 
 def _visible(page: Page, selectors: tuple[str, ...]) -> bool:
     """即时检查主页面及框架；参数：页面、选择器；返回：是否存在可见元素。"""
-    for frame in page.frames:
-        for selector in selectors:
-            try:
-                locator = frame.locator(selector)
-                for index in range(locator.count()):
-                    if locator.nth(index).is_visible():
-                        return True
-            except PlaywrightError:
-                # 页面跳转或框架销毁时留待下一轮检查。
-                continue
+    return any(_visible_in_frame(frame, selectors) for frame in page.frames)
+
+
+def _visible_in_frame(frame, selectors):
+    for selector in selectors:
+        try:
+            if any(element.is_visible() for element in frame.locator(selector).all()):
+                return True
+        except PlaywrightError:
+            # 页面跳转或框架销毁时留待下一轮检查。
+            continue
     return False
 
 
@@ -59,6 +60,18 @@ def _is_authenticated(page: Page) -> bool:
     return _visible(page, HOME_HINT_SELECTORS) or (
         _visible(page, HOME_NAV_SELECTORS) and _visible(page, TRADE_NAV_SELECTORS)
     )
+
+
+def is_login_required(page: Page) -> bool:
+    if page is None or page.is_closed():
+        return False
+    for frame in page.frames:
+        location = urlsplit(frame.url)
+        if location.scheme != 'https' or location.hostname not in {'loginmyseller.taobao.com', 'login.taobao.com'}:
+            continue
+        if _visible_in_frame(frame, LOGIN_FORM_SELECTORS):
+            return True
+    return False
 
 
 def _safe_location(page: Page) -> str:
@@ -90,9 +103,7 @@ def inspect_login(page: Page) -> LoginStatus:
                 if _is_authenticated(page):
                     logger.info("已确认千牛工作台登录：%s", _safe_location(page))
                     return LoginStatus.AUTHENTICATED
-                location = urlsplit(page.url)
-                if (location.scheme == 'https' and location.hostname == 'loginmyseller.taobao.com'
-                        and _visible(page, LOGIN_FORM_SELECTORS)):
+                if is_login_required(page):
                     logger.info("检测到登录表单，需要扫码登录")
                     return LoginStatus.REQUIRED
                 if _visible(page, LOGIN_FORM_SELECTORS):

@@ -215,4 +215,13 @@ def click_start_button(page: Page) -> None:
         page, START_BUTTON_SELECTORS, element_name="发布商品页面的开启按钮"
     ))
     page_step(start_button.click, completed=lambda: not start_button.is_visible())
+
+
+@qianniu_operation
+def prepare_publish_search(page: Page) -> None:
+    """新会话可能先显示「开启」，老会话直接进入搜索。"""
+    entry = page.locator(','.join(f'{selector}:visible' for selector in (SEARCH_INPUT_SELECTOR, *START_BUTTON_SELECTORS))).first
+    page_step(lambda: entry.wait_for(state='visible'))
+    if not page.locator(SEARCH_INPUT_SELECTOR).is_visible():
+        click_start_button(page)
     logger.info("已点击发布商品页面的开启按钮")

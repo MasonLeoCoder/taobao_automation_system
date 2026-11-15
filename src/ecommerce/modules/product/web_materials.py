@@ -116,7 +116,7 @@ def _book(path, profile=LINT_ROLLER, category=CATEGORY):
             'attributes': {key: str(book.fields.get(key) or '').strip() for key in profile.attributes}}
 
 
-def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_ROLLER, binding=None):
+def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_ROLLER, binding=None, target=None):
     """验证并封存本次选择；参数：工作目录、按角色分组的文件及导航参数；返回：预检结果。"""
     from openpyxl.utils.exceptions import InvalidFileException
     from zipfile import BadZipFile
@@ -170,13 +170,13 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     path = directory / name
                     limit = VIDEO_LIMIT if group == 'video' else {'excel': 16, 'detail': 6}.get(group, 20) * 1024**2
                     size = 0
-                    with path.open('xb') as target:
+                    with path.open('xb') as destination:
                         while chunk := stream.read(1024**2):
                             size += len(chunk)
                             total += len(chunk)
                             if size > limit or total > LIMIT:
                                 raise ValueError('超过单文件或整组上传大小限制')
-                            target.write(chunk)
+                            destination.write(chunk)
                     if not size:
                         raise ValueError('文件为空')
                     if group == 'excel':
@@ -240,6 +240,8 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                   'errors': errors, 'warnings': warnings, 'skipped': skipped}
         if not errors:
             manifest = {**result, 'hashes': hashes}
+            if target is not None:
+                manifest['listing_target'] = result['listing_target'] = target
             if binding:
                 manifest['category_binding'] = binding
             atomic_json(bundle / 'manifest.json', manifest)

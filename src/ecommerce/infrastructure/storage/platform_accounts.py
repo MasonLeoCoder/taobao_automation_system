@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.mysql import insert
 
 from .mysql import MySQLStorageError, safe_error
-from .mysql_migrations.schema_v30 import build_metadata
+from .mysql_migrations.schema_v31 import build_metadata
 from .time_values import database_now
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -23,7 +23,7 @@ class AccountStore:
     def list_accounts(self, account_id=None):
         accounts, shops, links = self.accounts, self.shops, self.links
         query = sa.select(accounts.c.id, accounts.c.login_name, accounts.c.session_id,
-            accounts.c.enabled, accounts.c.login_required, accounts.c.revision,
+            accounts.c.enabled, accounts.c.login_required, accounts.c.revision, shops.c.id.label('shop_id'),
             accounts.c.verified_at, shops.c.platform_shop_id, shops.c.name.label('shop_name'),
             sa.exists().where(self.cleanup.c.account_id == accounts.c.id).label('cleanup_pending'),
         ).select_from(accounts).join(links, links.c.account_id == accounts.c.id).join(shops, shops.c.id == links.c.shop_id).where(

@@ -20,10 +20,19 @@ from ecommerce.shared.exceptions import NeedsAttention, TaskBusy, TaskStopped
 MANAGEMENT_ACTIONS = {'disable', 'enable', 'clear', 'retry_cleanup'}
 
 
+def account_session_directory(workspace, identifier):
+    if not isinstance(identifier, str) or UUID(hex=identifier).hex != identifier:
+        raise ValueError('会话编号无效')
+    root = workspace.resolve() / 'storage/managed_accounts/qianniu'
+    directory = (root / identifier).resolve()
+    if directory != root / identifier:
+        raise ValueError('会话目录不在千牛账号资料下')
+    return directory
+
+
 class AccountWorkbench:
     def __init__(self, settings):
         self.settings = replace(settings.for_platform('qianniu'), headless=False)
-        self.root = (self.settings.workspace / 'storage/managed_accounts/qianniu').resolve()
         self.lock = Lock()
         self.feedback = Event()
         self.state = None
@@ -101,12 +110,7 @@ class AccountWorkbench:
             self.state.update(phase='scan', message='请在千牛窗口扫码，系统会在登录后核对账号和店铺')
 
     def _profile(self, identifier):
-        if UUID(hex=identifier).hex != identifier:
-            raise ValueError('会话编号无效')
-        directory = (self.root / identifier).resolve()
-        if self.root != self.settings.workspace.resolve() / 'storage/managed_accounts/qianniu' or directory != self.root / identifier:
-            raise ValueError('会话目录不在千牛账号资料下')
-        return directory
+        return account_session_directory(self.settings.workspace, identifier)
 
     def _remove_session(self, identifier):
         try:

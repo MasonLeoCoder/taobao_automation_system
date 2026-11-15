@@ -16,6 +16,7 @@ def page_with(url, visible=()):
     page.url = url
     page.is_closed.return_value = False
     frame = MagicMock()
+    frame.url = url
 
     def locator(selector):
         """模拟即时定位；参数：选择器；返回：定位器。"""
@@ -57,6 +58,13 @@ class LoginTests(unittest.TestCase):
         self.assertIs(login.inspect_login(page), login.LoginStatus.REQUIRED)
         page.goto.return_value.status = 503
         self.assertIs(login.inspect_login(page), login.LoginStatus.UNCONFIRMED)
+
+    def test_editor_login_iframe_requires_trusted_platform_origin(self):
+        page = page_with('https://item.upload.taobao.com/sell/v2/publish.htm')
+        page.frames += page_with('https://example.com/', ('#login',)).frames
+        self.assertFalse(login.is_login_required(page))
+        page.frames += page_with(login.LOGIN_URL, ('#login',)).frames
+        self.assertTrue(login.is_login_required(page))
 
     def test_new_tab_is_returned(self):
         """扫码后新标签页的工作台能被识别；参数：无；返回：无。"""

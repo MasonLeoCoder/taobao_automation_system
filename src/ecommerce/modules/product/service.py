@@ -18,7 +18,7 @@ from ecommerce.platforms.qianniu.product_details import upload_detail_images
 from ecommerce.platforms.qianniu.product_submit import SubmissionResult, submit_product_to_warehouse, inspect_submission_result
 from ecommerce.platforms.qianniu.session import browser_session
 from ecommerce.modules.account.service import authenticate
-from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, click_start_button, continue_to_editor, search_publish_products, select_publish_category, select_brand_and_continue
+from ecommerce.platforms.qianniu.product import click_product_nav, click_publish_product, click_start_button, continue_to_editor, prepare_publish_search, search_publish_products, select_publish_category, select_brand_and_continue
 from ecommerce.shared.config import Settings
 from ecommerce.shared.exceptions import NeedsAttention
 
@@ -182,11 +182,15 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
     verification = {'verification_handler': web_review.verification} if web_review else {}
+    managed = bool(web_review and getattr(web_review, 'target', None))
     brand_in_editor = bool(profile and profile.brand_in_editor)
     with browser_session(settings, on_attention=on_attention, **verification) as (context, page):
         if web_review:
             web_review.progress('正在检查千牛登录状态')
-            page = authenticate(context, page, settings, on_login_wait=web_review.login_wait)
+            if managed:
+                page = web_review.authenticate_managed(page)
+            else:
+                page = authenticate(context, page, settings, on_login_wait=web_review.login_wait)
             web_review.progress('千牛已登录，正在进入商品发布')
         else:
             page = authenticate(context, page, settings)
@@ -194,6 +198,8 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         page = click_publish_product(context, page)
         if start:
             click_start_button(page)
+        elif managed and keyword is not None:
+            prepare_publish_search(page)
         if keyword is not None:
             if brand_in_editor:
                 search_publish_products(page, keyword, expected_category=category)

@@ -313,3 +313,10 @@
   .listing-ai-candidate-bar button { min-height: 44px; }
   .listing-ai > summary span { display: inline-block; margin: .3rem 0 0; }
 }
+.listing-history-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: .8rem;
+  align-items: end;
+}
+.listing-history-filters label { display: grid; gap: .35rem; }

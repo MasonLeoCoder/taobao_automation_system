@@ -34,7 +34,8 @@
     const allowEmptyOption = select.dataset.allowEmptyOption === 'true' && !select.required;
     const searchDisabled = select.dataset.searchDisabled === 'true';
     const choices = Array.from(select.options).filter(option => (!option.disabled || searchDisabled) && (option.value !== '' || allowEmptyOption))
-      .map(option => ({value:option.value, label:option.textContent.trim(), disabled:option.disabled}));
+      .map(option => ({value:option.value, label:option.textContent.trim(), disabled:option.disabled,
+        group:select.dataset.optionGroups === 'true' ? option.closest('optgroup')?.label : null}));
     const trigger = element('button', 'ui-control ss-trigger');
     trigger.type = 'button';
     trigger.setAttribute('aria-haspopup', 'dialog');
@@ -90,11 +91,12 @@
       popup.classList.toggle('ss-above', upwards);
     }
     function setActive(index, scroll = false) {
-      active = matches.length ? (index + matches.length) % matches.length : -1;
-      for (let i = 0; i < list.children.length; i++) list.children[i].classList.toggle('ss-active', i === active);
+      active = index >= 0 && index < matches.length ? index : -1;
+      const options = list.querySelectorAll('[data-index]');
+      options.forEach((option, index) => option.classList.toggle('ss-active', index === active));
       if (active >= 0) {
-        input.setAttribute('aria-activedescendant', list.children[active].id);
-        if (scroll) list.children[active].scrollIntoView({block:'nearest'});
+        input.setAttribute('aria-activedescendant', options[active].id);
+        if (scroll) options[active].scrollIntoView({block:'nearest'});
       } else input.removeAttribute('aria-activedescendant');
     }
     function highlight(label) {
@@ -106,9 +108,15 @@
     }
     function render() {
       const query = normalize(input.value);
-      matches = choices.filter(choice => (!choice.disabled || query) && normalize(choice.label).includes(query));
+      matches = choices.filter(choice => (!choice.disabled || query || select.dataset.showDisabled === 'true') &&
+        normalize(choice.label).includes(query));
       const fragment = document.createDocumentFragment();
+      let previousGroup;
       matches.forEach((choice, index) => {
+        if (choice.group && choice.group !== previousGroup) {
+          fragment.append(element('div', 'ss-group-label', choice.group));
+          previousGroup = choice.group;
+        }
         const row = element('div', 'ss-option'); row.id = id + '-option-' + index; row.dataset.index = index;
         row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(choice.value === select.value));
         if (choice.disabled) row.setAttribute('aria-disabled', 'true');
@@ -122,7 +130,7 @@
       resultStatus.textContent = query ? `匹配 ${matches.length} / ${choices.length} ${unit}` : `共 ${matches.length} ${unit}`;
       clear.hidden = !input.value;
       const selectedIndex = matches.findIndex(choice => choice.value === select.value);
-      setActive(selectedIndex >= 0 ? selectedIndex : 0);
+      setActive(selectedIndex >= 0 ? selectedIndex : matches.findIndex(choice => !choice.disabled));
       position();
     }
     function closed(restoreFocus = false) {
@@ -161,14 +169,22 @@
     input.addEventListener('compositionend', () => { composing = false; render(); });
     input.addEventListener('keydown', event => {
       if (composing || event.isComposing) return;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setActive(active + (event.key === 'ArrowDown' ? 1 : -1), true); }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        let index = active < 0 && direction < 0 ? 0 : active;
+        for (let count = 0; count < matches.length; count++) {
+          index = (index + direction + matches.length) % matches.length;
+          if (!matches[index].disabled) { setActive(index, true); break; }
+        }
+      }
       else if (event.key === 'Enter') { event.preventDefault(); choose(active); }
       else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
     });
     clear.addEventListener('pointerdown', event => event.preventDefault());
     clear.addEventListener('click', () => { input.value = ''; input.focus({preventScroll:true}); render(); });
     list.addEventListener('pointerdown', event => { if (event.target.closest('[role="option"]')) event.preventDefault(); });
-    list.addEventListener('pointermove', event => { const row = event.target.closest('[role="option"]'); if (row) setActive(Number(row.dataset.index)); });
+    list.addEventListener('pointermove', event => { const row = event.target.closest('[role="option"]:not([aria-disabled="true"])'); if (row) setActive(Number(row.dataset.index)); });
     list.addEventListener('click', event => { const row = event.target.closest('[role="option"]'); if (row) choose(Number(row.dataset.index)); });
     // toggle异步派发，以实际状态为准，避免旧的关闭通知影响已重新打开的浮层。
     popup.addEventListener('toggle', () => { if (nativePopover && !popup.matches(':popover-open') && opened) closed(); });

@@ -3,6 +3,7 @@
 {% from "pagination.html" import pager with context %}
 {% block title %}任务记录{% endblock %}{% block breadcrumb %}任务记录{% endblock %}
 {% block content %}
+{% if listing_history_available %}<p><a class="ui-button ui-secondary" href="{{ url_for('pages.tasks', view='listing') }}">查看上架记录</a></p>{% endif %}
 <section class="intro"><div><p class="eyebrow">TASK HISTORY</p><h1>每一次执行，都有记录。</h1><p>全部 {{ total }} 条任务，每页 {{ page_size }} 条，点击表头可排序。</p></div><a class="button action-button action-neutral" href="{{ pagination_url(page) }}">刷新记录 ↻</a></section>
 {% if tasks %}<div class="table-wrap"><table><thead><tr>{{ sort_header('name','任务 / 编号',sort_spec) }}{{ sort_header('status','状态',sort_spec) }}{{ sort_header('started_at','开始时间',sort_spec) }}{{ sort_header('finished_at','结束时间',sort_spec) }}{{ sort_header('message','执行结果',sort_spec) }}</tr></thead><tbody>
 {% set labels = {'running':'运行中','succeeded':'成功','failed':'失败','cancelled':'已取消','needs_attention':'需人工处理'} %}

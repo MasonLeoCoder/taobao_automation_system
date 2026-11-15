@@ -15,7 +15,9 @@ from openpyxl import Workbook, load_workbook
 from PIL import Image
 from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGORY
 from ecommerce.modules.product.listing_templates import template_for
+from ecommerce.modules.product.web_listing import _ListingRun
 from ecommerce.modules.product.web_materials import CATEGORY, import_materials
+from ecommerce.platforms.qianniu.identity import ShopIdentity
 from ecommerce.shared.config import load_settings
 from ecommerce.shared.exceptions import NeedsAttention
 from ecommerce.web.app import create_app
@@ -56,7 +58,7 @@ class WebListingTests(TestCase):
         self.headers = {'X-Collection-Token': self.app.config['COLLECTION_TOKEN']}
         self.open_publish = self.enterContext(patch('ecommerce.modules.product.web_listing.open_publish'))
 
-    def preflight(self, *, bad_image=False, excel=None, video=None):
+    def preflight(self, *, bad_image=False, excel=None, video=None, **target):
         """走真实导入接口；参数：是否破坏图片内容；返回：HTTP响应。"""
         images = [(BytesIO(b'fake' if bad_image and p.stem == '2' else p.read_bytes()), p.name)
                   for p in sorted((self.folder / '1-1主图').iterdir())]
@@ -64,8 +66,90 @@ class WebListingTests(TestCase):
             excel = BytesIO((self.folder / '任意表名.xlsx').read_bytes())
         return self.client.post('/api/listing/preflight', headers=self.headers, data={
             'keyword': '粘毛器', 'brand': '无品牌/无注册商标', 'category': CATEGORY,
-            'excel': (excel, '任意表名.xlsx'), 'main': images,
+            'excel': (excel, '任意表名.xlsx'), 'main': images, **target,
             **({'video': (BytesIO(video), '商品视频.mp4')} if video is not None else {})})
+
+    def test_managed_preflight_seals_account_and_shop_and_rejects_changed_target(self):
+        account_id, shop_id, session_id = ('a' * 32, 'b' * 32, 'c' * 32)
+        row = dict(id=account_id, shop_id=shop_id, session_id=session_id, enabled=True, login_required=False,
+                   login_name='tb123:测试', shop_name='测试店铺', platform_shop_id='123')
+        settings = replace(self.app.config['SETTINGS'], task_backend='mysql')
+        self.app.config['SETTINGS'] = settings
+        workbench = self.app.extensions['product_listing']
+        workbench.settings = settings
+        session = settings.workspace / 'storage/managed_accounts/qianniu' / session_id / 'session.json'
+        session.parent.mkdir(parents=True)
+        session.write_text('{}', encoding='utf-8')
+        with patch('ecommerce.modules.product.listing_accounts.AccountStore') as store:
+            store.return_value.list_accounts.return_value = [row]
+            other_shop = 'd' * 32
+            self.assertEqual(self.preflight(account_id=account_id, shop_id=other_shop).status_code, 409)
+            result = self.preflight(account_id=account_id, shop_id=shop_id)
+            self.assertEqual(result.status_code, 201)
+            self.assertEqual(result.json['listing_target']['login_name'], row['login_name'])
+            self.assertEqual(result.json['listing_target']['shop_id'], shop_id)
+            identifier = result.json['id']
+            reply = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers,
+                                     json=dict(account_id=account_id, shop_id=other_shop, submit=False))
+            self.assertEqual(reply.status_code, 409)
+            self.assertFalse((workbench.root / identifier / 'state.json').exists())
+            row['login_required'] = True
+            reply = self.client.post(f'/api/listing/{identifier}/start', headers=self.headers,
+                                     json=dict(account_id=account_id, shop_id=shop_id, submit=False))
+            self.assertEqual(reply.status_code, 409)
+            self.open_publish.assert_not_called()
+
+    def test_listing_history_filters_and_preserves_attribution(self):
+        workbench = self.app.extensions['product_listing']
+        for digit, title, target in (('1', '历史商品', None), ('2', '当前商品', {
+                'account_id': 'a' * 32, 'shop_id': 'b' * 32,
+                'login_name': 'tb123:测试', 'shop_name': '测试店铺', 'platform_shop_id': '123'})):
+            folder = workbench.root / (digit * 32)
+            folder.mkdir(parents=True)
+            (folder / 'manifest.json').write_text(json.dumps(dict(
+                preview={'title': title, 'code': f'CODE-{digit}'}, listing_target=target)), encoding='utf-8')
+            (folder / 'state.json').write_text(json.dumps(dict(
+                task_id=digit * 32, phase='succeeded', outcome='warehouse')), encoding='utf-8')
+        old = self.client.get('/tasks?view=listing&code=code-1')
+        self.assertEqual(old.status_code, 200)
+        self.assertIn('未知', old.get_data(as_text=True))
+        current = self.client.get('/tasks?view=listing&account=TB123&shop=123&outcome=warehouse')
+        self.assertEqual(current.status_code, 200)
+        self.assertIn('当前商品', current.get_data(as_text=True))
+        self.assertNotIn('历史商品', current.get_data(as_text=True))
+
+    def test_editor_and_shop_identity_must_both_match_the_sealed_account(self):
+        worker = MagicMock(spec=_ListingRun)
+        worker.target = dict(login_name='tb123:大橘', platform_shop_id='123')
+        worker.verify_identity.side_effect = lambda identity: _ListingRun.verify_identity(worker, identity)
+        page = MagicMock()
+        companion = page.context.new_page.return_value
+        module = 'ecommerce.modules.product.web_listing'
+        with (patch(f'{module}.is_login_required', return_value=False),
+              patch(f'{module}.read_shop_identity', return_value=ShopIdentity('123', '测试店铺', '大橘-运营', 'tb123:大橘')),
+              patch(f'{module}.read_editor_account', return_value=('测试店铺', 'tb123')) as account):
+            with self.assertRaisesRegex(NeedsAttention, '编辑页的账号或店铺'):
+                _ListingRun.verify_editor_identity(worker, page)
+            worker.update.assert_not_called()
+            companion.close.assert_called_once()
+            account.return_value = ('测试店铺', '大橘')
+            _ListingRun.verify_editor_identity(worker, page)
+            self.assertEqual(worker.update.call_args.kwargs['verified_identity']['login_name'], 'tb123:大橘')
+
+    def test_uncertain_submission_warning_uses_actual_code_and_the_same_shop(self):
+        worker = MagicMock(spec=_ListingRun)
+        worker.target = {'shop_id': 's'}
+        worker.path = self.root / ('a' * 32)
+        worker._wait.return_value = 'approve'
+        rows = [{'id': digit * 32, 'task_id': digit * 32, 'target': {'shop_id': shop},
+                 'outcome': outcome, 'code': code} for digit, shop, outcome, code in (
+                     ('a', 's', 'uncertain', 'actual'), ('b', 's', 'uncertain', 'actual'),
+                     ('c', 't', 'uncertain', 'actual'), ('d', 's', 'warehouse', 'actual'),
+                     ('e', 's', 'uncertain', 'planned'))]
+        with patch('ecommerce.modules.product.web_listing.listing_records', return_value=iter(rows)):
+            _ListingRun.warn_pending_submission(worker, MagicMock(), 'actual')
+        self.assertEqual(worker._wait.call_args.kwargs['related_tasks'], ['b' * 32])
+        worker.update.assert_called_once_with(submitted_code='actual')
 
     def test_adapted_video_preview_and_worker_use_the_same_sealed_copy(self):
         def prepare(source, adapted):
