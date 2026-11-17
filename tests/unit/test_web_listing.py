@@ -15,17 +15,18 @@ from zipfile import ZipFile
 from openpyxl import Workbook, load_workbook
 from PIL import Image
 from ecommerce.infrastructure.tasks.runner import run_task
-from ecommerce.modules.account.managed import verify_editor_session
 from ecommerce.modules.product.listing_profiles import BACKPACK, BACKPACK_CATEGORY
 from ecommerce.modules.product.listing_logs import log_page, local_log
 from ecommerce.modules.product.listing_templates import template_for
 from ecommerce.modules.product.web_listing import _ListingRun
 from ecommerce.modules.product.web_materials import CATEGORY, import_materials
-from ecommerce.platforms.qianniu.identity import ShopIdentity
 from ecommerce.shared.config import load_settings
 from ecommerce.shared.exceptions import NeedsAttention
 from ecommerce.web.app import create_app
 from tests.qianniu_fixtures import ACCOUNT, IDENTITY, TARGET, TARGET_FORM, fixture_session_file
+
+
+EDITOR_URL = 'https://item.upload.taobao.com/sell/v2/publish.htm?fixture=1'
 
 
 def fixture_settings(root):
@@ -54,8 +55,7 @@ def bind_listing_fixture(app):
           patch('ecommerce.modules.product.web_listing.local_log',
                 side_effect=lambda config, path: local_log(replace(config, task_backend='sqlite'), path)),
           patch('ecommerce.modules.product.web_listing.log_page',
-                side_effect=lambda config, *args, **kwargs: log_page(replace(config, task_backend='sqlite'), *args, **kwargs)),
-          patch('ecommerce.modules.product.web_listing.verify_editor_session', return_value=IDENTITY)):
+                side_effect=lambda config, *args, **kwargs: log_page(replace(config, task_backend='sqlite'), *args, **kwargs))):
         store.return_value.list_accounts.return_value = [account]
         yield account
 
@@ -164,25 +164,35 @@ class WebListingTests(TestCase):
         self.assertIn('当前商品', current.get_data(as_text=True))
         self.assertNotIn('历史商品', current.get_data(as_text=True))
 
-    def test_editor_and_shop_identity_must_both_match_the_sealed_account(self):
-        worker = MagicMock(spec=_ListingRun)
-        worker.target = dict(login_name='tb123:大橘', platform_shop_id='123')
-        worker.record_identity.side_effect = lambda identity: _ListingRun.record_identity(worker, identity)
-        page = MagicMock()
-        companion = page.context.new_page.return_value
-        module = 'ecommerce.modules.account.managed'
-        with (patch('ecommerce.modules.product.web_listing.verify_editor_session',
-                    side_effect=verify_editor_session),
-              patch(f'{module}.is_login_required', return_value=False),
-              patch(f'{module}.read_shop_identity', return_value=ShopIdentity('123', '测试店铺', '大橘-运营', 'tb123:大橘')),
-              patch(f'{module}.read_editor_account', return_value=('测试店铺', 'tb123')) as account):
-            with self.assertRaisesRegex(NeedsAttention, '编辑页的账号或店铺'):
-                _ListingRun.verify_editor_identity(worker, page)
-            worker.update.assert_not_called()
-            companion.close.assert_called_once()
-            account.return_value = ('测试店铺', '大橘')
-            _ListingRun.verify_editor_identity(worker, page)
-            self.assertEqual(worker.update.call_args.kwargs['verified_identity']['login_name'], 'tb123:大橘')
+    def test_unavailable_editor_is_reported_before_warehouse_click(self):
+        login_frame = MagicMock(url='https://loginmyseller.taobao.com/')
+        login_frame.locator.return_value.all.return_value = [MagicMock(is_visible=lambda: True)]
+        cases = (
+            (EDITOR_URL, True, [], '编辑页已关闭'),
+            (login_frame.url, False, [login_frame], '会话已失效'),
+            ('https://myseller.taobao.com/home.htm/', False, [], '已离开商品编辑页'),
+        )
+        for url, closed, frames, message in cases:
+            with self.subTest(message=message):
+                identifier = self.preflight().json['id']
+                page = MagicMock(url=url, is_closed=lambda: closed, frames=frames)
+                click = MagicMock()
+
+                def fake_open(*args, web_review, **kwargs):
+                    web_review.before_click(page)
+                    web_review.click_intent()
+                    click()
+
+                self.open_publish.side_effect = fake_open
+                with patch('ecommerce.modules.product.web_listing.read_listing_fields') as read:
+                    response = self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
+                    self.assertEqual(response.status_code, 202)
+                    final = self.state(identifier, lambda state: state['phase'] == 'needs_attention')
+                    read.assert_not_called()
+                self.assertIn(message, final['message'])
+                self.assertFalse(final['submit_attempted'])
+                page.context.new_page.assert_not_called()
+                click.assert_not_called()
 
     def test_uncertain_submission_warning_uses_actual_code_and_the_same_shop(self):
         worker = MagicMock(spec=_ListingRun)
@@ -341,7 +351,8 @@ class WebListingTests(TestCase):
 
         def open_and_review(settings, *, web_review, submit, **kwargs):
             self.assertTrue(submit)
-            page = MagicMock()
+            page = MagicMock(url=EDITOR_URL, is_closed=lambda: False, frames=[])
+            web_review.authenticate_managed(page)
             web_review.filled(page, None, None, attributes)
             actual['attributes']['品牌'] = None
             with self.assertRaisesRegex(NeedsAttention, '品牌、必填属性或 SKU 结构'):
@@ -351,13 +362,17 @@ class WebListingTests(TestCase):
             web_review.click_intent()
             web_review.click_finished()
             web_review.result(SimpleNamespace(status='succeeded', message='模拟已入仓', item_id='123456', page=page))
+            page.context.new_page.assert_not_called()
             return '模拟已入仓'
 
         self.open_publish.side_effect = open_and_review
-        with patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=read):
+        with (patch('ecommerce.modules.product.web_listing.read_listing_fields', side_effect=read),
+              patch('ecommerce.modules.product.web_listing.verify_session', return_value=IDENTITY) as authenticate):
             response = self.start_request(f'/api/listing/{identifier}/start', json={'submit': True})
             self.assertEqual(response.status_code, 202)
             final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        authenticate.assert_called_once()
+        self.assertEqual(final['verified_identity']['login_name'], IDENTITY.login_name)
         self.assertTrue(final['submit_attempted'])
         self.assertEqual((final['outcome'], final['item_id']), ('warehouse', '123456'))
         self.open_publish.assert_called_once()
@@ -509,7 +524,7 @@ class WebListingTests(TestCase):
         def fake_open(*args, **kwargs):
             review = kwargs['web_review']
             review.sku_media = list(actual['sku_media'])
-            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000), frames=[],
+            page = SimpleNamespace(url=EDITOR_URL, is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000), frames=[],
                                    screenshot=lambda **opts: Path(opts['path']).write_bytes(b'fixture'))
             review.before_click(page)
             review.click_intent()
@@ -545,7 +560,7 @@ class WebListingTests(TestCase):
         def fake_open(*args, **kwargs):
             review = kwargs['web_review']
             review.sku_media = list(actual['sku_media'])
-            page = SimpleNamespace(is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000), frames=[],
+            page = SimpleNamespace(url=EDITOR_URL, is_closed=lambda: False, wait_for_timeout=lambda ms: time.sleep(ms / 1000), frames=[],
                                    screenshot=lambda **opts: Path(opts['path']).write_bytes(b'fixture'))
             review.before_click(page)
             review.click_intent()

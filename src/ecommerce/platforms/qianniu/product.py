@@ -39,6 +39,11 @@ def _safe_location(page: Page) -> str:
     return f"{location.scheme}://{location.netloc}{location.path}"
 
 
+def is_product_editor(page: Page) -> bool:
+    """判断当前标签页是否仍在千牛商品编辑地址。"""
+    return not page.is_closed() and _safe_location(page) == 'https://item.upload.taobao.com/sell/v2/publish.htm'
+
+
 def _dismiss_sku_notice(page: Page) -> bool:
     """关闭已识别的SKU公告；参数：页面；返回：是否关闭，其他弹窗不作处理。"""
     checkpoint("关闭SKU管理页引导公告")

@@ -298,6 +298,7 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             page.screenshot(path=str(destination))
         if submit:
             if web_review:
+                web_review.check_submission_page(page)
                 submission_message = submit_with_review(settings, page, on_submit_attention,
                     before_click=web_review.before_click, on_click_intent=web_review.click_intent,
                     on_click_finished=web_review.click_finished, on_result=web_review.result)

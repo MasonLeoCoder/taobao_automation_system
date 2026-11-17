@@ -16,10 +16,11 @@ from ecommerce.infrastructure.tasks.lock import shop_lock
 from ecommerce.infrastructure.tasks.ownership import atomic_json, owner_alive, process_started_at
 from ecommerce.infrastructure.tasks.runner import current_task, run_task
 from ecommerce.infrastructure.storage import publish_categories
+from ecommerce.platforms.qianniu.product import is_product_editor
 from ecommerce.platforms.qianniu.product_review import read_listing_fields, read_listing_media
 from ecommerce.platforms.qianniu.login import is_login_required
 from ecommerce.modules.account.managed import (
-    account_settings, account_target, require_login, selected_account, verify_editor_session, verify_session,
+    account_settings, account_target, require_login, selected_account, verify_session,
 )
 from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
 from ecommerce.shared.time import BEIJING
@@ -288,9 +289,14 @@ class _ListingRun:
         self.update(verified_identity={'login_name': identity.login_name, 'platform_shop_id': identity.shop_id,
                                       'verified_at': datetime.now(BEIJING).isoformat()})
 
-    def verify_editor_identity(self, page):
-        """用同一会话的店铺信息页交叉核对编辑页顶栏，保留编辑现场。"""
-        self.record_identity(verify_editor_session(page, self.target, self.require_login))
+    def check_submission_page(self, page):
+        """从当前标签页检查登录及编辑现场。"""
+        if page.is_closed():
+            raise NeedsAttention('千牛商品编辑页已关闭，尚未提交，请核对编辑现场后重新发起任务')
+        if is_login_required(page):
+            self.require_login()
+        if not is_product_editor(page):
+            raise NeedsAttention('千牛当前页面已离开商品编辑页，尚未提交，请核对浏览器页面')
 
     def update(self, **values):
         """原子保存当前进度；参数：状态更新；返回：无。"""
@@ -472,8 +478,14 @@ class _ListingRun:
 
     def _comparison(self, page):
         """比较预检与当前页面；参数：编辑页；返回：实际快照及差异。"""
-        actual = self._read_fields(page)
-        actual['media'] = {key: read_listing_media(page, key) for key in self.media}
+        self.check_submission_page(page)
+        try:
+            actual = self._read_fields(page)
+            actual['media'] = {key: read_listing_media(page, key) for key in self.media}
+        except PlaywrightError:
+            self.check_submission_page(page)
+            raise
+        self.check_submission_page(page)
         lines = list(self.notes)
         for key, label in (('price', '一口价'), ('code', '商家编码')):
             if actual[key] != self.preview[key]:
@@ -518,8 +530,6 @@ class _ListingRun:
 
     def before_click(self, page):
         """核对实际商品页并等待差异批准；参数：提交页；返回：仅已核对时放行。"""
-        if self.target and is_login_required(page):
-            self.require_login()
         actual, differences = self._comparison(page)
         while True:
             check_binding(self.settings, self.manifest)
@@ -547,7 +557,6 @@ class _ListingRun:
             if not title_differences and actual == updated and differences == new_differences:
                 if self.target:
                     self.warn_pending_submission(page, updated['code'])
-                    self.verify_editor_identity(page)
                     if self._comparison(page) != (updated, new_differences):
                         raise NeedsAttention('核对期间商品内容发生变化，请重新核对填写结果')
                     self.update(observed_fields={key: updated[key] for key in ('title', 'code')})
