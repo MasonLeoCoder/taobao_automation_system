@@ -257,7 +257,12 @@
       const saved = job.plan_progress
         ? `原计划已保存 ${job.plan_progress.saved_page_count}/${job.options.pages} 页 · 累计 ${job.plan_progress.saved_item_count} 条商品记录 · 本次执行已处理 ${progress.completed_page_count || 0}/${job.options.pages} 页`
         : `已保存 ${progress.completed_page_count || 0}/${job.options.pages} 页 · ${progress.collected_count || 0} 条商品记录`;
-      return `列表采集 · ${saved}${!job.done && progress.current_page ? ` · 当前第 ${progress.current_page} 页` : ''}${job.options.with_details ? ` · 详情已处理 ${progress.detail_completed_count || 0} 个商品` : ''}${progress.current_product ? ` · 当前商品 ${progress.current_product}` : ''}${progress.current_module ? ` · ${labels[progress.current_module]}` : ''}`;
+      const page = progress.list_page_progress;
+      const phases = {downloading_images:'待保存',checking_source:'待复核',saving:'等待保存确认',saved:'已保存'};
+      const pageStatus = page && phases[page.phase]
+        ? ` · 第 ${page.page_number} 页主图：已下载 ${page.downloaded}/${page.total} 张${page.failed ? `（失败 ${page.failed}）` : ''}${page.not_applicable ? `（无地址 ${page.not_applicable}）` : ''} · 商品列表：${job.done && page.phase !== 'saved' ? '未确认保存' : phases[page.phase]}`
+        : '';
+      return `列表采集 · ${saved}${!job.done && progress.current_page ? ` · 当前第 ${progress.current_page} 页` : ''}${pageStatus}${job.options.with_details ? ` · 详情已处理 ${progress.detail_completed_count || 0} 个商品` : ''}${progress.current_product ? ` · 当前商品 ${progress.current_product}` : ''}${progress.current_module ? ` · ${labels[progress.current_module]}` : ''}`;
     }
     if (job.mode === 'detail') return `详情采集 · 已处理 ${job.processed_count || job.completed_count}/${job.total_count} 项 · 采集成功 ${job.collected_count || 0} 项${job.failures?.length ? ` · 失败待补采 ${job.failures.length} 项` : ''}${job.skipped_count ? ` · 本次跳过 ${job.skipped_count} 项` : ''}${job.current_module ? ` · 当前：${labels[job.current_module]}` : ''}`;
     if (job.mode !== 'remaining') return labels[job.module] || job.module;

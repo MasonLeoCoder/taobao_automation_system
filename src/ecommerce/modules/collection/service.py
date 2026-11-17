@@ -2,6 +2,7 @@
 from ecommerce.infrastructure.tasks.events import notify as print
 import json
 from pathlib import Path
+import time
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
@@ -11,7 +12,7 @@ from ecommerce.infrastructure.storage.database import now
 from ecommerce.modules.account.taobao_service import authenticate
 from ecommerce.modules.account.buyers import collection_browser as browser_session
 from ecommerce.platforms.taobao.search import canonical_search_url, inspect_search, keep_search_open, open_search, validate_keyword
-from ecommerce.platforms.taobao.verification import active_guard
+from ecommerce.platforms.taobao.verification import Blockage, active_guard
 from ecommerce.shared.exceptions import NeedsAttention
 
 
@@ -54,10 +55,10 @@ def search_keyword(settings, keyword, *, wait=True, on_attention=None):
     return f"淘宝关键词“{keyword}”搜索已确认：{label}；记录：{destination}"
 
 
-def collect_from_search(settings, context, result, *, limit=None, page_number=1, requested_pages=1, pagination_evidence=None):
-    """保存单页；参数：配置、浏览器、结果、每页上限、页码、请求页数、翻页依据；返回：批次摘要。"""
+def collect_from_search(settings, context, result, *, limit=None, page_number=1, requested_pages=1, pagination_evidence=None, on_progress=None):
+    """保存单页；参数：配置、浏览器、结果、范围、翻页依据和进度回调；返回：批次摘要。"""
     from ecommerce.modules.collection.export import save_batch
-    from ecommerce.platforms.taobao.cards import SNAPSHOT, page_signature, parse_cards, validate_limit
+    from ecommerce.platforms.taobao.cards import SNAPSHOT, list_source_issue, page_signature, parse_cards, validate_limit
     from ecommerce.platforms.taobao.sorting import sort_by_sales
     from ecommerce.platforms.taobao.loading import prepare_list_images
 
@@ -145,13 +146,64 @@ def collect_from_search(settings, context, result, *, limit=None, page_number=1,
     for item in items:
         item.update(parse_taobao_list_sales(item.get('sales_text')), sales_parser_version=TAOBAO_LIST_PARSER_VERSION)
     from ecommerce.modules.collection.list_images import collect_list_images
-    image_downloads = collect_list_images(settings, context, result.page, items, batch_id, guard.checkpoint)
-    while not guard.perform('图片下载后复核列表来源', lambda: ready(signature, raw['slots'])):
-        guard.request_attention(result.page, '图片已下载，请恢复原关键词、页码、排序及列表内容后继续保存', step='复核列表图片来源')
+
+    def page_progress(phase, counts):
+        """发布当前页的图片计数和保存阶段；参数：阶段、计数；返回：无。"""
+        if on_progress:
+            on_progress({'list_page_progress': {'page_number': page_number, 'phase': phase, **counts}})
+
+    last_image_update = None
+
+    def image_progress(counts):
+        """限制下载进度写入频率；参数：最新图片计数；返回：无。"""
+        nonlocal last_image_update
+        current = time.monotonic()
+        if last_image_update is None or current - last_image_update >= 1:
+            page_progress('downloading_images', counts)
+            last_image_update = current
+
+    image_downloads = collect_list_images(settings, context, result.page, items, batch_id, guard.checkpoint,
+                                          on_progress=image_progress if on_progress else None)
+    page_progress('checking_source', image_downloads)
     from ecommerce.infrastructure.tasks.events import emit_event
     emit_event('list_images_processed', '列表主图处理完成',
                level='WARNING' if image_downloads['failed'] or image_downloads['not_applicable'] else 'INFO',
-               details=image_downloads)
+               details={'page_number': page_number, **image_downloads})
+
+    def recheck_source():
+        """只读核对关键字段；首次失败后最多复查三次，返回具体阻断或通过。"""
+        for attempt in range(4):
+            try:
+                value = result.page.evaluate(SNAPSHOT)
+                issue = list_source_issue(value, signature, items, limit)
+                if issue is None and not items:
+                    current = inspect_search(result.page, keyword)
+                    if current is None or current.status != 'empty' or value.get('cards'):
+                        issue = {'code': 'empty_unconfirmed', 'message': '当前页面未再次确认无搜索结果', 'retryable': True}
+            except PlaywrightError:
+                issue = {'code': 'list_unreadable', 'message': '暂时无法读取当前淘宝列表', 'retryable': True}
+            if issue is None:
+                return True
+            if not issue['retryable'] or attempt == 3:
+                break
+            guard.wait(500)
+        message = (f"第 {page_number} 页暂未保存：{issue['message']}。"
+                   "恢复原搜索条件和商品列表后可继续；若淘宝已改变列表、无法恢复，请停止并重新采集该页。")
+        return Blockage('business', result.page, message,
+                        check_details={**issue, 'page_number': page_number, 'checks': attempt + 1})
+
+    previous_resume = guard.resume_check
+    guard.resume_check = recheck_source
+    try:
+        while True:
+            outcome = guard.perform('图片下载后复核列表来源', recheck_source)
+            if outcome is True:
+                break
+            guard.request_attention(result.page, outcome.source, step='复核列表图片来源', check_details=outcome.check_details)
+    finally:
+        guard.resume_check = previous_resume
+
+    page_progress('saving', image_downloads)
     payload = {
         "schema_version": 6, "search_method": "keyword", "search_options": None,
         "extraction_method": "content_items_wrapper_slots_v1", "batch_id": batch_id, "task_id": guard.task_id,
@@ -244,8 +296,9 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
         try:
             for number in range(1, pages + 1):
                 if on_progress:
-                    on_progress({'current_page':number,'current_product':None,'current_module':None})
+                    on_progress({'current_page':number,'current_product':None,'current_module':None,'list_page_progress':None})
                 collected = tracker.page(number) if tracker else None
+                reused = bool(collected)
                 if collected:
                     if number==1:
                         from ecommerce.platforms.taobao.sorting import sort_by_sales
@@ -253,12 +306,14 @@ def collect_keyword(settings, keyword, *, limit=None, pages=1, wait=True, on_att
                     emit_event('collection_page_reused','沿用原计划本页商品清单；当前排名可能变化',level='WARNING',details={'page_number':number,'source_batch_key':collected['source_batch_key']})
                 else:
                     collected = collect_from_search(settings, context, result, limit=limit, page_number=number,
-                                                    requested_pages=pages, pagination_evidence=arrival)
+                                                    requested_pages=pages, pagination_evidence=arrival, on_progress=on_progress)
                     if tracker:
                         tracker.page(number,collected)
                 completed.append(collected)
                 if on_progress:
-                    on_progress({'completed_page_count':len(completed),'collected_count':sum(item['collected_count'] for item in completed)})
+                    page_progress = None if reused else {'page_number': number, 'phase': 'saved', **collected['image_downloads']}
+                    on_progress({'completed_page_count':len(completed),'collected_count':sum(item['collected_count'] for item in completed),
+                                 'list_page_progress':page_progress})
                 emit_event('list_page_saved', '当前页批次已保存并确认入库', details={key: collected[key] for key in ('page_number', 'source_batch_key', 'collected_count')})
                 print(collected['message'], flush=True)
                 if collected['empty']:

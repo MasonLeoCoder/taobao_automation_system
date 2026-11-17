@@ -63,6 +63,14 @@ class PaginationBrowserTests(unittest.TestCase):
 
     def setUp(self):
         """为当前用例建立隔离页面和文件；参数：无；返回：无。"""
+        from unittest.mock import Mock
+        from tests.integration.test_taobao_detail_images_browser import png
+        from tests.unit.test_list_images import Response
+        opener=Mock()
+        opener.open.side_effect=lambda *args,**kwargs:Response(png(1))
+        download_patch=patch('ecommerce.modules.collection.list_images.build_opener',return_value=opener)
+        download_patch.start()
+        self.addCleanup(download_patch.stop)
         temp=tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.settings=replace(load_settings(root=Path(temp.name)).for_platform('taobao'),headless=True,timeout_ms=1500,taobao_timing={key:(0,0) for key in DEFAULT_TAOBAO_TIMING})
@@ -79,13 +87,13 @@ class PaginationBrowserTests(unittest.TestCase):
         self.home=self.context.new_page()
         self.home.goto('https://www.taobao.com/')
 
-    def run_collection(self,*,pages=3,on_attention=None):
+    def run_collection(self,*,pages=3,on_attention=None,on_progress=None):
         """走正式采集流程，只替换浏览器工厂；参数：页数、人工处理；返回：消息。"""
         @contextmanager
         def browser(settings):
             yield self.context,self.home
         with patch.object(session,'base_browser_session',browser):
-            return collect_keyword(self.settings,'粘毛器',limit=3,pages=pages,wait=False,on_attention=on_attention)
+            return collect_keyword(self.settings,'粘毛器',limit=3,pages=pages,wait=False,on_attention=on_attention,on_progress=on_progress)
 
     def search_page(self):
         """取得本地搜索页；参数：无；返回：Page。"""
@@ -103,7 +111,14 @@ class PaginationBrowserTests(unittest.TestCase):
 
     def test_three_pages_each_three_keeps_duplicate_products_and_sorts_once(self):
         """一任务三批九条，跨页重复保留，排序及翻页不重放。"""
-        self.run_collection()
+        progress={}
+        observed=[]
+        def update(values):
+            progress.update(values)
+            stage=progress.get('list_page_progress')
+            if stage and stage['phase'] in {'checking_source','saved'}:
+                observed.append((stage['page_number'],stage['phase'],progress.get('completed_page_count',0)))
+        self.run_collection(on_progress=update)
         data=self.payloads()
         self.assertEqual([v['page_number'] for v in data],[1,2,3])
         self.assertEqual([v['collected_count'] for v in data],[3,3,3])
@@ -115,6 +130,8 @@ class PaginationBrowserTests(unittest.TestCase):
         self.assertEqual(self.summary()['total_observation_count'],9)
         self.assertEqual(self.summary()['unique_product_count'],8)
         self.assertEqual(self.summary()['stop_reason'],'requested_pages_reached')
+        self.assertEqual(observed,[(1,'checking_source',0),(1,'saved',1),(2,'checking_source',1),
+                                   (2,'saved',2),(3,'checking_source',2),(3,'saved',3)])
 
     def test_default_one_page_does_not_click_next(self):
         """省略页数时不操作下一页。"""
@@ -153,12 +170,15 @@ class PaginationBrowserTests(unittest.TestCase):
         self.assertEqual(self.search_page().evaluate('nextClicks'),1)
 
     def test_storage_failure_blocks_next_page(self):
-        """模拟持久化失败，后续翻页不得启动。"""
+        """模拟持久化失败，不能增加已保存进度或翻页。"""
+        progress={}
         with patch('ecommerce.modules.collection.persistence.capture_list',side_effect=NeedsAttention('本地模拟采集保存失败')):
             with self.assertRaises(NeedsAttention):
-                self.run_collection()
+                self.run_collection(on_progress=progress.update)
         self.assertEqual(self.search_page().evaluate('nextClicks'),0)
         self.assertEqual(self.summary()['completed_page_count'],0)
+        self.assertEqual(progress.get('completed_page_count',0),0)
+        self.assertEqual((progress['list_page_progress']['phase'],progress['list_page_progress']['downloaded']),('saving',3))
 
     def test_unknown_dialog_after_next_requires_feedback_without_reclick(self):
         """翻页后未知窗口由人工关闭，再核对原目标页，不重复点击。"""

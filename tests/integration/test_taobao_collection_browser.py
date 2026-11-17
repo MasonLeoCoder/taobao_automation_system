@@ -457,6 +457,69 @@ class TaobaoCollectionBrowserTests(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(self.read_payload()["items"][0]["title"], "变化后的商品标题")
 
+    def test_post_download_preview_and_loading_changes_do_not_block_or_rewrite_batch(self):
+        """真实DOM的动态变化不阻断；短暂加载只复读，最终保存最初快照。"""
+        from ecommerce.modules.collection import list_images
+        self.body=results_html(card_html(extra='<div class="rankTitle--fixture">原榜单</div>'),selected='销量')
+        original=list_images.collect_list_images
+        with self.guard() as guard:
+            result=open_search(self.context,self.home,'粘毛器',1000)
+            def download(*args,**kwargs):
+                counts=original(*args,**kwargs)
+                result.page.evaluate("""() => {
+                  const list=document.getElementById('content_items_wrapper'); list.setAttribute('aria-busy','true');
+                  list.querySelector('.rankTitle--fixture').textContent='新榜单';
+                  list.querySelector('.mainPicAdaptWrapper--fixture').style.visibility='hidden';
+                  list.firstElementChild.insertAdjacentHTML('afterbegin','<video width="100" height="100" src="https://img.alicdn.com/preview.mp4"></video>');
+                }""")
+                return counts
+            original_wait=guard.wait
+            def wait(milliseconds):
+                if guard.step=='图片下载后复核列表来源':
+                    result.page.locator('#content_items_wrapper').evaluate("e=>e.removeAttribute('aria-busy')")
+                return original_wait(milliseconds)
+            progress=[]
+            with patch.object(list_images,'collect_list_images',side_effect=download) as downloads, patch.object(guard,'wait',side_effect=wait) as waits:
+                service.collect_from_search(self.settings,self.context,result,limit=1,on_progress=progress.append)
+        downloads.assert_called_once()
+        self.assertTrue(any(call.args==(500,) for call in waits.call_args_list))
+        item=self.read_payload()['items'][0]
+        self.assertEqual((item['rank_title'],item['video_present'],item['main_image_url']),('原榜单',False,'https://img.alicdn.com/fixture-main.webp'))
+        phases=[value['list_page_progress'] for value in progress]
+        self.assertEqual([(value['phase'],value['downloaded']) for value in phases],
+                         [('downloading_images',0),('checking_source',1),('saving',1)])
+        self.assertTrue(all('completed_page_count' not in value for value in progress))
+
+    def test_post_download_image_change_rechecks_after_continue_without_redownloading(self):
+        """主图变更持续存在时等待人工，重复继续不会入库，恢复原地址后才保存。"""
+        from ecommerce.modules.collection import list_images
+        self.body=results_html(card_html(),selected='销量')
+        original=list_images.collect_list_images
+        messages=[]
+        def attention(message):
+            messages.append(message)
+            self.assertIn('第 1 个商品的静态主图来源',message)
+            self.assertFalse(list((self.settings.workspace/'output/raw/taobao_products').glob('*.json')))
+            if len(messages)==2:
+                result.page.locator('.mainPic--fixture').evaluate("e=>e.src='https://img.alicdn.com/fixture-main.webp'")
+            self.assertLessEqual(len(messages),2)
+            return '继续'
+        with self.guard(attention) as guard:
+            result=open_search(self.context,self.home,'粘毛器',1000)
+            def download(*args,**kwargs):
+                counts=original(*args,**kwargs)
+                result.page.locator('.mainPic--fixture').evaluate("e=>e.src='https://img.alicdn.com/changed.webp'")
+                return counts
+            with patch.object(list_images,'collect_list_images',side_effect=download) as downloads:
+                service.collect_from_search(self.settings,self.context,result,limit=1)
+        downloads.assert_called_once()
+        self.assertEqual(len(messages),2)
+        records=[json.loads(line) for line in guard.event_path.read_text(encoding='utf-8').splitlines()]
+        blocked=[row['check_details'] for row in records if row['event']=='blocked' and row.get('check_details',{}).get('code')=='image_source_changed']
+        self.assertTrue(blocked)
+        self.assertEqual((blocked[0]['product_index'],blocked[0]['checks']),(1,4))
+        self.assertEqual(self.read_payload()['image_downloads']['downloaded'],1)
+
     def test_lazy_main_image_is_loaded_by_guarded_same_page_scroll(self):
         self.body = results_html(card_html() + card_html("234567") + card_html("345678"), selected="销量")
         with self.guard():

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from ecommerce.cli.app import parser
 from ecommerce.cli.commands import collection
 from ecommerce.modules.collection.export import csv_value, save_batch
-from ecommerce.platforms.taobao.cards import page_signature, parse_cards, parse_price, product_identity, validate_limit
+from ecommerce.platforms.taobao.cards import list_source_issue, page_signature, parse_cards, parse_price, product_identity, validate_limit
 from ecommerce.shared.config import load_settings
 
 
@@ -30,6 +30,43 @@ def snapshot(cards=None, **values):
 
 
 class TaobaoCollectionTests(unittest.TestCase):
+    def test_list_source_keeps_selected_product_order_and_image_association(self):
+        """动态展示或范围外卡片不影响复核，同商品的规格和主图仍须核对。"""
+        first = card('123456', sku_reference='123', main_image_url='https://img.alicdn.com/original.webp')
+        second = card('234567', position=2)
+        original = snapshot([first, second], sort_labels=['销量'])
+        parsed = parse_cards(original, '粘毛器', 2)
+        expected, items = parsed['signature'], parsed['items']
+
+        def check(cards, **changes):
+            return list_source_issue(snapshot(cards, sort_labels=['销量'], **changes), expected, items, 2)
+
+        dynamic = {**first, 'video_url': 'https://example.invalid/preview.mp4', 'rank_title': '榜单变化', 'price_number_text': None}
+        self.assertIsNone(check([dynamic, second, {'type':'unknown','position':3}]))
+        reorder = check([{**second, 'position':1}, {**first, 'position':2}])
+        self.assertEqual((reorder['code'],reorder['product_index'],reorder['actual_product_id']),('product_order_changed',1,'234567'))
+        self.assertEqual(check([{**first, 'sku_reference':'456'}, second])['code'],'sku_changed')
+        image = check([{**first,'main_image_url':'https://img.alicdn.com/different.webp'}, second])
+        self.assertEqual((image['code'],image['product_index']),('image_source_changed',1))
+        self.assertNotIn('https://',str(image))
+        self.assertEqual(check([first, {'type':'unknown','position':2}, second])['code'],'card_unconfirmed')
+        self.assertEqual(check([first])['code'],'product_count_changed')
+
+    def test_list_source_distinguishes_changed_search_from_pending_evidence(self):
+        """已明确换词、页或排序不等待，加载或缺少校验依据可复查。"""
+        before=snapshot(sort_labels=['销量'])
+        parsed=parse_cards(before,'粘毛器',1)
+        for changes,code,retryable in (
+            ({'query_keywords':['其他词'],'list_busy':True},'search_conditions_changed',False),
+            ({'paging':{'page':['2']}},'search_conditions_changed',False),
+            ({'sort_labels':['综合']},'sort_changed',False),
+            ({'list_busy':True},'list_loading',True),
+            ({'inputs':[]},'search_conditions_unconfirmed',True),
+        ):
+            with self.subTest(changes=changes):
+                issue=list_source_issue({**before,**changes},parsed['signature'],parsed['items'],1)
+                self.assertEqual((issue['code'],issue['retryable']),(code,retryable))
+
     def test_limit_validated_before_launch(self):
         for value in (0, -1, True, "20", 1.5):
             with self.subTest(value=value), self.assertRaises(ValueError):

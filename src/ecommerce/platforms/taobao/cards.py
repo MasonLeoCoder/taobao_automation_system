@@ -146,29 +146,40 @@ def text_or_none(value):
     return value or None
 
 
+class SearchPageMismatch(ValueError):
+    """页面已明确不属于预期搜索，而非校验依据暂未加载。"""
+
+
 def page_signature(snapshot, keyword, *, expected_page=1):
     """核对同一关键词和目标页；参数：快照、关键词、期望页码；返回：条件签名。"""
     if type(expected_page) is not int or expected_page < 1:
         raise ValueError("目标页码须为正整数")
     if snapshot.get("origin") != "https://s.taobao.com" or snapshot.get("path", "").rstrip("/") != "/search":
-        raise ValueError("当前页面不是淘宝搜索结果页")
+        error = SearchPageMismatch if snapshot.get("origin") and snapshot.get("path") else ValueError
+        raise error("当前页面不是淘宝搜索结果页")
     if snapshot.get("query_keywords") != [keyword] or not snapshot.get("inputs") or any(value != keyword for value in snapshot["inputs"]):
-        raise ValueError("当前搜索关键词发生变化")
+        query = snapshot.get("query_keywords") or []
+        inputs = snapshot.get("inputs") or []
+        error = SearchPageMismatch if any(value and value != keyword for value in [*query, *inputs]) else ValueError
+        raise error("当前搜索关键词发生变化" if error is SearchPageMismatch else "暂未确认当前搜索关键词")
     paging = snapshot.get("paging", {})
     explicit = []
     for key in ("page", "pageNo", "pageNum"):
         values = paging.get(key, [])
         if values not in ([], [str(expected_page)]):
-            raise ValueError(f"当前结果不在目标第{expected_page}页或页码不明确")
+            error = SearchPageMismatch if len(values) == 1 and re.fullmatch(r"\d+", values[0]) else ValueError
+            raise error(f"当前结果不在目标第{expected_page}页或页码不明确")
         explicit.extend(values)
     offsets = paging.get("s", [])
     if offsets and (len(offsets) != 1 or not re.fullmatch(r"\d+", offsets[0])
                     or (expected_page == 1 and int(offsets[0]) != 0)
                     or (expected_page > 1 and int(offsets[0]) == 0)):
-        raise ValueError("搜索结果偏移量与目标页码矛盾")
+        error = SearchPageMismatch if len(offsets) == 1 and re.fullmatch(r"\d+", offsets[0]) else ValueError
+        raise error("搜索结果偏移量与目标页码矛盾")
     numbers = snapshot.get("page_numbers", [])
     if any(value != str(expected_page) for value in numbers):
-        raise ValueError(f"页面显示页码不是目标第{expected_page}页")
+        error = SearchPageMismatch if any(re.fullmatch(r"\d+", value) and value != str(expected_page) for value in numbers) else ValueError
+        raise error(f"页面显示页码不是目标第{expected_page}页")
     if expected_page > 1 and not (numbers or explicit):
         raise ValueError("没有明确的目标页码证据，不能仅按偏移量推测页数")
     labels = snapshot.get("sort_labels", [])
@@ -177,6 +188,61 @@ def page_signature(snapshot, keyword, *, expected_page=1):
         raise ValueError("当前排序条件不明确")
     return {"keyword": keyword, "page_number": expected_page, "sort_label": labels[0] if labels else None,
             "sort_parameter": parameters[0] if parameters else None}
+
+
+def list_source_issue(snapshot, expected, items, limit):
+    """核对主图下载后的商品归属；参数：当前快照、原搜索条件、原商品、上限；返回：差异或空。"""
+    def issue(code, message, *, retryable=True, **details):
+        """生成供弹窗和日志使用的差异；参数：编码、说明及证据；返回：差异字典。"""
+        return {'code': code, 'message': message, 'retryable': retryable, **details}
+
+    try:
+        signature = page_signature(snapshot, expected['keyword'], expected_page=expected['page_number'])
+    except SearchPageMismatch as error:
+        return issue('search_conditions_changed', str(error), retryable=False)
+    except ValueError as error:
+        return issue('search_conditions_unconfirmed', str(error))
+    for field, label in (('sort_label', '排序'), ('sort_parameter', '排序参数')):
+        if signature[field] != expected[field]:
+            return issue('sort_changed' if signature[field] else 'sort_unconfirmed',
+                         f'当前{label}与下载前不一致，请恢复原排序', retryable=not bool(signature[field]), field=field)
+
+    if snapshot.get('list_busy'):
+        return issue('list_loading', '商品列表仍在加载')
+    slots = snapshot.get('slots', [])
+    if snapshot.get('root_count') != 1 and not (not items and snapshot.get('root_count') == 0 and not slots):
+        return issue('list_container_unconfirmed', '未能唯一确认当前商品列表')
+    if snapshot.get('loaded_slot_count', len(slots)) != len(slots):
+        return issue('list_incomplete', '当前已加载的列表格子数量未通过核对')
+
+    index = 0
+    for card in slots:
+        if card['type'] in {'search_experience_survey', 'search_suggestions'}:
+            continue
+        position = card['position']
+        if card['type'] != 'product':
+            return issue('card_unconfirmed', f'第 {position} 个列表格子无法确认是商品或已知推荐卡', slot_index=position)
+        index += 1
+        if index > len(items):
+            return issue('product_count_changed', f'列表比下载前多出了第 {index} 个商品', product_index=index, slot_index=position)
+        before = items[index - 1]
+        item_id, _, _ = product_identity(card)
+        location = {'product_index': index, 'slot_index': position}
+        if item_id is None:
+            return issue('product_id_unconfirmed', f'无法确认第 {index} 个商品的编号', **location)
+        if item_id != before['product_id']:
+            return issue('product_order_changed', f"第 {index} 个商品编号或顺序变了（原 {before['product_id']}，当前 {item_id}）",
+                         expected_product_id=before['product_id'], actual_product_id=item_id, **location)
+        if text_or_none(card.get('sku_reference')) != before.get('sku_reference'):
+            return issue('sku_changed', f'第 {index} 个商品的规格引用变了或未能确认', **location)
+        if text_or_none(card.get('main_image_url')) != before.get('main_image_url'):
+            return issue('image_source_changed', f'第 {index} 个商品的静态主图来源变了或未能确认', **location)
+        if index == limit:
+            break
+    if index != len(items):
+        return issue('product_count_changed', f'当前只确认到 {index} 个商品，下载前有 {len(items)} 个',
+                     expected_count=len(items), actual_count=index)
+    return None
 
 
 def parse_price(value):

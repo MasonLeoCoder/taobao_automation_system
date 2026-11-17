@@ -158,6 +158,32 @@ class WebCollectionBrowserTests(unittest.TestCase):
         self.assertIn('每页最多 3 个商品',self.page.locator('#collection-job-list').inner_text())
         self.assertEqual(self.errors,[])
 
+    def test_list_image_progress_does_not_claim_list_saved_in_attention_dialog(self):
+        """图片处理后的暂停、刷新与保存各自保持可核对的计数。"""
+        from ecommerce.modules.collection import web_collection as service
+        options={'mode':'keyword','keyword':'粘毛器','pages':2,'limit':3,'with_details':False}
+        job=service.start_configured(self.settings,options,taobao_account={'account_id':'a'*32,'login_name':'合成买家'})
+        row=jobs.read(self.settings,job['id'])
+        image_progress={'page_number':1,'phase':'checking_source','downloaded':2,'total':3,'failed':1,'not_applicable':0}
+        row.update(state='running',progress={'current_page':1,'completed_page_count':0,'collected_count':0,'list_page_progress':image_progress})
+        self.save(row)
+        self.job_db.prompt(row,{'task_id':row['id'],'prompt_id':'b'*32,'allowed':['继续'],
+            'message':'第 1 个商品的静态主图来源变了','step':'复核列表图片来源'})
+        self.page.goto('http://127.0.0.1/modules/collection')
+        self.page.reload()
+        dialog=self.page.locator('#collection-attention')
+        expect(dialog).to_contain_text('已保存 0/2 页')
+        expect(dialog).to_contain_text('第 1 页主图：已下载 2/3 张（失败 1）')
+        expect(dialog).to_contain_text('商品列表：待复核')
+        expect(dialog).to_contain_text('第 1 个商品的静态主图来源变了')
+        self.job_db.prompt(row,None)
+        row['progress'].update(completed_page_count=1,collected_count=3,list_page_progress={**image_progress,'phase':'saved'})
+        self.save(row)
+        expect(dialog).not_to_be_visible(timeout=7000)
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('已保存 1/2 页')
+        expect(self.page.locator('#collection-task-bar')).to_contain_text('商品列表：已保存')
+        self.assertEqual(self.errors,[])
+
     def test_detail_form_selects_modules_independent_ranges_and_new_product(self):
         """新商品无需历史记录，模块和数量范围按配置派发；参数：无；返回：无。"""
         self.page.goto('http://127.0.0.1/modules/collection')

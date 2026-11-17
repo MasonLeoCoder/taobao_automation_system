@@ -103,11 +103,15 @@ def collect_list_image(context, page, url, directory, checkpoint):
     return {'status': 'failed', 'reason': reason, 'attempts': 3, 'processed_at': now()}
 
 
-def collect_list_images(settings, context, page, items, batch_id, checkpoint):
-    """处理整页主图；参数：配置、会话、页面、商品、批次、检查点；返回：数量汇总，原位补充商品。"""
+def collect_list_images(settings, context, page, items, batch_id, checkpoint, *, on_progress=None):
+    """处理整页主图；参数：配置、会话、页面、商品、批次、检查点及进度回调；返回：数量汇总，原位补充商品。"""
     directory = settings.workspace / 'output/raw/taobao_products/images' / batch_id
     counts = {'total': len(items), 'downloaded': 0, 'failed': 0, 'not_applicable': 0}
+    if on_progress:
+        on_progress(dict(counts))
     for item in items:
         item['list_image'] = collect_list_image(context, page, item.get('main_image_url'), directory, checkpoint)
         counts[item['list_image']['status']] += 1
+        if on_progress:
+            on_progress(dict(counts))
     return counts
