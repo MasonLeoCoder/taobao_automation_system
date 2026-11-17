@@ -166,6 +166,15 @@
     catch { /* 当前页面仍可编辑 */ }
   }
 
+  function clearInvalidAutomaticSkuDrafts() {
+    for (const draft of Object.values(skuDraft)) {
+      if (draft?.manual === false && typeof draft.title === 'string' && root.checkListingTitle('sku', draft.title).issue) {
+        draft.original ??= draft.title;
+        draft.title = '';
+      }
+    }
+  }
+
   function checkTitles() {
     if (!node('titles')) return true;
     const errors = node('title-errors'), entries = [];
@@ -230,6 +239,9 @@
           const target = `sku-${index + 1}`, draft = drafts.get(key);
           if (!skuDraft[target] && draft) skuDraft[target] = {...draft, carried:true};
         });
+      }
+      if (!data.task) {
+        clearInvalidAutomaticSkuDrafts();
         saveSkuDraft();
       }
     }
@@ -617,18 +629,22 @@
     const {job, attempt, rows, autoFill, previousEdits} = detail;
     if (!job || job !== id || job !== skuOwner || busy || node('titles').disabled) return;
     if (autoFill) {
-      const byKey = new Map(rows.map(row => [row.sku_key, row.raw_title ?? row.title ?? '']));
+      const byKey = new Map(rows.map(row => [row.sku_key, row]));
       for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
         const key = field.dataset.skuKey, draft = skuDraft[key];
-        if (draft && (draft.manual !== false || draft.attempt === attempt)) {
-          if (byKey.has(key)) skuDraft[key] = {...draft, original:byKey.get(key)};
+        const row = byKey.get(key);
+        if (!row) continue;
+        const original = row.raw_title ?? row.title ?? '';
+        if (draft && draft.manual !== false) {
+          skuDraft[key] = {...draft, original};
           continue;
         }
         const manual = typeof previousEdits?.[key] === 'string';
-        const raw = manual ? previousEdits[key] : byKey.get(key) ?? '';
-        const title = root.checkListingTitle('sku', raw).value;
+        const checked = root.checkListingTitle('sku', row.title ?? '');
+        const validated = row.issue || checked.issue ? '' : checked.value;
+        const title = manual ? previousEdits[key] : validated;
         field.value = title;
-        skuDraft[key] = {title, attempt, manual, original:byKey.get(key)};
+        skuDraft[key] = {title, attempt, manual, original};
       }
       saveSkuDraft();
     }

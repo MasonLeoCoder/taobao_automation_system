@@ -6,7 +6,6 @@
   if (!panel) return;
   const settingsPanel = node('settings');
   const fields = {title:'宝贝标题', guide:'导购标题'};
-  const targets = {title:56, guide:28};
   const kinds = {search:'搜索词', trend:'趋势词', core:'核心词', modifier:'修饰词'};
   const input = key => document.getElementById('listing-' + key);
   const base = root.dataset.api.replace(/\/preflight$/, '');
@@ -310,7 +309,11 @@
     const words = new Set(match.used.map(item => item.keyword));
     let problem = issue || repeatIssue(match.used);
     if (!problem && !words.size) problem = '请使用至少一个本次已选排行词';
-    if (!problem && (plan.input.locked?.[key] || []).some(word => !words.has(word))) problem = '缺少指定的必用词';
+    const missing = (plan.input.locked?.[key] || []).filter(word => !value.includes(word));
+    if (missing.length) {
+      const detail = '缺少必用词：' + missing.map(word => `「${word}」`).join('、');
+      problem = [problem, detail].filter(Boolean).join('；');
+    }
     return {value, width, limit, issue:problem, ...match};
   }
 
@@ -320,6 +323,11 @@
     raw.className = 'listing-title-original';
     raw.append(element('small', `AI 初始标题 · ${initial.width} / ${initial.limit}`),
       element('p', original || emptyOriginal || '未返回标题'));
+    if (key === 'sku' && original && emptyOriginal) {
+      const issue = element('small', emptyOriginal);
+      issue.className = 'listing-ai-issue';
+      raw.append(issue);
+    }
     preview.className = 'listing-title-preview';
     const header = element('small'), line = element('p'), ranks = element('ul');
     line.className = 'listing-ai-title-text';
@@ -358,7 +366,6 @@
     const compare = titleComparison(container, key, original);
     container.append(note);
 
-    const target = targets[key];
     const signature = value => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
     function check() {
       const data = checkCandidate(key, edit.value, record.plan);
@@ -383,8 +390,7 @@
         const other = words.slice(i + 1).find(value => similarWords(word, value));
         return other && `${word}／${other}`;
       }).find(Boolean);
-      note.textContent = issue || (width < target ? `低于建议长度 ${target}～${limit} 字符` :
-        similar ? `用词相近 · ${similar}` : '');
+      note.textContent = issue || (similar ? `用词相近 · ${similar}` : '');
       note.className = issue ? 'listing-ai-issue' : 'listing-ai-advice';
       note.hidden = !note.textContent;
     }
@@ -549,6 +555,11 @@
       confirmed = {...prepared, data};
       const {plan, result:record} = prepared;
       node('budget').textContent = `${plan.model} · 1 次 · ${plan.groups} 组候选 · ${plan.input.sku_specs?.length ?? 0} 个 SKU · 预计费用上限 USD ${plan.cost.amount.toFixed(6)}（本机配置估算）`;
+      const lockedWidths = node('locked-widths');
+      if (lockedWidths) {
+        lockedWidths.textContent = plan.locked_widths ? Object.entries(fields).map(([key, label]) =>
+          `${label}必用词至少占 ${plan.locked_widths[key]} 个字符，上限 ${plan.title_limits[key]}`).join('。') + '。' : '';
+      }
       node('input').textContent = JSON.stringify(plan.input, null, 2);
       node('plan').hidden = false;
       node('generate').textContent = record ? '确认并重新生成' : '确认并生成 5 组';

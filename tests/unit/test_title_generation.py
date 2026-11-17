@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
-from ecommerce.modules.product.title_generation import _candidates, _product, _sku_candidates, evidence
+from ecommerce.modules.product.title_generation import _candidates, _locked_width, _product, _sku_candidates, evidence
 from ecommerce.modules.product.web_materials import CATEGORY
 from ecommerce.web.app import create_app
 from tests.unit.test_web_listing import fixture_materials, fixture_settings
@@ -17,7 +17,7 @@ from tests.unit.test_web_listing import fixture_materials, fixture_settings
 
 BATCH = 'a' * 32
 OLDER = 'b' * 32
-RANKED = [('猫毛清理器', 1), ('猫毛', 5), ('除毛刷', 8)]
+RANKED = [('猫毛清理器', 1), ('猫毛', 5), ('除毛刷', 8), ('甲' * 16, 12)]
 
 
 def fake_ranking(settings, category_id, period, batch_id, *, word_type):
@@ -28,7 +28,7 @@ def fake_ranking(settings, category_id, period, batch_id, *, word_type):
     older = dict(latest, id=OLDER, sycm_category_path=CATEGORY.rsplit(' > ', 1)[0], requested_pages=10,
                  captured_pages=10, started_at=datetime(2026, 11, 6, 14))
     return {'history': [latest, older], 'batch': older if batch_id == OLDER else latest,
-            'types': {'search': dict(collected_pages=2, row_count=3, status='complete')},
+            'types': {'search': dict(collected_pages=2, row_count=len(RANKED), status='complete')},
             'entries': [dict(id=index, keyword=word, rank=rank, word_type='search',
                              page_no=1, row_no=index, popularity_raw='300 ~ 600',
                              click_rate_raw='106%', payment_conversion_raw='25% ~ 30%')
@@ -73,9 +73,15 @@ class TitleGenerationTests(TestCase):
             self.assertEqual(preview['plan']['groups'], 5)
             self.assertEqual(preview['plan']['input']['sku_specs'], [{'sku_key': 'sku-1', 'name': '白色'}])
             self.assertGreater(preview['plan']['budget']['output_tokens'], 1536)
-            for phrase in ('目标56～60字符', '目标28～30字符', '按去掉空格后的标题计数',
-                           '搜索词、趋势词、核心词、修饰词', '避免仅调换词序'):
+            self.assertEqual(preview['plan']['locked_widths'], {'title': 10, 'guide': 0})
+            self.assertEqual(preview['plan']['title_limits'], {'title': 60, 'guide': 30})
+            for phrase in ('最多60字符', '20～30字符', '按去掉空格后的标题计数',
+                           '纯中文最多15个汉字', '每个输入sku_key恰好出现一次', '相近词择一只适用于选用词'):
                 self.assertIn(phrase, preview['plan']['request'])
+            over_limit = dict(body, selected=[4], locked={'title': [], 'guide': [4]})
+            blocked = client.post(url + '/preview', headers=headers, json=over_limit)
+            self.assertEqual(blocked.status_code, 422)
+            self.assertIn('导购标题的必用词至少需要 32 字符', blocked.json['error'])
             start = dict(input=body, key=preview['plan']['key'], allow_paid=False, retry=None)
             self.assertEqual(client.post(url + '/generate', headers=headers, json=start).status_code, 422)
             self.assertEqual(client.post(url + '/generate', headers=headers,
@@ -166,6 +172,24 @@ class TitleGenerationTests(TestCase):
                              {'title': [], 'guide': []})[0]
         self.assertIsNone(result['title']['issue'])
         self.assertIn('20～30', result['guide']['issue'])
+
+    def test_required_words_use_full_title_and_list_missing_words(self):
+        words = [{'keyword': word} for word in ('猫包', '适合外出的猫包', '双肩', '透气')]
+        response = {'text': json.dumps({'groups': [
+            {'title': '适合外出的猫包', 'guide': '适合外出的猫包双肩便携'},
+            {'title': '适合外出的猫包' + '白' * 28, 'guide': '适合外出的猫包双肩便携'},
+        ]})}
+        first, second = _candidates(response, words, {'title': ['双肩', '透气'], 'guide': ['猫包']})
+        self.assertIsNone(first['guide']['issue'])
+        self.assertEqual(first['title']['issue'], '缺少必用词：「双肩」、「透气」')
+        self.assertIn('超过 60', second['title']['issue'])
+        self.assertIn('「双肩」、「透气」', second['title']['issue'])
+
+    def test_required_word_character_bound_accounts_for_containment_and_overlap(self):
+        self.assertEqual(_locked_width(['猫包', '适合外出的猫包']), 14)
+        self.assertEqual(_locked_width(['外出猫包', '猫包便携']), 12)
+        self.assertEqual(_locked_width(['AB', 'B猫', '猫A']), 5)
+        self.assertEqual(_locked_width(['甲' * 16, '乙' * 15]), 62)
 
     def test_targets_allow_shorter_titles_and_caps_are_independent(self):
         word = {'id': 1, 'keyword': '猫毛清理器', 'rank': 1}

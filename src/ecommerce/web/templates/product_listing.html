@@ -160,6 +160,7 @@
             <section id="listing-ai-plan" class="listing-ai-inner" hidden>
               <h3>本次请求与费用</h3>
               <p id="listing-ai-budget"></p>
+              <p id="listing-ai-locked-widths"></p>
               <details><summary>查看将发送的商品资料和词条</summary><pre id="listing-ai-input"></pre></details>
               {% if not can_submit %}<p class="ui-form-note">自动验证环境仅提供请求预览和已保存结果。</p>{% endif %}
               <label class="listing-choice">{{ ui.input_control({'id':'listing-ai-paid','type':'checkbox'}) }} 我确认按上方资料发送 1 次付费请求</label>
