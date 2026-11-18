@@ -283,6 +283,7 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             sku_guide = compact_title(guide_title) if guide_title and codes else guide_title
             sku_media_result = fill_sku_media(page, sales_specifications, sku_images, sku_guide,
                                              **layered,
+                                             **({'on_image_review': web_review.sku_image_review} if web_review else {}),
                                              **({'sku_titles': sku_titles} if sku_titles is not None else {}))
             fill_fixed_price(page, fixed_price)
             fill_merchant_code(page, merchant_code)

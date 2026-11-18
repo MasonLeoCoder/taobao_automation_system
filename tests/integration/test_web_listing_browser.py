@@ -151,6 +151,9 @@ class WebListingBrowserTests(TestCase):
                         review.progress('千牛已登录，正在进入商品发布')
                         logging.getLogger('ecommerce.platforms.qianniu.product_video').warning('模拟视频素材需要人工处理')
                         review.attention('【需要人工处理弹窗】\n当前步骤：等待视频窗口关闭\n完成后输入“继续”。')
+                        deadline = time.time() + 30
+                        assert review.sku_image_review(verification_page, '灰色款 SKU 搜索主图未确认', deadline) == 'skip_image'
+                        assert review.sku_image_review(verification_page, '蓝色款商品规格图片未确认', time.time() + 3) == 'timeout'
                         review.update(outcome='filled')
                         review._wait('已填写，检查后结束', ['finish'], kind='finish')
                         return '仅填写流程完成'
@@ -185,6 +188,16 @@ class WebListingBrowserTests(TestCase):
                         expect(video).to_contain_text('点击「完成」')
                         expect(page.locator('#listing-log-rows')).to_contain_text('模拟视频素材需要人工处理', timeout=10000)
                         video.get_by_role('button', name='完成', exact=True).click()
+                        image = page.get_by_role('dialog', name='请处理 SKU 图片')
+                        expect(image).to_contain_text('灰色款 SKU 搜索主图', timeout=10000)
+                        expect(image.get_by_role('timer')).to_contain_text('到时自动跳过')
+                        before_reload = image.get_by_role('timer').inner_text()
+                        page.reload()
+                        expect(image).to_contain_text('灰色款 SKU 搜索主图', timeout=10000)
+                        after_reload = image.get_by_role('timer').inner_text()
+                        self.assertLessEqual(after_reload, before_reload)
+                        image.get_by_role('button', name='跳过此图片').click()
+                        expect(image).to_contain_text('蓝色款商品规格图片', timeout=10000)
                         page.get_by_role('button', name='结束检查').click(timeout=10000)
                         expect(page.locator('#listing-message')).to_contain_text('仅填写流程完成', timeout=10000)
                         expect(page.locator('#listing-log-rows')).to_contain_text('仅填写流程完成', timeout=10000)

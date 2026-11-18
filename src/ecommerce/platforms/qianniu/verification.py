@@ -11,6 +11,7 @@ from ecommerce.shared.exceptions import NeedsAttention
 from .collection_pacing import checkpoint_rate
 
 _ACTIVE = ContextVar("qianniu_verification_guard", default=None)
+_PROPAGATE_STEP_ERRORS = ContextVar("qianniu_propagate_step_errors", default=False)
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,8 @@ def page_step(action, *, description=None, completed=None):
                 logging.getLogger(__name__).info("子步骤已生效，核对后继续：%s", label)
                 return
             if count == guard.resume_count:
+                if _PROPAGATE_STEP_ERRORS.get():
+                    raise
                 if guard.popup_guard is None:
                     raise
                 guard.popup_guard.review_error(guard.operation, label, error)
@@ -278,6 +281,16 @@ def expect(actual, message=None):
 
 
 @contextmanager
+def propagate_step_errors():
+    """交由当前业务处理子步骤失败，仍先检查验证和未知弹窗。"""
+    token = _PROPAGATE_STEP_ERRORS.set(True)
+    try:
+        yield
+    finally:
+        _PROPAGATE_STEP_ERRORS.reset(token)
+
+
+@contextmanager
 def intercept_file_dialogs(page):
     """在上传操作全程接管系统选文件请求；参数：页面；返回：退出时释放监听的作用域。
 
@@ -287,9 +300,19 @@ def intercept_file_dialogs(page):
     def intercept(chooser):
         """接管选文件请求；参数：请求；返回：无，不提供文件或重放上传。"""
         logging.getLogger(__name__).debug("上传期间已接管文件选择请求，不打开系统文件窗口")
+
+    @contextmanager
+    def manual_selection():
+        page.remove_listener("filechooser", intercept)
+        try:
+            yield
+        finally:
+            if not page.is_closed():
+                page.on("filechooser", intercept)
+
     page.on("filechooser", intercept)
     try:
-        yield
+        yield manual_selection
     finally:
         page.remove_listener("filechooser", intercept)
 

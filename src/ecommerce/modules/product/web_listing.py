@@ -22,7 +22,7 @@ from ecommerce.platforms.qianniu.login import is_login_required
 from ecommerce.modules.account.managed import (
     account_settings, account_target, require_login, selected_account, verify_session,
 )
-from ecommerce.shared.exceptions import NeedsAttention, TaskStopped
+from ecommerce.shared.exceptions import NeedsAttention, TaskBusy, TaskStopped
 from ecommerce.shared.time import BEIJING
 from .service import ACCOUNT_REQUIRED, open_publish
 from .listing_logs import log_page
@@ -222,6 +222,8 @@ class ListingWorkbench:
             prompt = task and task['prompt']
             if not prompt or prompt['id'] != prompt_id or action not in prompt['actions']:
                 raise ListingConflict('提示已改变或操作不适用，请刷新后重新核对')
+            if 'expires_at' in prompt and time.time() >= prompt['expires_at']:
+                raise ListingConflict('当前图片的处理时间已到，程序会自动跳过')
             target = path / f'feedback-{prompt_id}.json'
             if target.exists():
                 raise ListingConflict('本次反馈已收到，请等待页面复查')
@@ -330,7 +332,7 @@ class _ListingRun:
             getLogger(__name__).warning('未能保存千牛现场截图，保留人工提示')
         return None
 
-    def _wait(self, message, actions, *, page=None, differences=None, kind='manual', related_tasks=None):
+    def _wait(self, message, actions, *, page=None, differences=None, kind='manual', related_tasks=None, expires_at=None):
         """等待当前提示的专用反馈；返回：明确操作，关闭网页不算反馈。"""
         previous = self.state if self.state['phase'] == 'waiting' else None
         evidence = self._screenshot(page=page, message=message)
@@ -340,6 +342,8 @@ class _ListingRun:
                   'evidence': evidence}
         if related_tasks:
             prompt['related_tasks'] = related_tasks
+        if expires_at is not None:
+            prompt['expires_at'] = expires_at
         self.update(phase='waiting', prompt=prompt, message=message,
                     evidence=evidence or self.state['evidence'])
         if session := current_events():
@@ -347,10 +351,21 @@ class _ListingRun:
         elif self.local_log:
             self.local_log.write(message, 'WARNING', '等待人工处理')
         feedback = self.path / f'feedback-{prompt["id"]}.json'
+        action = None
         while not feedback.exists():
             if page is not None:
                 if page.is_closed():
                     raise NeedsAttention('千牛页面已关闭，无法继续本次操作')
+            if expires_at is not None and time.time() >= expires_at:
+                try:
+                    with shop_lock(self.path / 'control'):
+                        if not feedback.exists():
+                            action = 'timeout'
+                    break
+                except TaskBusy:
+                    # 截止前已进入写入流程的反馈有机会完成，随后再裁定超时。
+                    pass
+            if page is not None:
                 try:
                     page.wait_for_timeout(250)
                 except PlaywrightError:
@@ -361,14 +376,17 @@ class _ListingRun:
                 time.sleep(.25)
         if page is not None and page.is_closed():
             raise NeedsAttention('千牛页面已关闭，无法继续本次操作')
-        action = json.loads(feedback.read_text(encoding='utf-8'))['action']
-        if action not in actions:
-            raise NeedsAttention('人工反馈不属于当前提示')
-        storage_checkpoint('收到网页人工反馈后复核')
+        if action == 'timeout':
+            storage_checkpoint('SKU 图片处理超时')
+        else:
+            action = json.loads(feedback.read_text(encoding='utf-8'))['action']
+            if action not in actions:
+                raise NeedsAttention('人工反馈不属于当前提示')
+            storage_checkpoint('收到网页人工反馈后复核')
         if previous:
             self.update(prompt=previous['prompt'], message=previous['message'], evidence=previous['evidence'])
         else:
-            self.progress('已收到反馈，正在复核当前步骤')
+            self.progress('SKU 图片处理时间已到，正在跳过当前图位' if action == 'timeout' else '已收到反馈，正在复核当前步骤')
         return action
 
     def verification(self, request):
@@ -422,6 +440,10 @@ class _ListingRun:
         if action == 'finish':
             raise TaskStopped('用户已结束主图填写任务')
 
+    def sku_image_review(self, page, message, expires_at):
+        """等待处理当前选填的 SKU 图位，期限内可多次核对。"""
+        return self._wait(message, ['continue', 'skip_image'], page=page, kind='sku_image', expires_at=expires_at)
+
     def _sku_title(self, name):
         guide = self.preview['guide']
         return (self.sku_titles or {}).get(name) or (compact_title(guide) if 'sku_mode' in self.preview else guide)
@@ -449,10 +471,11 @@ class _ListingRun:
         if categories:
             self.notes.extend(f'店铺分类「{name}」：{reason}' for name, reason in categories.skipped.items())
         if sku:
+            self.notes.extend(sku.differences)
             for name, skipped in sku.skipped.items():
                 for label, reason in skipped.items():
                     planned = self._sku_title(name) if label == 'SKU搜索标题' else self.preview['sku_images'].get(name)
-                    if planned:
+                    if planned and label not in sku.optional_skips.get(name, ()):
                         self.notes.append(f'SKU「{name}」{label}未按预检完成：{reason}')
         actual = self._read_fields(page)
         if self.profile and self.profile.brand_in_editor:
@@ -465,7 +488,8 @@ class _ListingRun:
             actual_images = {name: sources for name, _, sources in actual['sku_media']}
             image_count = 1 if self.preview.get('sku_combinations') else 2
             for name, image in self.preview['sku_images'].items():
-                if image and len([source for source in actual_images.get(name, []) if source]) < image_count:
+                skipped_count = len(sku.optional_skips.get(name, ())) if sku else 0
+                if image and len([source for source in actual_images.get(name, []) if source]) < image_count - skipped_count:
                     raise NeedsAttention(f'SKU「{name}」的图片未核实，请核对搜索主图及当前模式的图片入口')
             getLogger(__name__).info('已回读核对品牌、商品属性、价格和商家编码，以及 %d 条 SKU 和匹配图片',
                                      len(actual['skus']))

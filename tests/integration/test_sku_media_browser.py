@@ -164,6 +164,83 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertTrue(all(NAMES[0] in line and '未找到同名图片' in line for line in logs.output))
         self.assert_core_unchanged()
 
+    def test_cj010_crop_matches_uploaded_material_in_both_image_slots(self):
+        self.page.evaluate("""() => {
+            const base = 'https://img.alicdn.com/imgextra/i1/2222092663651/O1CN01gK7KOFS2yvD0jwnE';
+            const original = base + '_!!2222092663651.jpg';
+            const cropped = base + '~crop,0,17,365,365~_!!2222092663651.jpg';
+            assets.push = asset => Array.prototype.push.call(assets, {...asset, source:original});
+            for (const key of ['chooseSearch', 'chooseSpec']) {
+                const choose = window[key];
+                window[key] = () => choose(cropped);
+            }
+        }""")
+        inputs = SkuImageInputs({NAMES[0]: self.images.files[NAMES[0]]}, {})
+        with self.guard():
+            result = platform.fill_sku_media(self.page, [NAMES[0]], inputs, TITLE)
+        self.assertEqual(result.filled[NAMES[0]], [*platform.IMAGE_FIELDS, 'SKU搜索标题'])
+        self.assertEqual(result.skipped, {})
+        self.assertIn('~crop,0,17,365,365~', self.page.evaluate('records[1].search'))
+        self.assertEqual(self.page.evaluate('uploadCount'), 1)
+
+    def test_wrong_search_image_can_be_replaced_manually_or_skipped(self):
+        for action in ('continue', 'skip_image', 'timeout'):
+            with self.subTest(action=action):
+                self.page.evaluate("""data => {
+                    if (!window.realChooseSearch) window.realChooseSearch = chooseSearch;
+                    assets.length = 0;
+                    seedRows(data);
+                    chooseSearch = source => realChooseSearch(currentIndex === 1 ? source.replace('/assets/', '/wrong/') : source);
+                }""", self.records)
+                messages = []
+                def feedback(page, message, deadline):
+                    messages.append((message, deadline))
+                    self.assertIn(NAMES[0], message)
+                    self.assertIn('SKU搜索主图', message)
+                    self.assertIn('素材不一致', message)
+                    if action == 'continue' and len(messages) == 2:
+                        page.evaluate("realChooseSearch('https://qianniu.test/assets/人工.jpg')")
+                        page.locator(platform.BATCH).get_by_role('button', name='确定').click()
+                    return action
+
+                with self.guard():
+                    result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE, on_image_review=feedback)
+                rows = self.page.evaluate('records')
+                self.assertEqual([row['title'] for row in rows], [TITLE, TITLE])
+                self.assertTrue(all(row.get('spec') for row in rows))
+                self.assertIsNotNone(rows[0].get('search'))
+                self.assertEqual(result.differences, [])
+                if action == 'continue':
+                    self.assertEqual(len(messages), 2)
+                    self.assertEqual(messages[0][1], messages[1][1])
+                    self.assertIn('还未读到', messages[1][0])
+                    self.assertEqual(rows[1]['search'], 'https://qianniu.test/assets/人工.jpg')
+                    self.assertEqual(result.skipped, {})
+                else:
+                    self.assertEqual(result.optional_skips, {NAMES[0]: {'SKU搜索主图'}})
+                    self.assertIn('自动跳过' if action == 'timeout' else '用户选择', result.skipped[NAMES[0]]['SKU搜索主图'])
+                    self.assertIsNone(rows[1].get('search'))
+                self.assert_core_unchanged()
+
+    def test_spec_picker_closes_on_timeout_and_next_sku_continues(self):
+        fill = platform._fill_spec_image
+        def fail_first(page, drawer, file, uploaded_assets):
+            if file == self.images.files[NAMES[0]]:
+                drawer.locator(platform.SPEC_IMAGE).locator('.empty-container').click()
+                raise platform._ImageError('素材上传等待超时')
+            return fill(page, drawer, file, uploaded_assets)
+
+        with self.guard(), patch.object(platform, '_fill_spec_image', side_effect=fail_first):
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE,
+                                             on_image_review=lambda *args: 'timeout')
+        rows = self.page.evaluate('records')
+        self.assertEqual(result.optional_skips, {NAMES[0]: {'商品规格图片'}})
+        self.assertEqual(result.differences, [])
+        self.assertTrue(rows[1]['search'])
+        self.assertFalse(rows[1].get('spec'))
+        self.assertTrue(rows[0]['spec'])
+        self.assertEqual([row['title'] for row in rows], [TITLE, TITLE])
+
     def test_two_skus_can_use_one_uploaded_image_with_separate_titles(self):
         images = SkuImageInputs(dict.fromkeys(NAMES, self.images.files[NAMES[0]]), {})
         titles = dict(zip(NAMES, ('中号宠物背包', '大号宠物背包')))

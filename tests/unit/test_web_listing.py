@@ -20,6 +20,7 @@ from ecommerce.modules.product.listing_logs import log_page, local_log
 from ecommerce.modules.product.listing_templates import template_for
 from ecommerce.modules.product.web_listing import _ListingRun
 from ecommerce.modules.product.web_materials import CATEGORY, import_materials
+from ecommerce.platforms.qianniu.product_sku_media import SkuMediaResult
 from ecommerce.shared.config import load_settings
 from ecommerce.shared.exceptions import NeedsAttention
 from ecommerce.web.app import create_app
@@ -210,6 +211,26 @@ class WebListingTests(TestCase):
             _ListingRun.warn_pending_submission(worker, MagicMock(), 'actual')
         self.assertEqual(worker._wait.call_args.kwargs['related_tasks'], ['b' * 32])
         worker.update.assert_called_once_with(submitted_code='actual')
+
+    def test_optional_sku_image_skip_passes_fill_check_but_keeps_unverified_picture_difference(self):
+        worker = MagicMock(spec=_ListingRun)
+        worker.profile = BACKPACK
+        worker.attributes = {}
+        worker.notes = []
+        worker.state = {'submit':True}
+        worker.preview = {'brand':'无品牌/无注册商标', 'price':'10', 'code':'DEMO', 'skus':[],
+                          'sku_images':{'灰色':'灰色.jpg'}}
+        worker._read_fields.return_value = {**worker.preview, 'title':'示例标题',
+                                             'attributes':{'品牌':worker.preview['brand']},
+                                             'sku_media':[['灰色', [], ['https://img.alicdn.com/spec.jpg']]]}
+        result = SkuMediaResult(skipped={'灰色':{'SKU搜索主图':'等待 3 分钟未完成，自动跳过'}},
+                                optional_skips={'灰色':{'SKU搜索主图'}})
+        _ListingRun.filled(worker, MagicMock(), None, result, {})
+        self.assertEqual(worker.notes, [])
+        self.assertEqual(worker.update.call_args.kwargs['outcome'], 'filled')
+        result.differences.append('灰色 SKU 搜索主图仍有未确认的图片')
+        _ListingRun.filled(worker, MagicMock(), None, result, {})
+        self.assertEqual(worker.notes, result.differences)
 
     def test_adapted_video_preview_and_worker_use_the_same_sealed_copy(self):
         def prepare(source, adapted):

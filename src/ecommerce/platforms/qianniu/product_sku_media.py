@@ -1,14 +1,18 @@
 """SKU搜索主图、搜索标题及商品规格图片：逐规格匹配、保存并回读。"""
 import mimetypes
 import re
+import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from logging import getLogger
+from urllib.parse import urlsplit
 from uuid import uuid4
-from playwright.sync_api import Page
+from playwright.sync_api import Error as PlaywrightError, Page
 from ecommerce.modules.product.assets import SkuImageInputs
 from ecommerce.shared.exceptions import NeedsAttention
 from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, LAYERED_DIMENSIONS, layered_sku_rows
-from .verification import qianniu_operation, checkpoint, expect, page_step, choose_file_dialog, intercept_file_dialogs
+from .verification import (qianniu_operation, checkpoint, expect, page_step, choose_file_dialog,
+                           intercept_file_dialogs, propagate_step_errors)
 
 DRAWER = '.sku-component-sku-detail-drawer:visible'
 BATCH = '.batch-fill-sku-image-dialog:visible'
@@ -19,6 +23,9 @@ SPEC_IMAGE = 'td[id$="-custom_-1"]'
 TITLE = 'td[id$="-skuTitle"]'
 WAIT_MS = 30000
 IMAGE_FIELDS = ('SKU搜索主图', '商品规格图片')
+IMAGE_REVIEW_SECONDS = 180
+_THUMBNAIL = r'_\d+x\d+(?:[a-z]\d+)*(?:\.[a-z]+)?(?:_\.[a-z]+)?'
+_CROP = r'~crop,\d+,\d+,\d+,\d+~'
 
 
 @dataclass
@@ -26,6 +33,8 @@ class SkuMediaResult:
     """按规格返回已核对字段和逐字段跳过原因，不把缺少素材当作填写成功。"""
     filled: dict[str, list[str]] = field(default_factory=dict)
     skipped: dict[str, dict[str, str]] = field(default_factory=dict)
+    optional_skips: dict[str, set[str]] = field(default_factory=dict)
+    differences: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -33,6 +42,14 @@ class _Asset:
     """本次唯一上传素材，复用于同一SKU的两个图片位。"""
     name: str
     source: str
+
+
+class _ImageError(NeedsAttention):
+    """单个可选图片位的失败。"""
+
+    def __init__(self, message, rejected=None):
+        super().__init__(message)
+        self.rejected = rejected
 
 
 def _skip(result, name, label, reason):
@@ -46,15 +63,44 @@ def _reset_drawer(drawer):
     drawer.evaluate('e=>{const body=Array.from(e.children).find(c=>getComputedStyle(c).overflowY==="auto");if(body)body.scrollTop=0}')
 
 
+def _image_pattern(source):
+    """按原素材的完整主机和路径匹配千牛预览，允许已知缩略及裁剪标记。"""
+    location = urlsplit(source)
+    path = re.sub(r'(\.[a-zA-Z]{3,4})' + _THUMBNAIL + '$', r'\1', location.path)
+    crop = ''
+    if location.hostname and (location.hostname == 'alicdn.com' or location.hostname.endswith('.alicdn.com')):
+        path = re.sub(_CROP + r'(?=_!!\d+\.[a-zA-Z]+$)', '', path)
+        seller = re.search(r'_!!\d+\.[a-zA-Z]+$', path)
+        if seller:
+            crop = f'(?:{_CROP})?' + re.escape(seller[0])
+            path = path[:seller.start()]
+    return re.compile(r'^(?:https?:)?//' + re.escape(location.netloc) + re.escape(path) + crop
+                      + f'(?:{_THUMBNAIL})?(?:[?#].*)?$')
+
+
+def _source(images):
+    """即时读取单个图位的已选资源地址。"""
+    if images.count() == 1:
+        source = images.get_attribute('src', timeout=2000)
+        if source and source.startswith(('https://', 'http://', '//')):
+            return source
+    return None
+
+
 def _same_image(images, source):
-    """只读检查所选来源；参数：图片定位器、原图地址；返回：单张图片来源是否相同。"""
-    return images.count() == 1 and source in (images.get_attribute('src') or '')
+    actual = _source(images)
+    return bool(actual and _image_pattern(source).fullmatch(actual))
 
 
 def _verify_image(images, asset):
     """核对图片来源；参数：定位器、上传素材；返回：数量及原图地址核对后返回。"""
-    expect(images).to_have_count(1, timeout=WAIT_MS)
-    expect(images).to_have_attribute('src', re.compile(re.escape(asset.source)), timeout=WAIT_MS)
+    try:
+        expect(images).to_have_count(1, timeout=WAIT_MS)
+        expect(images).to_have_attribute('src', _image_pattern(asset.source), timeout=WAIT_MS)
+    except (AssertionError, PlaywrightError) as error:
+        actual = _source(images) if not images.page.is_closed() else None
+        raise _ImageError('页面图片与本次选中的素材不一致' if actual else '等待超时，未读到该图位的图片',
+                          rejected=actual) from error
 
 
 def _upload_asset(page, file):
@@ -75,8 +121,8 @@ def _upload_asset(page, file):
     expect(tile).to_have_count(1, timeout=WAIT_MS)
     source = tile.locator('img').get_attribute('src')
     if not source:
-        raise NeedsAttention(f'SKU图片上传后缺少可核对来源：{file.name}')
-    return _Asset(asset_name, source.split('_320x320')[0])
+        raise _ImageError(f'素材库未提供已上传图片的地址：{file.name}')
+    return _Asset(asset_name, source)
 
 
 def _tile(page, asset):
@@ -124,7 +170,7 @@ def _fill_search_image(page, drawer, name, file, uploaded_assets):
     label = page.locator('.sku-text').and_(page.get_by_text(name, exact=True))
     item = batch.locator('.sku-item').filter(has=label)
     if item.count() != 1:
-        raise NeedsAttention(f'搜索主图窗口无法唯一定位规格「{name}」')
+        raise _ImageError(f'搜索主图窗口无法唯一定位规格「{name}」')
     # 批量窗口可能默认勾选第一行，切换目标前先取消其他规格，避免同图误填多个SKU。
     for other in batch.locator('.sku-item').all():
         if other.locator(label).count():
@@ -173,6 +219,67 @@ def _fill_spec_image(page, drawer, file, uploaded_assets):
     return asset
 
 
+def _cancel_image_picker(page):
+    """退出这次选图，避免把未确认的选择应用到 SKU。"""
+    batch = page.locator(BATCH)
+    picker = page.locator(PICKER)
+    cancel_name = re.compile(r'^(取消|关闭)$')
+    with propagate_step_errors():
+        for _ in range(3):
+            batch_count, picker_count = batch.count(), picker.count()
+            if not batch_count and not picker_count:
+                return
+            controls = []
+            if picker_count == 1:
+                frame = page.frame_locator(PICKER)
+                controls.append(frame.locator('[class*="UploadDialog_dialog__"]:visible').get_by_role('button', name=cancel_name))
+                if not batch_count:
+                    controls.append(frame.get_by_role('button', name=cancel_name))
+            if batch_count == 1:
+                controls.append(batch.get_by_role('button', name=cancel_name))
+            cancel = next((button for button in controls if button.count() == 1 and button.is_visible()), None)
+            try:
+                if cancel is not None:
+                    page_step(lambda: cancel.click(timeout=1500))
+                else:
+                    page.keyboard.press('Escape')
+            except PlaywrightError:
+                if page.is_closed():
+                    raise NeedsAttention('千牛商品编辑页已关闭，无法继续 SKU 填写') from None
+                page.keyboard.press('Escape')
+            page.wait_for_timeout(200)
+    if batch.count() or picker.count():
+        raise NeedsAttention('SKU 素材窗口未能安全退出，请在千牛关闭该窗口后核对已填写的商品')
+
+
+def _review_image(page, name, label, images, expected, error, on_image_review, manual_selection, result, *, saved=False):
+    """在同一图位等待手动完成或跳过，所有复核共用第一次提示的期限。"""
+    reason = str(error) if isinstance(error, _ImageError) else '素材上传或选图未完成，请检查当前素材窗口'
+    getLogger(__name__).warning('SKU 图片需要处理：规格=%s；图位=%s；%s', name, label, reason)
+    initial = _source(images)
+    rejected = error.rejected if isinstance(error, _ImageError) else None
+    deadline = time.time() + IMAGE_REVIEW_SECONDS
+    instructions = ('请在千牛打开这个 SKU 的详情，手动选图并保存详情，回网页点击「完成」。' if saved else
+                    '请在千牛为这个图位手动选图并确认，保留 SKU 详情面板，再回网页点击「完成」。')
+    hint = instructions
+    while True:
+        with manual_selection():
+            action = on_image_review(page, f'SKU「{name}」的{label}：{reason}\n{hint}', deadline)
+        if action != 'continue':
+            _cancel_image_picker(page)
+            reason = '等待 3 分钟未完成，自动跳过' if action == 'timeout' else '用户选择跳过此图片'
+            _skip(result, name, label, reason)
+            result.optional_skips.setdefault(name, set()).add(label)
+            return None
+        if not page.locator(BATCH).count() and not page.locator(PICKER).count():
+            actual = _source(images)
+            if actual and (expected and _image_pattern(expected.source).fullmatch(actual)
+                           or not any(source and _image_pattern(source).fullmatch(actual) for source in (initial, rejected))):
+                getLogger(__name__).info('SKU 图片已手动选择并回读：规格=%s；图位=%s', name, label)
+                return _Asset('手动上传', actual)
+        hint = f'还未读到当前图位已确认的图片。{instructions}'
+
+
 def _core_values(row):
     """只读保存原有规格及数值；参数：SKU行；返回：本次功能不应改变的字段。"""
     return row.evaluate('''row=>({name:row.querySelector('textarea[data-real="true"]')?.value,
@@ -181,15 +288,19 @@ def _core_values(row):
 
 
 @qianniu_operation
-def fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None, combinations=None) -> SkuMediaResult:
+def fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *,
+                   sku_titles=None, combinations=None, on_image_review=None) -> SkuMediaResult:
     """逐 SKU 填写图片和搜索标题，缺少专属标题时取导购标题。"""
-    with intercept_file_dialogs(page):
+    with intercept_file_dialogs(page) as manual_selection:
         return _fill_sku_media(page, names, images, guide_title,
+                               **({'on_image_review': on_image_review, 'manual_selection': manual_selection}
+                                  if on_image_review is not None else {}),
                                **({'sku_titles': sku_titles} if sku_titles is not None else {}),
                                **({'combinations': combinations} if combinations else {}))
 
 
-def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *, sku_titles=None, combinations=None) -> SkuMediaResult:
+def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_title=None, *,
+                    sku_titles=None, combinations=None, on_image_review=None, manual_selection=None) -> SkuMediaResult:
     """执行逐SKU填写；参数及返回同公开入口；调用方负责全程接管文件选择请求。"""
     if not names or len(set(names)) != len(names) or any(not isinstance(name, str) or not name.strip() for name in names):
         raise ValueError('SKU补充信息需要非空、唯一的销售规格名称')
@@ -201,6 +312,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
     rows = group.locator(SKU_ROWS)
     image_fields = IMAGE_FIELDS[:1] if combinations else IMAGE_FIELDS
     uploaded_assets = {}
+    image_steps = propagate_step_errors if on_image_review else nullcontext
     for name in names:
         title = titles.get(name) or guide
         title_reason = None if title else missing_title
@@ -258,15 +370,27 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                 if current_images.count():
                     asset = uploaded_assets.get(file)
                     if combinations and asset and _same_image(current_images, asset.source):
-                        selected[selector] = asset
+                        selected[selector] = (label, asset)
                         filled.append(label)
                     else:
                         _skip(result, name, label, '页面已有图片，未覆盖；请核对是否对应当前素材')
                     continue
-                asset = (writer(page, drawer, platform_name, file, uploaded_assets) if label == 'SKU搜索主图'
-                         else writer(page, drawer, file, uploaded_assets))
-                selected[selector] = asset
-                filled.append(label)
+                try:
+                    with image_steps():
+                        asset = (writer(page, drawer, platform_name, file, uploaded_assets) if selector == SEARCH_IMAGE
+                                 else writer(page, drawer, file, uploaded_assets))
+                except (_ImageError, PlaywrightError, AssertionError) as error:
+                    if on_image_review is None or page.is_closed():
+                        raise
+                    asset = _review_image(page, name, label, current_images, uploaded_assets.get(file),
+                                          error, on_image_review, manual_selection, result)
+                    if not drawer.count() or (not combinations and drawer.locator(CREATED_NAMES).input_value() != name):
+                        raise NeedsAttention(f'请核对 SKU「{name}」的详情面板，无法确认当前填写位置')
+                    if combinations:
+                        _layered_media_name(drawer, name, combinations[name], combinations)
+                if asset:
+                    selected[selector] = (label, asset)
+                    filled.append(label)
         if not title_reason:
             field = drawer.locator(TITLE).get_by_role('textbox')
             if field.count() != 1:
@@ -290,8 +414,20 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
             row = layered_sku_rows(group, combinations, only=name)[name]
         if _core_values(row) != original:
             raise NeedsAttention(f'SKU“{name}”详情保存后原有规格、价格、数量或编码发生变化，请人工核对')
-        for selector, uploaded in selected.items():
-            _verify_image(row.locator(selector).locator('img'), uploaded)
+        for selector, (label, uploaded) in selected.items():
+            current_images = row.locator(selector).locator('img')
+            try:
+                with image_steps():
+                    _verify_image(current_images, uploaded)
+            except _ImageError as error:
+                if on_image_review is None or page.is_closed():
+                    raise
+                if not _review_image(page, name, label, current_images, uploaded, error,
+                                     on_image_review, manual_selection, result, saved=True):
+                    filled.remove(label)
+        for label, selector in zip(IMAGE_FIELDS, (SEARCH_IMAGE, SPEC_IMAGE)):
+            if label in result.optional_skips.get(name, ()) and row.locator(selector).locator('img').count():
+                result.differences.append(f'SKU「{name}」的{label}已跳过，但页面仍有未确认的图片，请在入仓前核对。')
         if 'SKU搜索标题' in filled:
             expect(row.locator(TITLE)).to_contain_text(title, timeout=WAIT_MS)
         result.filled[name] = filled

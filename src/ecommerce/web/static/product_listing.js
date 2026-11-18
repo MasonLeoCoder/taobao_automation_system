@@ -16,6 +16,7 @@
   const active = ['queued','running','waiting'];
   const phases = {queued:'等待启动', running:'执行中', waiting:'等待人工处理', succeeded:'已完成', failed:'执行失败', cancelled:'已结束', interrupted:'执行中断', needs_attention:'需要人工核对'};
   let fileMap = new Map(), dirs = new Map(), id = null, timer, busy = false, sentPrompt, seenPrompt, currentPrompt;
+  let countdownTimer;
   let listingTarget = null;
   let logOwner = null, logBusy = false, logAgain = false, logReady = false, oldest = null, latest = 0, hasOlder = false;
 
@@ -56,6 +57,18 @@
     return {value, width, limit, issue};
   };
 
+  function updateCountdown(prompt) {
+    const countdown = node('manual-countdown');
+    if (!countdown) return;
+    countdown.hidden = !prompt?.expires_at;
+    if (countdown.hidden) return;
+    const seconds = Math.max(0, Math.ceil(prompt.expires_at - Date.now() / 1000));
+    countdown.textContent = seconds ?
+      `剩余 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}，到时自动跳过此图片` :
+      '处理时间已到，正在跳过此图片。';
+    for (const button of node('manual-actions').children) button.disabled = !seconds || sentPrompt === prompt.id;
+  }
+
   function renderPrompt(task) {
     const terminal = ['needs_attention','failed','interrupted'].includes(task?.phase);
     const prompt = task?.prompt || (terminal ? {id:`terminal-${id}`, kind:'terminal', actions:[], evidence:task.evidence} : null);
@@ -63,6 +76,8 @@
     currentPrompt = prompt;
     node('manual-open').hidden = !prompt;
     if (!prompt) {
+      clearInterval(countdownTimer);
+      updateCountdown(null);
       if (dialog.open) dialog.close();
       return;
     }
@@ -71,7 +86,7 @@
     const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异', titles:'请修正千牛标题',
       receipt:'请核对提交结果', duplicate:'已有入仓结果待核对', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对',
       video:'请核对商品视频', video_ratio:'视频比例需要处理', specifications:'请核对分层规格',
-      main_image:'请核对当前主图', manual:'需要人工处理'};
+      main_image:'请核对当前主图', sku_image:'请处理 SKU 图片', manual:'需要人工处理'};
     node('manual-dialog-title').textContent = titles[prompt.kind] || titles.manual;
     node('manual-message').textContent = task.message + (terminal && !task.prompt ? '\n当前任务已结束，不能从该步骤自动继续。' : '');
     const diff = node('manual-differences');
@@ -91,7 +106,7 @@
     for (const action of prompt.actions) {
       const words = {continue:'完成',confirm:'确认弹窗',cancel:'取消弹窗',
         approve:prompt.kind === 'duplicate' ? '已人工核对，继续本次提交' : '确认差异并提交到仓库',
-        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',skip_video:'跳过视频',
+        recheck_titles:'重新核对标题',fill_only:'保留填写，不提交',skip_video:'跳过视频',skip_image:'跳过此图片',
         finish:['specifications','main_image','video_ratio'].includes(prompt.kind) ? '结束本次任务' :
           task.outcome === 'uncertain' ? '结束，保留待核实状态' : '结束检查'};
       const button = element('button',words[action]);
@@ -99,6 +114,9 @@
       button.type = 'button'; button.disabled = sentPrompt === prompt.id;
       button.addEventListener('click',() => sendFeedback(prompt.id, action)); buttons.append(button);
     }
+    clearInterval(countdownTimer);
+    updateCountdown(prompt);
+    if (prompt.expires_at) countdownTimer = setInterval(() => updateCountdown(prompt), 250);
     if (!dialog.open) dialog.showModal();
   }
 
@@ -432,7 +450,8 @@
 
   function resetReview() {
     if (node('manual-dialog').open) node('manual-dialog').close();
-    clearTimeout(timer); remember(null); node('review').hidden = true; node('task').hidden = true;
+    clearTimeout(timer); clearInterval(countdownTimer); updateCountdown(null);
+    remember(null); node('review').hidden = true; node('task').hidden = true;
     root.dispatchEvent(new CustomEvent('listing:review'));
     currentPrompt = seenPrompt = sentPrompt = null;
     listingTarget = null;
