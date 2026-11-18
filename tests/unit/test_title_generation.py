@@ -76,7 +76,8 @@ class TitleGenerationTests(TestCase):
             self.assertEqual(preview['plan']['locked_widths'], {'title': 10, 'guide': 0})
             self.assertEqual(preview['plan']['title_limits'], {'title': 60, 'guide': 30})
             for phrase in ('最多60字符', '20～30字符', '按去掉空格后的标题计数',
-                           '纯中文最多15个汉字', '每个输入sku_key恰好出现一次', '相近词择一只适用于选用词'):
+                           '纯中文为10～15个汉字', '黄色小熊款双肩猫咪外出包',
+                           '每个输入sku_key恰好出现一次', '相近词择一只适用于选用词'):
                 self.assertIn(phrase, preview['plan']['request'])
             over_limit = dict(body, selected=[4], locked={'title': [], 'guide': [4]})
             blocked = client.post(url + '/preview', headers=headers, json=over_limit)
@@ -91,12 +92,12 @@ class TitleGenerationTests(TestCase):
             generate.return_value = {'text': json.dumps({'groups': [
                 {'title':'猫毛清理器 家用除毛刷', 'guide':'家用粘毛器猫毛清理器'},
                 {'title':'猫毛清理器猫毛清理器', 'guide':'家用粘毛器猫毛清理器'},
-            ], 'sku_titles': [{'sku_key':'sku-1', 'title':'白色 猫毛清理器'}]})}
+            ], 'sku_titles': [{'sku_key':'sku-1', 'title':'白色款家用 猫毛清理器'}]})}
             start['allow_paid'] = True
             done = client.post(url + '/generate', headers=headers, json=start).json
             self.assertEqual(done['state'], 'complete')
-            self.assertEqual(done['sku_titles'], [{'sku_key':'sku-1', 'title':'白色猫毛清理器',
-                                                   'raw_title':'白色 猫毛清理器', 'issue':None}])
+            self.assertEqual(done['sku_titles'], [{'sku_key':'sku-1', 'title':'白色款家用猫毛清理器',
+                                                   'raw_title':'白色款家用 猫毛清理器', 'issue':None}])
             self.assertEqual(done['groups'][0]['title']['used'][0]['sources'][0]['rank'], 1)
             self.assertEqual(done['groups'][0]['title']['used'][1]['sources'][0]['rank'], 8)
             self.assertEqual(done['groups'][0]['title']['value'], '猫毛清理器 家用除毛刷')
@@ -131,29 +132,41 @@ class TitleGenerationTests(TestCase):
             self.assertEqual(restored['latest_id'], second)
             self.assertEqual(client.get(url + '/result?attempt=' + '2' * 32).status_code, 404)
             self.assertEqual(record_file.read_text(encoding='utf-8'), saved)
+            legacy = {key: value for key, value in done.items() if key != 'response'}
+            legacy['id'] = '3' * 32
+            legacy['sku_titles'] = [{'sku_key':'sku-1', 'title':'小熊款猫包黄色双肩', 'issue':None}]
+            history['runs'][history['latest']].append(legacy)
+            record_file.write_text(json.dumps(history), encoding='utf-8')
+            old_sku = client.get(url + '/result').json['sku_titles'][0]
+            self.assertEqual(old_sku['raw_title'], '小熊款猫包黄色双肩')
+            self.assertEqual(old_sku['title'], '')
+            self.assertIn('当前 18 / 30', old_sku['issue'])
             generate.assert_called_once()
             self.assertFalse((manifest.parent / 'state.json').exists())
 
     def test_sku_results_match_keys_and_keep_independent_failures(self):
-        specs = [{'sku_key': f'sku-{i}', 'name': str(i)} for i in range(1, 7)]
+        specs = [{'sku_key': f'sku-{i}', 'name': str(i)} for i in range(1, 8)]
         terms = [{'keyword': '猫毛清理器'}]
         rows = _sku_candidates([
             {'sku_key': 'sku-2', 'title': '猫毛清理器 ' + '白' * 10},
-            {'sku_key': 'sku-1', 'title': '白色 猫毛清理器'},
+            {'sku_key': 'sku-1', 'title': '白色款家用 猫毛清理器'},
             {'sku_key': 'sku-3', 'title': '白色猫毛清理器'},
             {'sku_key': 'sku-3', 'title': '黑色猫毛清理器'},
             {'sku_key': 'sku-5', 'title': '猫毛清理器' + '甲' * 10 + 'A'},
             {'sku_key': 'sku-6', 'title': ''},
-            {'sku_key': 'sku-7', 'title': '猫毛清理器'},
+            {'sku_key': 'sku-7', 'title': '小熊款猫包黄色双肩'},
+            {'sku_key': 'sku-8', 'title': '猫毛清理器'},
         ], specs, terms)
         self.assertEqual([row['sku_key'] for row in rows], [spec['sku_key'] for spec in specs])
-        self.assertEqual(rows[0]['title'], '白色猫毛清理器')
+        self.assertEqual(rows[0]['title'], '白色款家用猫毛清理器')
         self.assertEqual(rows[1]['title'], '猫毛清理器' + '白' * 10)
         self.assertIn('重复', rows[2]['issue'])
         self.assertIn('未返回', rows[3]['issue'])
         self.assertIn('超过 30', rows[4]['issue'])
         self.assertEqual(rows[4]['raw_title'], '猫毛清理器' + '甲' * 10 + 'A')
         self.assertIsNone(rows[5]['issue'])
+        self.assertIn('还差 2 字符', rows[6]['issue'])
+        self.assertEqual(rows[6]['raw_title'], '小熊款猫包黄色双肩')
         self.assertTrue(all(row['title'] == '' for row in rows[2:]))
 
     def test_request_includes_specs_after_the_previous_thirty_row_limit(self):

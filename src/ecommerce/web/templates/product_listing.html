@@ -5,6 +5,7 @@
 {% block extra_head %}<link rel="stylesheet" href="{{ url_for('static',filename='product_listing.css') }}">{% endblock %}
 {% block content %}
 <section class="listing-page" id="listing" data-api="{{ url_for('product_listing.preflight') }}"
+  data-sku-title-min="{{ sku_title_min }}" data-sku-title-max="{{ sku_title_max }}"
   data-tasks="{{ url_for('pages.tasks') }}" data-task-details="{{ use_catalog|lower }}">
   <header><p class="ui-report-eyebrow">我的商品 · 千牛</p><h1>商品策划与上架</h1><p class="ui-form-note">{% if use_catalog %}先选择已支持的千牛类目。{% endif %}选择商品文件夹{% if managed_accounts %}，自检通过后填写商品{% else %}进行离线预检{% endif %}。</p></header>
   <div class="ui-tool-card listing-card">

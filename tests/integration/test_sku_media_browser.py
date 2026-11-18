@@ -59,6 +59,11 @@ class SkuMediaBrowserTests(unittest.TestCase):
         for actual, original in zip(records, self.records):
             self.assertEqual({key: actual[key] for key in original}, original)
 
+    def fixture_file_input(self):
+        """直接向模拟素材库供料，供不测试文件选择事件的用例复用。"""
+        chooser = SimpleNamespace(set_files=self.page.frame_locator(platform.PICKER).locator('input[type="file"]').set_input_files)
+        return patch.object(platform, 'choose_file_dialog', return_value=chooser)
+
     def test_all_rows_match_names_reuse_one_upload_for_two_images_and_keep_core_values(self):
         with self.guard():
             result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE)
@@ -119,7 +124,7 @@ class SkuMediaBrowserTests(unittest.TestCase):
         }""")
         names = [*NAMES, '规格三']
         combinations = dict(zip(names, [('黑色', 'M 码'), ('黑色', 'L 码'), ('灰色', 'M 码')]))
-        titles = dict(zip(names, ['黑色中号宠物背包', '黑色大号宠物背包', '灰色中号宠物背包']))
+        titles = dict(zip(names, ['黑色中号宠物外出背包', '黑色大号宠物外出背包', '灰色中号宠物外出背包']))
         shared = self.images.files[NAMES[0]]
         images = SkuImageInputs({NAMES[0]: shared, NAMES[1]: shared, '规格三': self.images.files[NAMES[1]]}, {})
         # 详情里的颜色与表格不一致时，选图窗口和素材上传都不能开始。
@@ -138,8 +143,7 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.page.locator(platform.DRAWER).evaluate('drawer => drawer.remove()')
         self.page.evaluate('() => { restoreDetail(); }')
         # 本例验证选图归属，直接给模拟选择器的文件输入供料，避免系统文件窗口的偶发超时。
-        chooser = SimpleNamespace(set_files=self.page.frame_locator(platform.PICKER).locator('input[type="file"]').set_input_files)
-        with self.guard(), patch.object(platform, 'choose_file_dialog', return_value=chooser):
+        with self.guard(), self.fixture_file_input():
             result = platform.fill_sku_media(self.page, names, images, TITLE,
                                              sku_titles=titles, combinations=combinations)
         self.assertEqual(result.skipped, {})
@@ -188,6 +192,8 @@ class SkuMediaBrowserTests(unittest.TestCase):
             with self.subTest(action=action):
                 self.page.evaluate("""data => {
                     if (!window.realChooseSearch) window.realChooseSearch = chooseSearch;
+                    document.querySelectorAll('.sku-component-sku-detail-drawer, .batch-fill-sku-image-dialog, #sku-param')
+                        .forEach(dialog => dialog.remove());
                     assets.length = 0;
                     seedRows(data);
                     chooseSearch = source => realChooseSearch(currentIndex === 1 ? source.replace('/assets/', '/wrong/') : source);
@@ -203,7 +209,7 @@ class SkuMediaBrowserTests(unittest.TestCase):
                         page.locator(platform.BATCH).get_by_role('button', name='确定').click()
                     return action
 
-                with self.guard():
+                with self.guard(), self.fixture_file_input():
                     result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE, on_image_review=feedback)
                 rows = self.page.evaluate('records')
                 self.assertEqual([row['title'] for row in rows], [TITLE, TITLE])
@@ -243,7 +249,7 @@ class SkuMediaBrowserTests(unittest.TestCase):
 
     def test_two_skus_can_use_one_uploaded_image_with_separate_titles(self):
         images = SkuImageInputs(dict.fromkeys(NAMES, self.images.files[NAMES[0]]), {})
-        titles = dict(zip(NAMES, ('中号宠物背包', '大号宠物背包')))
+        titles = dict(zip(NAMES, ('中号宠物便携外出背包', '大号宠物便携外出背包')))
         with self.guard():
             result = platform.fill_sku_media(self.page, NAMES, images, TITLE, sku_titles=titles)
         self.assertEqual(result.skipped, {})
@@ -255,7 +261,7 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assert_core_unchanged()
 
     def test_one_spec_uses_its_title_and_blank_spec_uses_final_guide(self):
-        title = '规格一宠物除毛刷'
+        title = '规格一宠物日常除毛刷'
         inputs = SkuImageInputs({}, {})
         with self.guard():
             result = platform.fill_sku_media(self.page, NAMES, inputs, TITLE,
@@ -292,7 +298,7 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assert_core_unchanged()
 
     def test_missing_title_still_fills_images(self):
-        with self.guard(), self.assertLogs(platform.__name__, level='WARNING') as logs:
+        with self.guard(), self.fixture_file_input(), self.assertLogs(platform.__name__, level='WARNING') as logs:
             result = platform.fill_sku_media(self.page, NAMES, self.images, None)
         self.assertTrue(all(set(fields) == set(platform.IMAGE_FIELDS) for fields in result.filled.values()))
         self.assertTrue(all(list(fields) == ['SKU搜索标题'] for fields in result.skipped.values()))

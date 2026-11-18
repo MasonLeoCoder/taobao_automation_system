@@ -6,7 +6,6 @@ from pathlib import Path
 from ecommerce.modules.product.assets import load_main_images, load_portrait_images, load_detail_images, load_product_video, load_sku_images
 from ecommerce.platforms.qianniu.product_images import upload_main_images, upload_portrait_images
 from ecommerce.modules.product.listing_profiles import BACKPACK
-from ecommerce.modules.product.web_materials import compact_title
 from ecommerce.modules.product.workbook import LAYERED_SKU, load_product_workbook
 from ecommerce.platforms.qianniu.product_attributes import select_applicable_scene, select_pet_type, select_handle_shape, select_adhesive_material, select_adhesion_strength
 from ecommerce.platforms.qianniu.product_attributes import fill_text_attribute, select_editor_brand, select_template_attribute
@@ -280,8 +279,7 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
             else:
                 create_sales_specifications(page, sales_specifications)
             fill_sku_details(page, sku_details, **layered)
-            sku_guide = compact_title(guide_title) if guide_title and codes else guide_title
-            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, sku_guide,
+            sku_media_result = fill_sku_media(page, sales_specifications, sku_images, guide_title,
                                              **layered,
                                              **({'on_image_review': web_review.sku_image_review} if web_review else {}),
                                              **({'sku_titles': sku_titles} if sku_titles is not None else {}))

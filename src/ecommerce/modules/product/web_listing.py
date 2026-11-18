@@ -23,12 +23,13 @@ from ecommerce.modules.account.managed import (
     account_settings, account_target, require_login, selected_account, verify_session,
 )
 from ecommerce.shared.exceptions import NeedsAttention, TaskBusy, TaskStopped
+from ecommerce.shared.product_titles import compact_title, validate_sku_title
 from ecommerce.shared.time import BEIJING
 from .service import ACCOUNT_REQUIRED, open_publish
 from .listing_logs import log_page
 from .listing_logs import local_log
 from .listing_history import DUPLICATE_NOTICE, cli_listing_records, listing_records, pending_submissions, read_listing_state
-from .web_materials import NO_GUIDE_WARNING, compact_title, digest, import_materials, sku_specs, validate_sku_title, validate_titles
+from .web_materials import NO_GUIDE_WARNING, digest, import_materials, sku_specs, validate_titles
 from .listing_profiles import PROFILES, support
 from .listing_video import ADAPTED_VIDEO
 
@@ -193,10 +194,10 @@ class ListingWorkbench:
                 if not isinstance(titles, dict) or set(titles) != {'title', 'guide'}:
                     raise ValueError('请提供宝贝标题和导购标题')
                 state['titles'] = validate_titles(titles['title'], titles['guide'])
-            else:
-                validate_titles(manifest['preview']['title'], manifest['preview']['guide'])
+            preview = manifest['preview']
+            planned_titles = state.get('titles') or validate_titles(preview['title'], preview['guide'])
+            names = {row['sku_key']: row['name'] for row in sku_specs(preview)}
             if sku_titles is not None:
-                names = {row['sku_key']: row['name'] for row in sku_specs(manifest['preview'])}
                 if not isinstance(sku_titles, dict) or set(sku_titles) - names.keys():
                     raise ValueError('SKU 搜索标题包含本次导入中不存在的规格')
                 state['sku_titles'] = {}
@@ -205,6 +206,12 @@ class ListingWorkbench:
                         state['sku_titles'][key] = validate_sku_title(value)
                     except ValueError as error:
                         raise ValueError(f'规格「{names[key]}」的{error}') from None
+            fallback_name = next((name for key, name in names.items() if not state.get('sku_titles', {}).get(key)), None)
+            if fallback_name is not None:
+                try:
+                    validate_sku_title(planned_titles['guide'])
+                except ValueError as error:
+                    raise ValueError(f'规格「{fallback_name}」使用导购标题时，{error}') from None
             atomic_json(path / 'state.json', state)
             worker = _ListingRun(self.settings, path, state)
             try:
@@ -445,8 +452,7 @@ class _ListingRun:
         return self._wait(message, ['continue', 'skip_image'], page=page, kind='sku_image', expires_at=expires_at)
 
     def _sku_title(self, name):
-        guide = self.preview['guide']
-        return (self.sku_titles or {}).get(name) or (compact_title(guide) if 'sku_mode' in self.preview else guide)
+        return (self.sku_titles or {}).get(name) or compact_title(self.preview['guide'])
 
     def specifications_wait(self, page, message):
         action = self._wait(f'{message}\n在千牛处理后点击「完成」，程序会重新核对。', ['continue', 'finish'],
@@ -547,9 +553,17 @@ class _ListingRun:
         for row in self.preview['skus']:
             name = row['销售规格']
             expected = self._sku_title(name)
-            if expected and (values := page_titles.get(name, [])) != [expected]:
+            values = [value for value in page_titles.get(name, []) if value.strip() not in {'', '去填写'}]
+            label = f'SKU「{name}」搜索标题'
+            try:
+                for value in values:
+                    validate_sku_title(value)
+            except ValueError as error:
+                differences.append(f'{label}「{value}」：{error}')
+                continue
+            if values != ([expected] if expected else []):
                 observed = ' / '.join(values)
-                differences.append(f'SKU「{name}」搜索标题：确认值「{expected}」，页面值「{observed or "空或未读到"}」')
+                differences.append(f'{label}：确认值「{expected or "空"}」，页面值「{observed or "空或未读到"}」')
         return differences
 
     def before_click(self, page):

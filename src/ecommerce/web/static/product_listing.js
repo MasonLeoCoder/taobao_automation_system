@@ -4,6 +4,8 @@
   if (!root) return;
   const node = name => document.getElementById(`listing-${name}`);
   const base = root.dataset.api.replace(/\/preflight$/, '');
+  const skuTitleMin = Number(root.dataset.skuTitleMin || 0);
+  const skuTitleMax = Number(root.dataset.skuTitleMax || 30);
   const shops = JSON.parse(document.getElementById('listing-shop-data')?.textContent || '[]');
   const token = document.querySelector('meta[name="workbench-token"]').content;
   const labels = Object.fromEntries([...node('mapping').querySelectorAll('[data-material]')].map(e => [e.dataset.material, e.dataset.label]));
@@ -48,12 +50,13 @@
     const value = candidate || key === 'sku' ? raw.replace(/\p{White_Space}/gu, '') :
       raw.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
     const width = [...value].reduce((sum, char) => sum + (char.codePointAt(0) < 128 ? 1 : 2), 0);
-    const limit = key === 'title' ? 60 : 30;
+    const limit = key === 'title' ? 60 : key === 'sku' ? skuTitleMax : 30;
+    const minimum = key === 'guide' ? 20 : key === 'sku' ? skuTitleMin : 0;
     let issue = '';
     if (/[\x00-\x1f\x7f]/u.test(raw)) issue = '请使用单行文本';
     else if (width > limit) issue = `最多 ${limit} 字符，超出 ${width - limit} 字符`;
     else if (!width && (key === 'title' || candidate)) issue = '请输入标题';
-    else if (key === 'guide' && width && width < 20) issue = `至少 20 字符，还差 ${20 - width} 字符`;
+    else if (width && width < minimum) issue = `至少 ${minimum} 字符，还差 ${minimum - width} 字符`;
     return {value, width, limit, issue};
   };
 
@@ -196,18 +199,20 @@
   function checkTitles() {
     if (!node('titles')) return true;
     const errors = node('title-errors'), entries = [];
-    function check(field, key, label) {
+    function check(field, key, label, fallback) {
       const result = root.checkListingTitle(key, field.value);
       const {width, limit, issue} = result;
+      const usesInvalidFallback = !result.value && !issue && Boolean(fallback?.issue);
       const count = document.getElementById(field.dataset.count || field.getAttribute('aria-describedby'));
       const meter = `${width} / ${limit}`;
       count.textContent = meter + (issue ? ` · ${issue}` : '');
       count.classList.toggle('is-invalid', Boolean(issue));
-      field.setAttribute('aria-invalid', String(Boolean(issue)));
-      if (issue) {
-        const link = element('button', `${label} · ${meter} · ${issue}`);
+      field.setAttribute('aria-invalid', String(Boolean(issue) || usesInvalidFallback));
+      if (issue || usesInvalidFallback) {
+        const link = element('button', issue ? `${label} · ${meter} · ${issue}` :
+          `${label}使用导购标题 · ${fallback.width} / ${fallback.limit} · ${fallback.issue}`);
         link.type = 'button';
-        link.addEventListener('click', () => field.focus());
+        link.addEventListener('click', () => (usesInvalidFallback ? node('guide') : field).focus());
         const row = element('li');
         row.append(link);
         entries.push(row);
@@ -216,14 +221,15 @@
     }
     check(node('title'), 'title', '宝贝标题');
     const guide = check(node('guide'), 'guide', '导购标题');
+    const fallbackTitle = root.checkListingTitle('sku', guide.value);
     for (const field of node('skus').querySelectorAll('[data-sku-key]')) {
-      const result = check(field, 'sku', field.getAttribute('aria-label'));
+      const result = check(field, 'sku', field.getAttribute('aria-label'), guide.issue ? null : fallbackTitle);
       const fallback = node(field.dataset.skuKey + '-fallback');
       const comparison = field.closest('td').querySelector('[data-sku-comparison]');
-      fallback.hidden = Boolean(result.value) || Boolean(comparison && !comparison.hidden);
-      const fallbackTitle = skuDraftContext ? root.checkListingTitle('sku', guide.value).value : guide.value;
+      fallback.hidden = Boolean(result.value) || Boolean(comparison && !comparison.hidden && !fallbackTitle.issue);
       fallback.textContent = guide.issue ? '请先修正正式导购标题' :
-        fallbackTitle ? `将使用导购标题：${fallbackTitle}` : '将跳过填写 SKU 搜索标题';
+        fallbackTitle.issue ? `导购标题去掉空白后为 ${fallbackTitle.width} / ${fallbackTitle.limit} · ${fallbackTitle.issue}` :
+        fallbackTitle.value ? `将使用导购标题：${fallbackTitle.value}` : '将跳过填写 SKU 搜索标题';
     }
     errors.replaceChildren(...entries);
     errors.hidden = !id || node('titles').disabled || !entries.length;

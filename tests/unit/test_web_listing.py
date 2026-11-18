@@ -461,18 +461,43 @@ class WebListingTests(TestCase):
     def test_edited_sku_title_is_validated_and_frozen_under_spec_name(self):
         identifier = self.preflight().json['id']
         url = f'/api/listing/{identifier}/start'
-        for titles in ({'sku-2':'未知规格'}, {'sku-1':'猫' * 15 + 'A'}):
+        for titles in ({'sku-2':'未知规格'}, {'sku-1':'猫' * 15 + 'A'}, {'sku-1':'小熊款猫包黄色双肩'}):
             response = self.start_request(url, json={'submit':False, 'sku_titles':titles})
             self.assertEqual(response.status_code, 422)
         self.open_publish.assert_not_called()
         self.open_publish.return_value = '填写完成'
-        title = '猫' * 15
-        data = {'submit':False, 'sku_titles':{'sku-1':title[:5] + '　' + title[5:]}}
-        response = self.start_request(url, json=data)
+        for length in (10, 15):
+            with self.subTest(length=length):
+                identifier = self.preflight().json['id']
+                title = '猫' * length
+                data = {'submit':False, 'sku_titles':{'sku-1':title[:5] + '　' + title[5:]}}
+                response = self.start_request(f'/api/listing/{identifier}/start', json=data)
+                self.assertEqual(response.status_code, 202)
+                self.assertEqual(response.json['sku_titles'], {'sku-1': title})
+                self.state(identifier, lambda state: state['phase'] == 'succeeded')
+                self.assertEqual(self.open_publish.call_args.kwargs['sku_titles'], {'白色':title})
+
+    def test_guide_fallback_is_validated_after_removing_spaces(self):
+        self.open_publish.return_value = '填写完成'
+        identifier = self.preflight().json['id']
+        url = f'/api/listing/{identifier}/start'
+        titles = {'title':'示例商品标题', 'guide':'小熊款猫包 黄 色双肩'}
+        response = self.start_request(url, json={'submit':False, 'titles':titles})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('规格「白色」使用导购标题时', response.json['error'])
+        self.assertIn('当前 18 / 30', response.json['error'])
+        self.open_publish.assert_not_called()
+
+        response = self.start_request(url, json={'submit':False, 'titles':titles,
+                                                 'sku_titles':{'sku-1':'小熊款猫包黄色双肩款'}})
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json['sku_titles'], {'sku-1': title})
         self.state(identifier, lambda state: state['phase'] == 'succeeded')
-        self.assertEqual(self.open_publish.call_args.kwargs['sku_titles'], {'白色':title})
+        for guide in ('小熊款猫包 黄色双肩款', ''):
+            identifier = self.preflight().json['id']
+            response = self.start_request(f'/api/listing/{identifier}/start', json={
+                'submit':False, 'titles':{**titles, 'guide':guide}, 'sku_titles':{'sku-1':''}})
+            self.assertEqual(response.status_code, 202)
+            self.state(identifier, lambda state: state['phase'] == 'succeeded')
 
     def test_read_only_preflight_and_submit_off_preserve_single_task(self):
         data = self.preflight().json
@@ -596,9 +621,12 @@ class WebListingTests(TestCase):
             self.assertEqual(len(paused['prompt']['differences']), 3)
             self.assertIn('SKU「白色」搜索标题', paused['prompt']['differences'][2])
             self.assertEqual(self.send(identifier, paused, 'approve').status_code, 409)
+            actual.update(title=preview['title'], guide=preview['guide'], sku_media=[['白色', ['小熊款猫包黄色双肩'], []]])
             self.send(identifier, paused, 'recheck_titles')
             again = self.state(identifier, lambda state: state['prompt'] and state['prompt']['id'] != paused['prompt']['id'])
             self.assertFalse(again['submit_attempted'])
+            self.assertIn('当前 18 / 30', again['prompt']['differences'][0])
+            self.assertIn('还差 2 字符', again['prompt']['differences'][0])
             actual.update(title=preview['title'], guide=preview['guide'], sku_media=[['白色', [preview['guide']], []]])
             self.send(identifier, again, 'recheck_titles')
             final = self.state(identifier, lambda state: state['phase'] == 'succeeded')

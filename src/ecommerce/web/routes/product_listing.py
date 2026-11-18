@@ -15,6 +15,7 @@ from ecommerce.modules.product.listing_profiles import LINT_ROLLER, PROFILES, su
 from ecommerce.modules.product.listing_templates import build_material_bundle, template_for
 from ecommerce.modules.product.title_generation import TitleGeneration
 from ecommerce.shared.exceptions import NeedsAttention, TaskBusy
+from ecommerce.shared.product_titles import SKU_TITLE_MAX, SKU_TITLE_MIN
 
 product_listing = Blueprint('product_listing', __name__)
 
@@ -83,6 +84,7 @@ def index():
     last_used = workbench().last_used_accounts() if settings.task_backend == 'mysql' else {}
     return render_template('product_listing.html', active='plan:listing', shop_name=settings.shop_name,
         token=current_app.config['COLLECTION_TOKEN'], category=CATEGORY, groups=GROUPS,
+        sku_title_min=SKU_TITLE_MIN, sku_title_max=SKU_TITLE_MAX,
         use_catalog=use_catalog, choices=choices, can_submit=settings.task_backend == 'mysql' and settings.environment != 'verify',
         title_generation_enabled=use_catalog, managed_accounts=settings.task_backend == 'mysql',
         listing_shops=shop_choices(settings, last_used), account_required=ACCOUNT_REQUIRED)

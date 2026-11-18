@@ -10,6 +10,7 @@ from xml.etree.ElementTree import ParseError
 
 from PIL import Image
 from ecommerce.infrastructure.tasks.ownership import atomic_json
+from ecommerce.shared.product_titles import title_width
 from .assets import load_detail_images, load_main_images, load_portrait_images, load_sku_images
 from .workbook import LAYERED_SKU, SKU_DIMENSIONS, load_product_workbook
 from .listing_profiles import ATTRIBUTES, BACKPACK, CATEGORY, GROUPS, LINT_ROLLER, MATERIAL_FOLDERS
@@ -39,32 +40,12 @@ def _filename(name):
     return name
 
 
-def title_width(value):
-    """ASCII 字符计 1，其余字符计 2。"""
-    return sum(1 if ord(char) < 128 else 2 for char in value)
-
-
-def compact_title(value):
-    """去掉仅用于分隔候选词组的空白。"""
-    return ''.join(value.split())
-
-
 def sku_specs(preview):
     """用封存资料的行序分配标识，定位千牛时仍使用原规格名。"""
     combinations = preview.get('sku_combinations', {})
     return [{'sku_key': f'sku-{index}', 'name': row['销售规格'],
              **dict(zip(SKU_DIMENSIONS, combinations.get(row['销售规格'], ())))}
             for index, row in enumerate(preview['skus'], 1)]
-
-
-def validate_sku_title(value):
-    if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise ValueError('搜索标题必须为单行文本')
-    value = compact_title(value)
-    width = title_width(value)
-    if width > 30:
-        raise ValueError(f'搜索标题超过 30 字符，当前 {width} / 30，超出 {width - 30} 字符')
-    return value
 
 
 def validate_titles(title, guide):

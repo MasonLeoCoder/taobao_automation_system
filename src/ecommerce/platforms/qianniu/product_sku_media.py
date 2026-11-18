@@ -10,6 +10,7 @@ from uuid import uuid4
 from playwright.sync_api import Error as PlaywrightError, Page
 from ecommerce.modules.product.assets import SkuImageInputs
 from ecommerce.shared.exceptions import NeedsAttention
+from ecommerce.shared.product_titles import SKU_TITLE_MAX, SKU_TITLE_MIN, validate_sku_title
 from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, LAYERED_DIMENSIONS, layered_sku_rows
 from .verification import (qianniu_operation, checkpoint, expect, page_step, choose_file_dialog,
                            intercept_file_dialogs, propagate_step_errors)
@@ -314,10 +315,11 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
     uploaded_assets = {}
     image_steps = propagate_step_errors if on_image_review else nullcontext
     for name in names:
-        title = titles.get(name) or guide
+        try:
+            title = validate_sku_title(titles.get(name) or guide)
+        except ValueError as error:
+            raise NeedsAttention(f'SKU「{name}」的{error}') from None
         title_reason = None if title else missing_title
-        if title and sum(1 if ord(char) < 128 else 2 for char in title) > 30:
-            title_reason = 'SKU 搜索标题超过 30 字符限制'
         checkpoint(f'填写SKU图片及搜索标题：{name}')
         matching = [layered_sku_rows(group, combinations, only=name)[name]] if combinations else [
             rows.nth(i) for i in range(rows.count()) if rows.nth(i).locator(CREATED_NAMES).input_value() == name]
@@ -401,9 +403,10 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                 page_step(field.blur)
                 expect(field).to_have_value(title, timeout=WAIT_MS)
                 counter = drawer.locator(TITLE).locator('.content-after > span')
-                expect(counter).to_have_text(re.compile(r'^\d+/30$'), timeout=WAIT_MS)
-                if int(counter.inner_text().split('/')[0]) > 30:
-                    raise NeedsAttention(f'SKU“{name}”搜索标题超长，请核对Excel导购标题')
+                expect(counter).to_have_text(re.compile(fr'^\d+/{SKU_TITLE_MAX}$'), timeout=WAIT_MS)
+                count = int(counter.inner_text().split('/')[0])
+                if not SKU_TITLE_MIN <= count <= SKU_TITLE_MAX:
+                    raise NeedsAttention(f'SKU「{name}」搜索标题为 {count} 字符，千牛要求 {SKU_TITLE_MIN}～{SKU_TITLE_MAX} 字符')
                 filled.append('SKU搜索标题')
         errors = drawer.locator('.sell-o-message.error:visible, .sell-o-message[class*="errorMessage-"]:visible, .sell-component-info-wrapper-msg-content.error:visible')
         if errors.count():

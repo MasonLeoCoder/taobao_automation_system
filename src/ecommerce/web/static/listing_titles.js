@@ -424,16 +424,17 @@
       container.append(warning);
       skuPreviews.set(key, () => {
         const formal = root.checkListingTitle('sku', field.value);
-        const guide = root.checkListingTitle('guide', input('guide').value);
+        const guideField = root.checkListingTitle('guide', input('guide').value);
+        const guide = root.checkListingTitle('sku', guideField.value);
         const current = formal.value ? formal : guide;
         const match = evidence(current.value, record.plan.input.words);
         const changed = formal.value !== root.checkListingTitle('sku', original).value;
         compare({...current, ...match}, {
           label: !formal.value && guide.value ? '当前填入预览 · 使用导购标题' : '当前填入预览',
-          edited: record.id === latestId && changed,
+          edited: record.id === latestId && Boolean(formal.value) && changed,
           empty: '将跳过填写 SKU 搜索标题',
         });
-        warning.textContent = !formal.value && guide.issue ? '请先修正正式导购标题' : repeatIssue(match.used);
+        warning.textContent = !formal.value && (guideField.issue || guide.issue) ? '请先修正正式导购标题' : repeatIssue(match.used);
         warning.hidden = !warning.textContent;
       });
     }
