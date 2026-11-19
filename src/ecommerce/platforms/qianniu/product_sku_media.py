@@ -2,7 +2,7 @@
 import mimetypes
 import re
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from logging import getLogger
 from urllib.parse import urlsplit
@@ -12,6 +12,7 @@ from ecommerce.modules.product.assets import SkuImageInputs
 from ecommerce.shared.exceptions import NeedsAttention
 from ecommerce.shared.product_titles import SKU_TITLE_MAX, SKU_TITLE_MIN, validate_sku_title
 from .product_sku import SKU_GROUP, SKU_ROWS, CREATED_NAMES, LAYERED_DIMENSIONS, layered_sku_rows
+from .product_sku_crop import _CropEvidence
 from .verification import (qianniu_operation, checkpoint, expect, page_step, choose_file_dialog,
                            intercept_file_dialogs, propagate_step_errors)
 
@@ -40,17 +41,20 @@ class SkuMediaResult:
 
 @dataclass(frozen=True)
 class _Asset:
-    """本次唯一上传素材，复用于同一SKU的两个图片位。"""
+    """本次素材或已关联的裁剪结果；原素材仍由上传缓存单独保留。"""
     name: str
     source: str
+    original_source: str | None = None
+    verified_sources: set[str] = field(default_factory=set, compare=False)
 
 
 class _ImageError(NeedsAttention):
     """单个可选图片位的失败。"""
 
-    def __init__(self, message, rejected=None):
+    def __init__(self, message, rejected=None, expected=None):
         super().__init__(message)
         self.rejected = rejected
+        self.expected = expected
 
 
 def _skip(result, name, label, reason):
@@ -100,8 +104,11 @@ def _verify_image(images, asset):
         expect(images).to_have_attribute('src', _image_pattern(asset.source), timeout=WAIT_MS)
     except (AssertionError, PlaywrightError) as error:
         actual = _source(images) if not images.page.is_closed() else None
+        # 地址单独占行，避免日志脱敏在移除查询参数时吞掉后续说明。
+        getLogger(__name__).warning('SKU 图片校验失败：素材=%s\n原素材地址：%s\n预期结果地址：%s\n页面地址：%s',
+                                    asset.name, asset.original_source or asset.source, asset.source, actual or '未读到')
         raise _ImageError('页面图片与本次选中的素材不一致' if actual else '等待超时，未读到该图位的图片',
-                          rejected=actual) from error
+                          rejected=actual, expected=asset) from error
 
 
 def _upload_asset(page, file):
@@ -141,6 +148,83 @@ def _asset_for(page, file, uploaded_assets):
     return uploaded_assets[file]
 
 
+def _check_selected_material(page, asset):
+    """核对唯一选中卡片仍是本次上传素材；参数：页面、素材；返回：卡片。"""
+    tile = _tile(page, asset)
+    frame = page.frame_locator(PICKER)
+    expect(tile.locator('input[type="checkbox"]')).to_be_checked(timeout=WAIT_MS)
+    expect(frame.locator(TILE).locator('input[type="checkbox"]:checked')).to_have_count(1, timeout=WAIT_MS)
+    _verify_image(tile.locator('img'), asset)
+    return tile
+
+
+def _smart_crop_enabled(page):
+    """只读取当前素材窗口中带智能裁剪标签的开关；缺少该控件视为无裁剪依据。"""
+    frame = page.frame_locator(PICKER)
+    label = frame.get_by_text('智能裁剪', exact=True)
+    if label.count() != 1:
+        return False
+    switch = label.locator('..').get_by_role('switch')
+    return switch.count() == 1 and switch.get_attribute('aria-checked') == 'true'
+
+
+def _crop_required(tile, enabled):
+    """根据素材卡片原尺寸判断是否应等待裁剪；未知尺寸时不猜测无需裁剪。"""
+    if not enabled:
+        return False
+    size = re.search(r'(\d+)\s*[x×]\s*(\d+)\s*$', tile.inner_text())
+    return not size or size[1] != size[2]
+
+
+def _selection_result(page, images, asset, evidence, *, crop_enabled, crop_required):
+    """等待原素材或有明确回执的裁剪图；参数：图位和选图证据；返回：保存时的预期素材。"""
+    handled = checkpoint('核对 SKU 素材及智能裁剪结果')
+    deadline = time.monotonic() + WAIT_MS / 1000
+    actual = None
+    while time.monotonic() < deadline:
+        before = time.monotonic()
+        actual = _source(images)
+        current = checkpoint('核对 SKU 素材及智能裁剪结果')
+        if current != handled:
+            # 只补回真正人工处理的耗时，正常页面检查不应不断延长超时。
+            deadline += time.monotonic() - before
+        handled = current
+        result = evidence.match(actual) if crop_enabled else None
+        if not result and crop_enabled and actual:
+            result = next((source for source in asset.verified_sources if _image_pattern(source).fullmatch(actual)), None)
+        if result:
+            return _Asset(asset.name, result, original_source=asset.source,
+                          verified_sources=asset.verified_sources)
+        if actual and _image_pattern(asset.source).fullmatch(actual):
+            if not crop_required or re.search(_CROP, actual):
+                return asset
+        page.wait_for_timeout(100)
+    reason = ('页面图片与本次选中的素材不一致，未收到关联原素材的智能裁剪成功回执' if actual and crop_enabled else
+              '页面图片与本次选中的素材不一致' if actual else '等待超时，未读到该图位的图片')
+    if crop_enabled and evidence.problem():
+        reason += '；' + evidence.problem()
+    raise _ImageError(reason, rejected=actual, expected=asset)
+
+
+@contextmanager
+def _image_stage(stage, asset=None):
+    """补充当前图位的失败阶段，不重放上传、确认或保存。"""
+    try:
+        yield
+    except _ImageError as error:
+        raise _ImageError(f'{stage}：{error}', rejected=error.rejected,
+                          expected=error.expected or asset) from error
+    except (PlaywrightError, AssertionError) as error:
+        raise _ImageError(f'{stage}未完成，请检查当前素材窗口、网络或平台提示', expected=asset) from error
+
+
+def _log_selected(name, label, asset, actual):
+    """记录选图与保存地址，便于区分原图和已关联裁剪图。"""
+    getLogger(__name__).info('SKU 图片已核对：规格=%s；图位=%s；处理=%s；素材=%s\n原素材地址：%s\n结果地址：%s\n保存地址：%s',
+                            name, label, '智能裁剪' if asset.original_source else '原素材或已知裁剪标记', asset.name,
+                            asset.original_source or asset.source, asset.source, actual)
+
+
 def _layered_media_name(drawer, name, expected, combinations):
     """核对详情中的独立属性，再取得搜索主图窗口使用的完整名称。"""
     values = []
@@ -162,6 +246,12 @@ def _layered_media_name(drawer, name, expected, combinations):
 
 def _fill_search_image(page, drawer, name, file, uploaded_assets):
     """只为指定SKU选择搜索图；参数：页面、面板、规格、文件、可复用素材；返回：所用素材。"""
+    with _CropEvidence(page, None, _image_pattern) as evidence:
+        return _write_search_image(page, drawer, name, file, uploaded_assets, evidence)
+
+
+def _write_search_image(page, drawer, name, file, uploaded_assets, evidence):
+    """在完整响应监听范围内上传、选图和确认，包含上传完成时的自动裁剪。"""
     _reset_drawer(drawer)
     batch = page.locator(BATCH)
     trigger = drawer.locator(SEARCH_IMAGE).locator('[class*="skuImagesHocContainer-"]')
@@ -184,40 +274,73 @@ def _fill_search_image(page, drawer, name, file, uploaded_assets):
         page_step(lambda: target.click(timeout=WAIT_MS), completed=lambda: 'selected' in (target.get_attribute('class') or '').split())
     expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
     expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
-    asset = _asset_for(page, file, uploaded_assets)
+    with _image_stage('上传搜索主图素材'):
+        asset = _asset_for(page, file, uploaded_assets)
+    evidence.bind(asset.source)
     tile = _tile(page, asset)
     expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
     expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
     preview = target.locator('img')
-    if not _same_image(preview, asset.source):
-        page_step(lambda: tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=WAIT_MS), completed=lambda: _same_image(preview, asset.source))
-    _verify_image(preview, asset)
-    page_step(lambda: batch.get_by_role('button', name='确定', exact=True).click(timeout=WAIT_MS), completed=lambda: batch.count() == 0)
-    expect(batch).to_have_count(0, timeout=WAIT_MS)
-    _verify_image(drawer.locator(SEARCH_IMAGE).locator('img'), asset)
-    return asset
+    checkbox = tile.locator('input[type="checkbox"]')
+    crop_enabled = _smart_crop_enabled(page)
+    crop_required = _crop_required(tile, crop_enabled)
+    with _image_stage('选择搜索主图并核对裁剪结果', asset):
+        if not checkbox.is_checked():
+            page_step(lambda: tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=WAIT_MS), completed=checkbox.is_checked)
+        _check_selected_material(page, asset)
+        selected = _selection_result(page, preview, asset, evidence,
+                                     crop_enabled=crop_enabled, crop_required=crop_required)
+        _check_selected_material(page, asset)
+        expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
+        expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
+    with _image_stage('确认搜索主图并回读详情', selected):
+        page_step(lambda: batch.get_by_role('button', name='确定', exact=True).click(timeout=WAIT_MS), completed=lambda: batch.count() == 0)
+        expect(batch).to_have_count(0, timeout=WAIT_MS)
+        _verify_image(drawer.locator(SEARCH_IMAGE).locator('img'), selected)
+    if selected.original_source:
+        asset.verified_sources.add(selected.source)
+    _log_selected(name, IMAGE_FIELDS[0], selected, _source(drawer.locator(SEARCH_IMAGE).locator('img')))
+    return selected
 
 
 def _fill_spec_image(page, drawer, file, uploaded_assets):
     """填写当前规格的图片；参数：页面、面板、文件、可复用素材；返回：所用素材。"""
+    with _CropEvidence(page, None, _image_pattern) as evidence:
+        return _write_spec_image(page, drawer, file, uploaded_assets, evidence)
+
+
+def _write_spec_image(page, drawer, file, uploaded_assets, evidence):
+    """在完整响应监听范围内处理规格图，先核实选择，再确认并读取结果。"""
     _reset_drawer(drawer)
     target = drawer.locator(SPEC_IMAGE)
     picker = page.locator(PICKER)
     page_step(lambda: target.locator('.empty-container').click(timeout=WAIT_MS), completed=lambda: picker.count() == 1)
     expect(picker).to_have_count(1, timeout=WAIT_MS)
-    asset = _asset_for(page, file, uploaded_assets)
+    with _image_stage('上传商品规格图片素材'):
+        asset = _asset_for(page, file, uploaded_assets)
+    evidence.bind(asset.source)
     tile = _tile(page, asset)
     checkbox = tile.locator('input[type="checkbox"]')
-    if not checkbox.is_checked():
-        page_step(lambda: tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=WAIT_MS), completed=checkbox.is_checked)
-    expect(checkbox).to_be_checked(timeout=WAIT_MS)
     frame = page.frame_locator(PICKER)
-    expect(frame.locator('input[type="checkbox"]:checked')).to_have_count(1, timeout=WAIT_MS)
-    confirm = frame.get_by_role('button', name=re.compile(r'^确定[（(]\s*1\s*[）)]$'))
-    page_step(lambda: confirm.click(timeout=WAIT_MS), completed=lambda: _same_image(target.locator('img'), asset.source))
-    expect(picker).to_have_count(0, timeout=WAIT_MS)
-    _verify_image(target.locator('img'), asset)
-    return asset
+    crop_enabled = _smart_crop_enabled(page)
+    crop_required = _crop_required(tile, crop_enabled)
+    with _image_stage('选择并确认商品规格图片', asset):
+        if not checkbox.is_checked():
+            page_step(lambda: tile.locator('div[class*="PicList_pic_imgBox"]').click(timeout=WAIT_MS), completed=checkbox.is_checked)
+        _check_selected_material(page, asset)
+        confirm = frame.get_by_role('button', name=re.compile(r'^确定[（(]\s*1\s*[）)]$'))
+        page_step(lambda: confirm.click(timeout=WAIT_MS), completed=lambda: picker.count() == 0)
+        expect(picker).to_have_count(0, timeout=WAIT_MS)
+    with _image_stage('核对商品规格图片裁剪及详情结果', asset):
+        selected = _selection_result(page, target.locator('img'), asset, evidence,
+                                     crop_enabled=crop_enabled, crop_required=crop_required)
+        _verify_image(target.locator('img'), selected)
+    if selected.original_source:
+        asset.verified_sources.add(selected.source)
+    names = drawer.locator(CREATED_NAMES)
+    name = names.input_value() if names.count() == 1 else '当前规格'
+    _log_selected(name, IMAGE_FIELDS[1], selected, _source(target.locator('img')))
+    return selected
 
 
 def _cancel_image_picker(page):
@@ -371,8 +494,9 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                 current_images = cell.locator('img')
                 if current_images.count():
                     asset = uploaded_assets.get(file)
-                    if combinations and asset and _same_image(current_images, asset.source):
-                        selected[selector] = (label, asset)
+                    if combinations and asset and any(_same_image(current_images, source) for source in (asset.source, *asset.verified_sources)):
+                        selected[selector] = (label, _Asset(asset.name, _source(current_images),
+                                                          original_source=asset.source, verified_sources=asset.verified_sources))
                         filled.append(label)
                     else:
                         _skip(result, name, label, '页面已有图片，未覆盖；请核对是否对应当前素材')
@@ -384,7 +508,8 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
                 except (_ImageError, PlaywrightError, AssertionError) as error:
                     if on_image_review is None or page.is_closed():
                         raise
-                    asset = _review_image(page, name, label, current_images, uploaded_assets.get(file),
+                    expected = error.expected if isinstance(error, _ImageError) and error.expected else uploaded_assets.get(file)
+                    asset = _review_image(page, name, label, current_images, expected,
                                           error, on_image_review, manual_selection, result)
                     if not drawer.count() or (not combinations and drawer.locator(CREATED_NAMES).input_value() != name):
                         raise NeedsAttention(f'请核对 SKU「{name}」的详情面板，无法确认当前填写位置')
@@ -420,7 +545,7 @@ def _fill_sku_media(page: Page, names: list[str], images: SkuImageInputs, guide_
         for selector, (label, uploaded) in selected.items():
             current_images = row.locator(selector).locator('img')
             try:
-                with image_steps():
+                with image_steps(), _image_stage('SKU 详情保存后回读图片', uploaded):
                     _verify_image(current_images, uploaded)
             except _ImageError as error:
                 if on_image_review is None or page.is_closed():

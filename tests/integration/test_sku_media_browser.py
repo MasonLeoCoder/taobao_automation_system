@@ -1,10 +1,12 @@
 """本地页面验证SKU补充信息按名称填写、素材复用、缺失日志及人工弹窗恢复。"""
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright
 from ecommerce.modules.product.assets import SkuImageInputs
 from ecommerce.platforms.qianniu.product_review import read_listing_fields
@@ -186,6 +188,120 @@ class SkuMediaBrowserTests(unittest.TestCase):
         self.assertEqual(result.skipped, {})
         self.assertIn('~crop,0,17,365,365~', self.page.evaluate('records[1].search'))
         self.assertEqual(self.page.evaluate('uploadCount'), 1)
+
+    def enable_smart_crop(self, size='1086x1448'):
+        """模拟已实测的千牛裁剪接口，单图请求与新资源地址相互关联。"""
+        self.crop_requests = []
+        def crop(route):
+            data=json.loads(parse_qs(route.request.post_data)['data'][0])
+            source=json.loads(json.loads(data['paramStrList'])[0])['imgUrl']
+            self.crop_requests.append(source)
+            result=f'https://img.alicdn.com/imgextra/i2/shop/processed-{len(self.crop_requests)}.png'
+            route.fulfill(content_type='application/json',headers={'Access-Control-Allow-Origin':'*'},
+                          body=json.dumps({'ret':['SUCCESS::调用成功'],'data':{'result':{
+                              'taskResults':[{'jsPictureDOS':[{'fullUrl':result}]}]}}}))
+        self.context.route('https://h5api.m.taobao.com/h5/mtop.taobao.qn.copilot.node.aigc.img.web.batch.sync.change.size/1.0/',crop)
+        self.page.evaluate('''size=>{
+            window.smartCrop=true;
+            assets.push=asset=>Array.prototype.push.call(assets,{...asset,size,source:'https://img.alicdn.com/imgextra/i3/shop/'+asset.name});
+        }''',size)
+
+    def test_new_crop_resource_is_confirmed_and_saved_in_both_slots_for_shared_material(self):
+        self.enable_smart_crop()
+        images=SkuImageInputs(dict.fromkeys(NAMES,self.images.files[NAMES[0]]),{})
+        with self.guard(),self.fixture_file_input():
+            result=platform.fill_sku_media(self.page,NAMES,images,TITLE,
+                                           on_image_review=lambda *args:self.fail('正确裁剪不应要求人工处理'))
+        self.assertEqual(result.skipped,{})
+        self.assertEqual(result.differences,[])
+        self.assertEqual(self.page.evaluate('uploadCount'),1)
+        self.assertEqual(len(self.crop_requests),4)
+        self.assertEqual(len(set(self.crop_requests)),1)
+        for row in self.page.evaluate('records'):
+            self.assertIn('/processed-',row['search'])
+            self.assertIn('/processed-',row['spec'])
+            self.assertNotEqual(row['search'],row['spec'])
+        self.assert_core_unchanged()
+
+    def test_square_material_with_crop_switch_on_keeps_original_without_crop_request(self):
+        self.enable_smart_crop('800x800')
+        with self.guard(),self.fixture_file_input(),self.assertLogs(platform.__name__,level='INFO') as logs:
+            result=platform.fill_sku_media(self.page,NAMES,self.images,TITLE)
+        self.assertEqual(result.skipped,{})
+        self.assertEqual(self.crop_requests,[])
+        self.assertFalse(any('处理=智能裁剪' in line for line in logs.output))
+        for row in self.page.evaluate('records'):
+            self.assertEqual(row['search'],row['spec'])
+            self.assertIn('/i3/shop/sku-',row['search'])
+        self.assert_core_unchanged()
+
+    def test_crop_started_by_upload_completion_is_captured_without_selecting_twice(self):
+        self.enable_smart_crop()
+        self.page.evaluate('window.cropOnUpload=true')
+        with self.guard(),self.fixture_file_input():
+            result=platform.fill_sku_media(self.page,[NAMES[0]],self.images,TITLE,
+                                           on_image_review=lambda *args:self.fail('上传完成时的裁剪回执不能遗漏'))
+        self.assertEqual(result.skipped,{})
+        self.assertEqual(result.filled[NAMES[0]],[*platform.IMAGE_FIELDS,'SKU搜索标题'])
+        self.assertEqual(len(self.crop_requests),2)
+        self.assertEqual(self.page.evaluate('uploadCount'),1)
+        self.assert_core_unchanged()
+
+    def test_crop_of_another_original_is_rejected_and_optional_image_can_be_skipped(self):
+        self.enable_smart_crop()
+        self.page.evaluate("window.cropInputOverride='https://img.alicdn.com/imgextra/i3/shop/wrong-original.png'")
+        messages=[]
+        def feedback(page,message,deadline):
+            messages.append(message)
+            self.assertIn('未收到关联原素材',message)
+            return 'skip_image'
+        with self.guard(),self.fixture_file_input():
+            result=platform.fill_sku_media(self.page,[NAMES[0]],self.images,TITLE,on_image_review=feedback)
+        self.assertEqual(len(messages),2)
+        self.assertEqual(result.filled[NAMES[0]],['SKU搜索标题'])
+        self.assertEqual(result.optional_skips[NAMES[0]],set(platform.IMAGE_FIELDS))
+        self.assertTrue(result.differences)
+        self.assert_core_unchanged()
+
+    def test_confirm_failure_reports_stage_skips_and_continues_without_repeated_confirm(self):
+        self.page.evaluate('''()=>{
+            const original=openBatch;window.confirmCalls=0;
+            openBatch=()=>{original();if(currentIndex===1)document.querySelector('.batch-fill-sku-image-dialog .ok').onclick=()=>confirmCalls++};
+        }''')
+        messages=[]
+        def feedback(page,message,deadline):
+            messages.append(message)
+            self.assertIn('确认搜索主图并回读详情',message)
+            return 'timeout'
+        with self.guard(),self.fixture_file_input():
+            result=platform.fill_sku_media(self.page,NAMES,self.images,TITLE,on_image_review=feedback)
+        self.assertEqual(len(messages),1)
+        self.assertEqual(self.page.evaluate('confirmCalls'),1)
+        self.assertEqual(result.optional_skips,{NAMES[0]:{'SKU搜索主图'}})
+        self.assertIn('SKU搜索主图',result.filled[NAMES[1]])
+        self.assertTrue(all(row['title']==TITLE for row in self.page.evaluate('records')))
+        self.assert_core_unchanged()
+
+    def test_image_changed_after_detail_save_is_not_reported_as_verified(self):
+        self.page.evaluate('''()=>{
+            const original=openDetail;
+            openDetail=index=>{original(index);const save=document.querySelector('.sku-component-sku-detail-drawer .save');
+                const saveOriginal=save.onclick;
+                save.onclick=()=>{saveOriginal();if(index===1){records[index].search='https://qianniu.test/wrong/after-save.png';render()}};
+            };
+        }''')
+        messages=[]
+        def feedback(page,message,deadline):
+            messages.append(message)
+            self.assertIn('手动选图并保存详情',message)
+            return 'skip_image'
+        with self.guard(),self.fixture_file_input():
+            result=platform.fill_sku_media(self.page,NAMES,self.images,TITLE,on_image_review=feedback)
+        self.assertEqual(len(messages),1)
+        self.assertNotIn('SKU搜索主图',result.filled[NAMES[0]])
+        self.assertIn('SKU搜索主图',result.filled[NAMES[1]])
+        self.assertTrue(result.differences)
+        self.assert_core_unchanged()
 
     def test_wrong_search_image_can_be_replaced_manually_or_skipped(self):
         for action in ('continue', 'skip_image', 'timeout'):

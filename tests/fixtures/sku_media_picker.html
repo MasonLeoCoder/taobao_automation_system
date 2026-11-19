@@ -2,18 +2,29 @@
 <button id="local" onclick="uploadPanel()">本地上传</button>
 <div id="library"></div><button id="confirm" hidden onclick="confirmSpec()">确定</button>
 <button id="cancel" hidden onclick="window.frameElement.remove()">取消</button>
+<span id="smart-crop" hidden><span>智能裁剪</span><button role="switch" aria-checked="false">开关</button></span>
 <script>
 const kind=new URLSearchParams(location.search).get('kind');let selected=null;
 document.querySelector('#cancel').hidden=kind!=='spec';
+document.querySelector('#smart-crop').hidden=!parent.smartCrop;
+document.querySelector('#smart-crop button').setAttribute('aria-checked',parent.smartCrop?'true':'false');
+async function chosenSource(asset){
+ if(!parent.smartCrop||asset.size==='800x800')return asset.source;
+ const body=new URLSearchParams({data:JSON.stringify({paramStrList:JSON.stringify([JSON.stringify({imgUrl:parent.cropInputOverride||asset.source})])})});
+ const response=await fetch('https://h5api.m.taobao.com/h5/mtop.taobao.qn.copilot.node.aigc.img.web.batch.sync.change.size/1.0/',{method:'POST',body});
+ const result=await response.json();
+ return result.data.result.taskResults[0].jsPictureDOS[0].fullUrl;
+}
 function renderLibrary(){
  const library=document.querySelector('#library');library.replaceChildren();
  parent.assets.forEach(asset=>{
    const tile=document.createElement('div');tile.className='PicList_pic_background-fixture';
-   tile.innerHTML='<div class="PicList_pic_imgBox-fixture"><img style="width:60px;height:60px" src="'+asset.source+'_320x320.jpg"></div><span></span><input type="checkbox">';
+   tile.innerHTML='<div class="PicList_pic_imgBox-fixture"><img style="width:60px;height:60px" src="'+asset.source+'_320x320.jpg"></div><span></span><input type="checkbox"><div class="PicList_spec-fixture">'+(asset.size||'')+'</div>';
    tile.querySelector('span').textContent=asset.name;
    tile.querySelector('.PicList_pic_imgBox-fixture').onclick=()=>{
-     if(kind==='search'){parent.chooseSearch(asset.source)}else{
-       document.querySelectorAll('#library input').forEach(c=>c.checked=false);tile.querySelector('input').checked=true;selected=asset;
+     const checked=tile.querySelector('input').checked;
+     document.querySelectorAll('#library input').forEach(c=>c.checked=false);tile.querySelector('input').checked=!checked;selected=checked?null:asset;
+     if(kind==='search'){if(selected)chosenSource(asset).then(source=>parent.chooseSearch(source))}else{
        const confirm=document.querySelector('#confirm');confirm.hidden=false;confirm.textContent='确定（1）';
      }
    };library.append(tile);
@@ -29,9 +40,17 @@ function uploadPanel(){
    dialog.querySelector('#status').textContent='1 个文件上传成功';dialog.querySelector('#complete').hidden=false;
    if(parent.injectUnknownOnUpload){parent.injectUnknownOnUpload=false;parent.showUnknown()}
  };
- dialog.querySelector('#complete').onclick=()=>{dialog.remove();renderLibrary();parent.requestExtraFile()};
+ dialog.querySelector('#complete').onclick=()=>{
+   dialog.remove();renderLibrary();parent.requestExtraFile();
+   if(parent.cropOnUpload&&kind==='search'){
+     const asset=parent.assets[parent.assets.length-1];
+     document.querySelectorAll('#library input').forEach(c=>c.checked=false);
+     document.querySelector('#library').lastChild.querySelector('input').checked=true;
+     chosenSource(asset).then(source=>parent.chooseSearch(source));
+   }
+ };
  document.body.append(dialog);
 }
-function confirmSpec(){parent.chooseSpec(selected.source)}
+async function confirmSpec(){parent.chooseSpec(await chosenSource(selected))}
 renderLibrary();
 </script>
