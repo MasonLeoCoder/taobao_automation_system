@@ -46,6 +46,24 @@
     return item;
   }
 
+  function importNote(message, state = '') {
+    const note = node('import-note');
+    note.textContent = message;
+    note.classList.toggle('is-error', state === 'error');
+    note.classList.toggle('is-success', state === 'success');
+    note.classList.toggle('is-emphasis', Boolean(state));
+  }
+
+  function validationError(message) {
+    const entry = element('li');
+    const separator = message.indexOf('：');
+    if (separator >= 0) entry.append(element('strong', message.slice(0, separator + 1)));
+    const detail = separator >= 0 ? message.slice(separator + 1) : message;
+    const parts = detail.split(/(「[^」]+」|SKU\s*搜索标题|宝贝标题|导购标题|销售规格|商家编码|一口价|数量|价格)/u);
+    parts.forEach((part, index) => entry.append(index % 2 ? element('strong', part) : document.createTextNode(part)));
+    return entry;
+  }
+
   root.checkListingTitle = (key, raw, candidate = false) => {
     const value = candidate || key === 'sku' ? raw.replace(/\p{White_Space}/gu, '') :
       raw.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
@@ -375,8 +393,15 @@
     node('issues').replaceChildren();
     for (const [label, values] of [['必须修正', errors], ['可跳过或需核对', warnings]]) {
       if (!values.length) continue;
-      const list = element('ul'); list.append(...values.map(value => element('li',value)));
-      node('issues').append(element('strong',label),list);
+      const section = element('div'), list = element('ul');
+      if (values === errors) {
+        section.className = 'ui-validation-errors';
+        section.setAttribute('role', 'alert');
+        section.setAttribute('aria-label', '自检必须修正的问题');
+      }
+      list.append(...values.map(value => values === errors ? validationError(value) : element('li', value)));
+      section.append(element('strong', label), list);
+      node('issues').append(section);
     }
     if (preview.video_error && fileMap.size) {
       const skip = element('button', '跳过视频并重新自检');
@@ -433,7 +458,7 @@
     } catch (error) {
       if (id !== requested) return;
       node('feedback-note').textContent = error.message;
-      if (node('task').hidden) node('import-note').textContent = error.message;
+      if (node('task').hidden) importNote(error.message, 'error');
       else timer = setTimeout(poll, 2500);
     }
   }
@@ -528,9 +553,9 @@
     mapping.dispatchEvent(new Event('ui:controls-added',{bubbles:true}));
     showRecognized();
     const ambiguous = [...mapping.querySelectorAll('select')].some(select => !select.value);
-    node('import-note').textContent = !fileMap.size ? '未读到文件，请重新选择商品文件夹。' :
+    importNote(!fileMap.size ? '未读到文件，请重新选择商品文件夹。' :
       ambiguous ? '存在多个候选项，请先选择对应的文件或目录。' :
-        mapping.hidden ? '已识别商品资料。' : '目录名不同时，可以手动指定分组。';
+        mapping.hidden ? '已识别商品资料。' : '目录名不同时，可以手动指定分组。');
     if (!node('preflight').disabled && !ambiguous) node('import').requestSubmit();
   }
 
@@ -598,7 +623,7 @@
     updateTemplateLink();
     node('keyword').value = selected?.dataset.searchKeyword || '';
     updatePreflight();
-    node('import-note').textContent = '类目已更换，请确认素材并重新自检。';
+    importNote('类目已更换，请确认素材并重新自检。');
   });
   node('manual-close').addEventListener('click',() => node('manual-dialog').close());
   node('manual-open').addEventListener('click',() => { if (currentPrompt && !node('manual-dialog').open) node('manual-dialog').showModal(); });
@@ -614,7 +639,7 @@
     const form = new FormData(node('import'));
     const selections = [...node('mapping').querySelectorAll('select')];
     if (selections.some(select => !select.value)) {
-      node('import-note').textContent = '存在多个候选项，请先选择对应的文件或目录。'; return;
+      importNote('存在多个候选项，请先选择对应的文件或目录。'); return;
     }
     for (const select of selections) {
       const role = select.dataset.listingRole, selection = select.value;
@@ -623,15 +648,20 @@
       else for (const file of groupFiles(selection)) form.append(role,file,file.name);
     }
     busy = true; resetReview(); node('import-fields').disabled = true;
-    node('import-note').textContent = form.has('video')
+    importNote(form.has('video')
       ? '正在导入资料并检查视频。比例不符时会在本地适配，请等待…'
-      : '正在导入资料并自检，尚未打开千牛…';
+      : '正在导入资料并自检，尚未打开千牛…');
     try {
       const data = await api(root.dataset.api,form);
       remember(data.id); busy = false;
       render(data);
-      node('import-note').textContent = data.id ? '自检通过，请核对资料后开始。' : '自检未通过，请检查下方问题后重试。';
-    } catch (error) { node('import-note').textContent = error.message; }
+      const count = data.errors?.length || 0;
+      importNote(data.id ? '自检通过，请核对资料后开始。' :
+        `自检未通过${count ? `，发现 ${count} 项问题` : ''}。请检查下方问题后重试。`, data.id ? 'success' : 'error');
+      if (count) node('issues').querySelector('.ui-validation-errors')?.scrollIntoView({
+        block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      });
+    } catch (error) { importNote(error.message, 'error'); }
     finally { busy = false; node('import-fields').disabled = false; }
   });
   function updateStartLabel() {

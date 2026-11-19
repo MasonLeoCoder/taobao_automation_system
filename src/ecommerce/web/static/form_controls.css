@@ -275,6 +275,21 @@ body:has(.ui-modal[open]){overflow:hidden}
 .ui-consent-row .ui-choice{flex:none;margin:2px 0 0}
 .ui-consent-row small{display:block;margin-top:3px;color:var(--control-label);font-size:11px;line-height:1.7}
 .ui-form-notice,.ui-form-feedback{margin:0;overflow-wrap:anywhere;font-size:13px;color:var(--control-error)}
+.ui-tool-feedback.is-emphasis { font-weight:700; }
+.ui-tool-feedback.is-success { color:var(--control-accent); }
+.ui-validation-errors {
+  padding:14px 16px;
+  border:1px solid #f1c7cc;
+  border-inline-start:4px solid var(--control-error);
+  border-radius:8px;
+  background:#fff1f2;
+  color:var(--control-error);
+  overflow-wrap:anywhere;
+  scroll-margin-block:24px;
+}
+.ui-validation-errors strong { font-weight:700; }
+.ui-validation-errors ul { padding-inline-start:1.35em; }
+.ui-validation-errors li { margin-block:6px; }
 .ui-form-feedback:empty{display:none}
 .ui-confirm-footer{flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:16px 28px;border-top:1px solid var(--control-border);background:var(--control-surface-soft);border-radius:0 0 20px 20px}
 .ui-confirm-buttons{display:flex;align-items:center;gap:10px}

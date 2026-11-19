@@ -69,7 +69,7 @@
 .listing-title input[aria-invalid="true"] { border-color:var(--control-error); }
 .listing-card .module-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 .listing-choice { display:inline-flex; align-items:center; gap:8px; }
-.listing-issues { overflow-wrap:anywhere; }
+.listing-issues { display:grid; gap:12px; overflow-wrap:anywhere; }
 .listing-issues ul,.listing-card ul { margin:4px 0; }
 .listing-skus { overflow:auto; }
 .listing-skus table { width:100%; min-width:480px; }
