@@ -235,6 +235,128 @@ class SkuMediaBrowserTests(unittest.TestCase):
             self.assertIn('/i3/shop/sku-',row['search'])
         self.assert_core_unchanged()
 
+    def test_crop_auto_advances_to_next_empty_sku_without_applying_image_twice(self):
+        self.enable_smart_crop()
+        self.page.evaluate('window.autoAdvanceSearch=true;window.cropOnUpload=true')
+        with self.guard(), self.fixture_file_input():
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE,
+                on_image_review=lambda *args: self.fail('平台自动切换焦点不应要求人工处理'))
+        self.assertEqual(result.skipped, {})
+        self.assertEqual(result.differences, [])
+        self.assertEqual(self.page.evaluate('uploadCount'), 2)
+        rows = self.page.evaluate('records')
+        self.assertTrue(all(row['search'] and row['spec'] and row['title'] == TITLE for row in rows))
+        self.assertNotEqual(rows[0]['search'], rows[1]['search'])
+        self.assertEqual(len(self.crop_requests), 4)
+        self.assert_core_unchanged()
+
+    def test_skip_closes_only_picker_with_cancel_and_close_and_continues_next_sku(self):
+        self.page.evaluate('''()=>{
+            const original=openBatch;
+            openBatch=()=>{
+                original();
+                const batch=document.querySelector('.batch-fill-sku-image-dialog');
+                const close=document.createElement('button');close.setAttribute('aria-label','关闭');
+                close.onclick=()=>batch.remove();batch.append(close);
+                if(currentIndex===1){
+                    batch.querySelector('.ok').onclick=()=>{};
+                    batch.querySelector('.cancel').onclick=()=>{};
+                }
+            };
+        }''')
+        messages = []
+        def feedback(page, message, deadline):
+            messages.append((message, deadline))
+            self.assertIsNotNone(deadline)
+            return 'skip_image'
+        with self.guard(), self.fixture_file_input():
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE, on_image_review=feedback)
+        self.assertEqual(len(messages), 1)
+        self.assertFalse(self.page.is_closed())
+        self.assertEqual(result.optional_skips, {NAMES[0]: {'SKU搜索主图'}})
+        self.assertIn('商品规格图片', result.filled[NAMES[0]])
+        self.assertEqual(result.filled[NAMES[1]], [*platform.IMAGE_FIELDS, 'SKU搜索标题'])
+        self.assert_core_unchanged()
+
+    def test_skip_keeps_browser_when_cancel_fails_then_manual_close_continues(self):
+        self.page.evaluate('''()=>{
+            const original=openBatch;
+            openBatch=()=>{original();if(currentIndex===1){
+                const batch=document.querySelector('.batch-fill-sku-image-dialog');
+                batch.querySelector('.ok').onclick=()=>{};
+                batch.querySelector('.cancel').onclick=()=>{};
+            }};
+        }''')
+        messages = []
+        def feedback(page, message, deadline):
+            messages.append((message, deadline))
+            self.assertFalse(page.is_closed())
+            self.assertEqual(page.locator(platform.DRAWER).count(), 1)
+            if deadline is None:
+                self.assertIn('已跳过', message)
+                self.assertIn('只关闭素材选择窗口', message)
+                page.locator(platform.BATCH).evaluate('batch=>batch.remove()')
+                return 'continue'
+            return 'timeout'
+        with self.guard(), self.fixture_file_input():
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE, on_image_review=feedback)
+        self.assertEqual(len(messages), 2)
+        self.assertIsNone(messages[1][1])
+        self.assertEqual(result.optional_skips, {NAMES[0]: {'SKU搜索主图'}})
+        self.assertEqual(result.filled[NAMES[1]], [*platform.IMAGE_FIELDS, 'SKU搜索标题'])
+        self.assertFalse(self.page.is_closed())
+        self.assert_core_unchanged()
+
+    def test_unintended_other_sku_image_change_is_not_committed(self):
+        self.page.evaluate('''()=>{
+            const original=chooseSearch;
+            chooseSearch=source=>{original(source);if(currentIndex===1){
+                const other=document.querySelector('.batch-fill-sku-image-dialog .sku-image-container[data-index="0"]');
+                batchImages[0]=source;other.innerHTML='<img src="'+source+'">';
+            }};
+        }''')
+        messages = []
+        def feedback(page, message, deadline):
+            messages.append(message)
+            self.assertIn('其他 SKU', message)
+            self.assertIn('未确认批量保存', message)
+            return 'skip_image'
+        with self.guard(), self.fixture_file_input():
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE, on_image_review=feedback)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(result.optional_skips, {NAMES[0]: {'SKU搜索主图'}})
+        rows = self.page.evaluate('records')
+        self.assertIsNone(rows[1].get('search'))
+        self.assertTrue(rows[0]['search'])
+        self.assert_core_unchanged()
+
+    def test_picker_footer_outside_content_can_confirm_or_skip_without_closing_drawer(self):
+        self.page.evaluate('''()=>{
+            const original=openBatch;
+            openBatch=()=>{
+                original();
+                const batch=document.querySelector('.batch-fill-sku-image-dialog');
+                const shell=document.createElement('div');shell.setAttribute('role','dialog');
+                shell.style.cssText='position:fixed;inset:0;background:white;z-index:8';
+                batch.removeAttribute('role');batch.replaceWith(shell);shell.append(batch);
+                const footer=document.createElement('div');
+                footer.style.cssText='position:fixed;bottom:0;z-index:15';shell.append(footer);
+                for(const name of ['ok','cancel']){
+                    const button=batch.querySelector('.'+name),click=button.onclick;
+                    footer.append(button);button.onclick=()=>{click();shell.remove()};
+                }
+                if(currentIndex===1)footer.querySelector('.ok').onclick=()=>{};
+            };
+        }''')
+        with self.guard(), self.fixture_file_input():
+            result = platform.fill_sku_media(self.page, NAMES, self.images, TITLE,
+                on_image_review=lambda *args: 'skip_image')
+        self.assertEqual(result.optional_skips, {NAMES[0]: {'SKU搜索主图'}})
+        self.assertIn('商品规格图片', result.filled[NAMES[0]])
+        self.assertEqual(result.filled[NAMES[1]], [*platform.IMAGE_FIELDS, 'SKU搜索标题'])
+        self.assertFalse(self.page.is_closed())
+        self.assert_core_unchanged()
+
     def test_crop_started_by_upload_completion_is_captured_without_selecting_twice(self):
         self.enable_smart_crop()
         self.page.evaluate('window.cropOnUpload=true')

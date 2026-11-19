@@ -161,6 +161,7 @@ class WebListingBrowserTests(TestCase):
                         deadline = time.time() + 30
                         assert review.sku_image_review(verification_page, '灰色款 SKU 搜索主图未确认', deadline) == 'skip_image'
                         assert review.sku_image_review(verification_page, '蓝色款商品规格图片未确认', time.time() + 3) == 'timeout'
+                        assert review.sku_image_review(verification_page, '图片已跳过，请只关闭素材窗口', None) == 'continue'
                         review.update(outcome='filled')
                         review._wait('已填写，检查后结束', ['finish'], kind='finish')
                         return '仅填写流程完成'
@@ -228,6 +229,11 @@ class WebListingBrowserTests(TestCase):
                         self.assertLessEqual(after_reload, before_reload)
                         image.get_by_role('button', name='跳过此图片').click()
                         expect(image).to_contain_text('蓝色款商品规格图片', timeout=10000)
+                        cleanup = page.get_by_role('dialog', name='图片已跳过，请关闭素材窗口')
+                        expect(cleanup).to_contain_text('图片已跳过，请只关闭素材窗口', timeout=10000)
+                        expect(cleanup.get_by_role('button', name='跳过此图片')).to_have_count(0)
+                        expect(cleanup.get_by_role('timer')).to_be_hidden()
+                        cleanup.get_by_role('button', name='完成', exact=True).click()
                         page.get_by_role('button', name='结束检查').click(timeout=10000)
                         expect(page.locator('#listing-message')).to_contain_text('仅填写流程完成', timeout=10000)
                         expect(page.locator('#listing-log-rows')).to_contain_text('仅填写流程完成', timeout=10000)

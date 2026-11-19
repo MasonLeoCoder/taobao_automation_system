@@ -107,7 +107,7 @@
     const titles = {login:'等待千牛扫码登录', native:'需要决定原生弹窗', review:'请核对填写差异', titles:'请修正千牛标题',
       receipt:'请核对提交结果', duplicate:'已有入仓结果待核对', finish:'填写完成，等待检查', terminal:'任务已暂停或结束，请核对',
       video:'请核对商品视频', video_ratio:'视频比例需要处理', specifications:'请核对分层规格',
-      main_image:'请核对当前主图', sku_image:'请处理 SKU 图片', manual:'需要人工处理'};
+        main_image:'请核对当前主图', sku_image:'请处理 SKU 图片', sku_image_cleanup:'图片已跳过，请关闭素材窗口', manual:'需要人工处理'};
     node('manual-dialog-title').textContent = titles[prompt.kind] || titles.manual;
     node('manual-message').textContent = task.message + (terminal && !task.prompt ? '\n当前任务已结束，不能从该步骤自动继续。' : '');
     const diff = node('manual-differences');

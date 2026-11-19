@@ -715,6 +715,30 @@ class WebListingTests(TestCase):
                 self.assertIsNone(ended['prompt'])
                 self.assertFalse(ended['submit_attempted'])
 
+    def test_sku_image_cleanup_waits_for_done_without_new_skip_timer(self):
+        identifier = self.preflight().json['id']
+        page = MagicMock()
+        page.is_closed.return_value = False
+        page.wait_for_timeout.side_effect = lambda milliseconds: time.sleep(.01)
+
+        def fake_open(*args, **kwargs):
+            action = kwargs['web_review'].sku_image_review(page, '图片已跳过，请关闭素材选择窗口', None)
+            self.assertEqual(action, 'continue')
+            return '继续下一条 SKU'
+
+        self.open_publish.side_effect = fake_open
+        self.start_request(f'/api/listing/{identifier}/start', json={'submit': False})
+        paused = self.state(identifier, lambda state: state['phase'] == 'waiting')
+        self.assertEqual(paused['prompt']['kind'], 'sku_image_cleanup')
+        self.assertEqual(paused['prompt']['actions'], ['continue'])
+        self.assertNotIn('expires_at', paused['prompt'])
+        self.assertFalse(paused['submit_attempted'])
+        self.assertEqual(self.send(identifier, paused, 'skip_image').status_code, 409)
+        self.assertEqual(self.send(identifier, paused, 'continue').status_code, 200)
+        final = self.state(identifier, lambda state: state['phase'] == 'succeeded')
+        self.assertEqual(final['message'], '继续下一条 SKU')
+        self.assertFalse(final['submit_attempted'])
+
     def test_video_review_resumes_or_ends_when_editor_closes(self):
         for close in (False, True):
             with self.subTest(close=close):

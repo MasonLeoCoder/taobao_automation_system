@@ -449,6 +449,8 @@ class _ListingRun:
 
     def sku_image_review(self, page, message, expires_at):
         """等待处理当前选填的 SKU 图位，期限内可多次核对。"""
+        if expires_at is None:
+            return self._wait(message, ['continue'], page=page, kind='sku_image_cleanup')
         return self._wait(message, ['continue', 'skip_image'], page=page, kind='sku_image', expires_at=expires_at)
 
     def _sku_title(self, name):

@@ -215,6 +215,8 @@ def _image_stage(stage, asset=None):
         raise _ImageError(f'{stage}：{error}', rejected=error.rejected,
                           expected=error.expected or asset) from error
     except (PlaywrightError, AssertionError) as error:
+        getLogger(__name__).warning('SKU 图片阶段失败：阶段=%s；异常=%s；具体原因=%s',
+                                    stage, type(error).__name__, str(error)[:2400])
         raise _ImageError(f'{stage}未完成，请检查当前素材窗口、网络或平台提示', expected=asset) from error
 
 
@@ -250,6 +252,26 @@ def _fill_search_image(page, drawer, name, file, uploaded_assets):
         return _write_search_image(page, drawer, name, file, uploaded_assets, evidence)
 
 
+def _other_search_previews(batch, name):
+    """保存其他 SKU 的图片，验证平台自动切换选中项时没有误填其他规格。"""
+    rows = batch.locator('.sku-item').evaluate_all('''items=>items.map(item=>({
+        name:item.querySelector('.sku-text')?.textContent || '',
+        sources:Array.from(item.querySelectorAll('.sku-image-container img')).map(image=>image.getAttribute('src')).filter(Boolean)
+    }))''')
+    current = ' '.join(name.split())
+    return [(' '.join(row['name'].split()), row['sources']) for row in rows if ' '.join(row['name'].split()) != current]
+
+
+def _verify_other_search_previews(batch, name, before):
+    """只允许当前目标 SKU 改图，其他规格的顺序和图片必须保持。"""
+    after = _other_search_previews(batch, name)
+    if [label for label, _ in before] != [label for label, _ in after]:
+        raise _ImageError('选图期间 SKU 列表发生变化，未确认批量保存，请核对规格')
+    for (label, expected), (_, actual) in zip(before, after):
+        if len(expected) != len(actual) or any(not _image_pattern(source).fullmatch(value) for source, value in zip(expected, actual)):
+            raise _ImageError(f'选图时其他 SKU「{label}」的图片发生变化，未确认批量保存，请核对')
+
+
 def _write_search_image(page, drawer, name, file, uploaded_assets, evidence):
     """在完整响应监听范围内上传、选图和确认，包含上传完成时的自动裁剪。"""
     _reset_drawer(drawer)
@@ -274,12 +296,11 @@ def _write_search_image(page, drawer, name, file, uploaded_assets, evidence):
         page_step(lambda: target.click(timeout=WAIT_MS), completed=lambda: 'selected' in (target.get_attribute('class') or '').split())
     expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
     expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
+    other_previews = _other_search_previews(batch, name)
     with _image_stage('上传搜索主图素材'):
         asset = _asset_for(page, file, uploaded_assets)
     evidence.bind(asset.source)
     tile = _tile(page, asset)
-    expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
-    expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
     preview = target.locator('img')
     checkbox = tile.locator('input[type="checkbox"]')
     crop_enabled = _smart_crop_enabled(page)
@@ -291,10 +312,11 @@ def _write_search_image(page, drawer, name, file, uploaded_assets, evidence):
         selected = _selection_result(page, preview, asset, evidence,
                                      crop_enabled=crop_enabled, crop_required=crop_required)
         _check_selected_material(page, asset)
-        expect(batch.locator('.sku-image-container.selected')).to_have_count(1, timeout=WAIT_MS)
-        expect(target).to_have_class(re.compile(r'\bselected\b'), timeout=WAIT_MS)
+        # 千牛填图后可能自动选中下一条空 SKU；核对实际改图范围，不将焦点移动误判成错图。
+        _verify_other_search_previews(batch, name, other_previews)
     with _image_stage('确认搜索主图并回读详情', selected):
-        page_step(lambda: batch.get_by_role('button', name='确定', exact=True).click(timeout=WAIT_MS), completed=lambda: batch.count() == 0)
+        confirm = _picker_dialog(batch).get_by_role('button', name='确定', exact=True)
+        page_step(lambda: confirm.click(timeout=WAIT_MS), completed=lambda: batch.count() == 0)
         expect(batch).to_have_count(0, timeout=WAIT_MS)
         _verify_image(drawer.locator(SEARCH_IMAGE).locator('img'), selected)
     if selected.original_source:
@@ -343,37 +365,67 @@ def _write_spec_image(page, drawer, file, uploaded_assets, evidence):
     return selected
 
 
+def _picker_dialog(element):
+    """取得当前选图窗口的外层对话框，不能把 SKU 详情当作要关闭的窗口。"""
+    owner = element.locator('xpath=ancestor-or-self::*[@role="dialog" or @role="alertdialog"][1]')
+    if owner.evaluate_all('elements=>elements.length===1 && !elements[0].matches(".sku-component-sku-detail-drawer")'):
+        return owner
+    return element
+
+
 def _cancel_image_picker(page):
-    """退出这次选图，避免把未确认的选择应用到 SKU。"""
+    """只取消当前选图；返回是否已退出，无法关闭时保留浏览器交由人工处理。"""
+    try:
+        return _try_cancel_image_picker(page)
+    except (PlaywrightError, AssertionError) as error:
+        if page.is_closed():
+            raise NeedsAttention('千牛商品编辑页已关闭，无法继续 SKU 填写') from None
+        if not page.locator(BATCH).count() and not page.locator(PICKER).count():
+            return True
+        getLogger(__name__).warning('SKU 素材窗口仍在变化，保留浏览器等待人工关闭：%s', str(error)[:1000])
+        return False
+
+
+def _try_cancel_image_picker(page):
+    """尝试已定位的当前素材窗口取消或关闭控件，不使用全局 Escape。"""
     batch = page.locator(BATCH)
     picker = page.locator(PICKER)
-    cancel_name = re.compile(r'^(取消|关闭)$')
+    attempted = set()
     with propagate_step_errors():
         for _ in range(3):
             batch_count, picker_count = batch.count(), picker.count()
             if not batch_count and not picker_count:
-                return
+                return True
             controls = []
             if picker_count == 1:
                 frame = page.frame_locator(PICKER)
-                controls.append(frame.locator('[class*="UploadDialog_dialog__"]:visible').get_by_role('button', name=cancel_name))
+                controls.append(('upload.cancel', frame.locator('[class*="UploadDialog_dialog__"]:visible').get_by_role('button', name='取消', exact=True)))
                 if not batch_count:
-                    controls.append(frame.get_by_role('button', name=cancel_name))
+                    controls.extend([('frame.cancel', frame.get_by_role('button', name='取消', exact=True)),
+                                     ('frame.close', frame.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I)))])
+                    owner = _picker_dialog(picker)
+                    controls.extend([('picker.cancel', owner.get_by_role('button', name='取消', exact=True)),
+                                     ('picker.close', owner.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I)))])
             if batch_count == 1:
-                controls.append(batch.get_by_role('button', name=cancel_name))
-            cancel = next((button for button in controls if button.count() == 1 and button.is_visible()), None)
+                owner = _picker_dialog(batch)
+                controls.extend([('batch.cancel', owner.get_by_role('button', name='取消', exact=True)),
+                                 ('batch.close', owner.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I)))])
+            cancel = next(((key, button) for key, button in controls
+                           if key not in attempted and button.count() == 1 and button.is_visible()), None)
+            if cancel is None:
+                break
+            key, button = cancel
+            attempted.add(key)
             try:
-                if cancel is not None:
-                    page_step(lambda: cancel.click(timeout=1500))
-                else:
-                    page.keyboard.press('Escape')
-            except PlaywrightError:
+                page_step(lambda: button.click(timeout=min(WAIT_MS, 5000)),
+                          completed=lambda: batch.count() == 0 and picker.count() == 0)
+                getLogger(__name__).info('取消当前 SKU 图片选择：控件=%s', key)
+            except (PlaywrightError, AssertionError) as error:
                 if page.is_closed():
                     raise NeedsAttention('千牛商品编辑页已关闭，无法继续 SKU 填写') from None
-                page.keyboard.press('Escape')
+                getLogger(__name__).warning('当前 SKU 选图窗口取消未完成：控件=%s；原因=%s', key, str(error)[:1000])
             page.wait_for_timeout(200)
-    if batch.count() or picker.count():
-        raise NeedsAttention('SKU 素材窗口未能安全退出，请在千牛关闭该窗口后核对已填写的商品')
+    return not batch.count() and not picker.count()
 
 
 def _review_image(page, name, label, images, expected, error, on_image_review, manual_selection, result, *, saved=False):
@@ -390,10 +442,15 @@ def _review_image(page, name, label, images, expected, error, on_image_review, m
         with manual_selection():
             action = on_image_review(page, f'SKU「{name}」的{label}：{reason}\n{hint}', deadline)
         if action != 'continue':
-            _cancel_image_picker(page)
             reason = '等待 3 分钟未完成，自动跳过' if action == 'timeout' else '用户选择跳过此图片'
             _skip(result, name, label, reason)
             result.optional_skips.setdefault(name, set()).add(label)
+            while not _cancel_image_picker(page):
+                getLogger(__name__).warning('SKU 图片已跳过，素材窗口仍未关闭，保留浏览器等待人工关闭：规格=%s；图位=%s', name, label)
+                with manual_selection():
+                    on_image_review(page, f'SKU「{name}」的{label}已跳过。\n'
+                                    '当前素材选择窗口未能自动关闭，浏览器和已填内容会保留。'
+                                    '请在千牛只关闭素材选择窗口，保留 SKU 详情面板，再点击「完成」，程序会继续下一步。', None)
             return None
         if not page.locator(BATCH).count() and not page.locator(PICKER).count():
             actual = _source(images)

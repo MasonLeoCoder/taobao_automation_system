@@ -81,6 +81,11 @@ function openPicker(kind,container){
 }
 window.chooseSearch=source=>{
  document.querySelectorAll('.batch-fill-sku-image-dialog .selected').forEach(slot=>{batchImages[+slot.dataset.index]=source;slot.innerHTML='<img src="'+source+'">'});
+ if(window.autoAdvanceSearch){
+   document.querySelectorAll('.batch-fill-sku-image-dialog .selected').forEach(slot=>slot.classList.remove('selected'));
+   const next=Array.from(document.querySelectorAll('.batch-fill-sku-image-dialog .sku-image-container')).find(slot=>!batchImages[+slot.dataset.index]);
+   if(next)next.classList.add('selected');
+ }
 };
 window.chooseSpec=source=>{updateDraftImage('spec',source);document.querySelector('#sku-param').remove()};
 window.showUnknown=()=>{
