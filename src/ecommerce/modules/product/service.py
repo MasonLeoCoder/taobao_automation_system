@@ -175,12 +175,12 @@ def open_publish(settings: Settings, start: bool = False, on_ready: Callable[[],
         if product_info.sku_mode(layered_supported=backpack) == LAYERED_SKU:
             combinations = product_info.sku_combinations()
         image_directory = Path(sku_images_dir) if sku_images_dir is not None else product_info.source.parent / "sku图"
+        # 已封存的旧资料沿用导入时的匹配方式，新的导入与命令行共用编码和指定图名规则。
         codes = {'codes': {row['销售规格']: row['商家编码'] for row in sku_details}} if (
-            backpack and 'sku_mode' in web_review.preview) else {}
+            not web_review or 'sku_image_names' in web_review.preview or 'sku_mode' in web_review.preview) else {}
+        requested = web_review.preview.get('sku_image_names', {}) if web_review else product_info.sku_image_names()
         sku_images = load_sku_images(image_directory if image_directory.is_absolute() else settings.root / image_directory,
-                                     sales_specifications, **codes,
-                                     **({'requested': web_review.preview['sku_image_names']}
-                                        if codes and web_review.preview.get('sku_image_names') else {}))
+                                     sales_specifications, **codes, requested=requested)
         fixed_price = product_info.fixed_price()
         merchant_code = product_info.text("商家编码")
     target = web_review.target if web_review else qianniu_target

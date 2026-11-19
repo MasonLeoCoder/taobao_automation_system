@@ -105,7 +105,7 @@ def download_template():
     template = template_for(profile, category)
     if not template:
         abort(404, description='该类目的商品资料包待适配')
-    name = f'{template.stem.removesuffix("-产品信息模板")}-商品资料包'
+    name = f'{template.stem.partition("-产品信息模板")[0]}-商品资料包'
     return send_file(build_material_bundle(template, name), as_attachment=True,
                      download_name=f'{name}.zip', mimetype='application/zip', max_age=0)
 

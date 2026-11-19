@@ -10,8 +10,9 @@ from .listing_profiles import BACKPACK, BACKPACK_CATEGORY, CATEGORY, LINT_ROLLER
 
 
 TEMPLATE_VERSION = 1
+LINT_ROLLER_TEMPLATE_VERSION = 2
 BACKPACK_TEMPLATE_VERSION = 3
-TEMPLATES = {(LINT_ROLLER.key, CATEGORY): '粘毛器-产品信息模板.xlsx',
+TEMPLATES = {(LINT_ROLLER.key, CATEGORY): '粘毛器-产品信息模板-v2.xlsx',
              (BACKPACK.key, BACKPACK_CATEGORY): '背包箱包-产品信息模板-v3.xlsx'}
 
 BUNDLE_INSTRUCTIONS = """商品资料填写说明
@@ -20,7 +21,8 @@ BUNDLE_INSTRUCTIONS = """商品资料填写说明
 2. 1-1主图必需。放入恰好 5 张图片，文件名用 1.jpg、2.jpg 到 5.jpg。
 3. 3-4主图按需提供。提供时放入 5 张，建议同样使用 1.jpg 到 5.jpg。
 4. 详情图按需提供。按展示顺序用正整数命名，例如 1.jpg、2.jpg、10.jpg。
-5. sku图按需提供。文件名与 Excel 中的完整销售规格一致，包含其中的空格。
+5. sku图按需提供。Excel 的「SKU 图文件名」填写不含扩展名的名称，例如长柄款对应长柄款.jpg。多条 SKU 可明确指定同一张图。该列留空或旧表没有该列时，先按 SKU 商家编码匹配，再按完整销售规格名称匹配。
+   指定图名不存在时跳过该图。同名图片有多个格式时也跳过，请保留正确的一张后重新自检。自检结果会显示每条 SKU 匹配的文件名或缺图原因。
 6. 商品视频按需提供。将一个 MP4 放在产品信息.xlsx 同一级，例如商品视频.mp4。
 
 主图和详情图支持 PNG、JPG 和 JPEG。图片扩展名应与实际格式一致。
@@ -42,13 +44,7 @@ def build_material_bundle(template, name):
         for folder in MATERIAL_FOLDERS.values():
             archive.mkdir(f'{name}/{folder}')
         archive.write(template, f'{name}/产品信息.xlsx')
-        instructions = BUNDLE_INSTRUCTIONS
-        if template.name == TEMPLATES[(BACKPACK.key, BACKPACK_CATEGORY)]:
-            instructions = instructions.replace(
-                '文件名与 Excel 中的完整销售规格一致，包含其中的空格。',
-                'Excel 的「SKU 图文件名」填写不含扩展名的完整名称，多条 SKU 可指定同一张图。'
-                '留空时先按商家编码匹配，再按完整销售规格名称匹配。缺图时跳过。')
-        archive.writestr(f'{name}/填写说明.txt', instructions)
+        archive.writestr(f'{name}/填写说明.txt', BUNDLE_INSTRUCTIONS)
     stream.seek(0)
     return stream
 
@@ -73,7 +69,8 @@ def validate_template(book, profile, category):
             raise ValueError('请使用从当前类目资料包下载的产品信息模板')
         return
     template = template_for(profile.key, category)
-    versions = (TEMPLATE_VERSION, 2, BACKPACK_TEMPLATE_VERSION) if profile.key == BACKPACK.key else (TEMPLATE_VERSION,)
+    versions = ((TEMPLATE_VERSION, 2, BACKPACK_TEMPLATE_VERSION) if profile.key == BACKPACK.key
+                else (TEMPLATE_VERSION, LINT_ROLLER_TEMPLATE_VERSION))
     if not template or book.template[0] != category or book.template[1] not in versions:
         raise ValueError('产品信息模板与当前类目或版本不一致，请重新下载')
     options = _attribute_options(template)

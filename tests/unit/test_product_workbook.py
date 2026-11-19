@@ -157,8 +157,20 @@ class ProductWorkbookTests(unittest.TestCase):
             self.assertIn("店铺分类匹配：已选1项，跳过0项",result)
             submitter.assert_not_called()
             reviewer = MagicMock()
+            image_directory = Path(root) / 'sku图'
+            image_directory.mkdir()
+            for name in ('共用图.png', 'T001.png', '规格一.png'):
+                (image_directory / name).write_bytes(b'fixture-image')
+            workbook = load_workbook(Path(root) / '产品信息.xlsx')
+            workbook['Sheet1']['E4'] = 'SKU 图文件名'
+            workbook['Sheet1']['E5'] = workbook['Sheet1']['E6'] = '共用图'
+            workbook.save(Path(root) / '产品信息.xlsx')
+            workbook.close()
             submitted = open_managed_publish(load_settings(root=Path(root)), keyword="测试", category="一级 > 二级",
                                              brand="无品牌", product_info_file="产品信息.xlsx", submit=True, on_submit_attention=reviewer)
+            matched = media_writer.call_args.args[2]
+            self.assertEqual(matched.files, dict.fromkeys(['规格一', '规格二'], image_directory / '共用图.png'))
+            self.assertEqual(matched.missing, {})
             submitter.assert_called_once_with(unittest.mock.ANY, page, reviewer, before_click=unittest.mock.ANY)
             self.assertIn("商品提交已确认",submitted)
             self.assertNotIn("未提交发布",submitted)

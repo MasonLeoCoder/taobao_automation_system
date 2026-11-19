@@ -45,16 +45,19 @@ class WebListingBrowserTests(TestCase):
                 book_path = folder / '产品信息.xlsx'
                 book = load_workbook(book_path)
                 try:
+                    self.assertEqual(book['Sheet1']['E4'].value, 'SKU 图文件名')
                     for row in (2, 5, 6):
                         for cell in book['填写示例'][row]:
                             book['Sheet1'][cell.coordinate] = cell.value
+                    book['Sheet1']['E5'] = '专用短柄图'
+                    book['Sheet1']['E6'] = None
                     book.save(book_path)
                 finally:
                     book.close()
                 image = Image.new('RGB', (24, 24), 'white')
                 for group, names in {
                     '1-1主图': ('1','2','3','4','5'), '3-4主图': ('1','2','3','4','5'),
-                    '详情图': ('2','10'), 'sku图': ('短柄款',),
+                    '详情图': ('2','10'), 'sku图': ('专用短柄图', '短柄款'),
                 }.items():
                     for name in names:
                         image.save(folder / group / f'{name}.png')
@@ -68,7 +71,7 @@ class WebListingBrowserTests(TestCase):
                     picker.set_input_files(str(folder))
                     summary = page.locator('#listing-recognized')
                     for text in ('产品信息.xlsx', '5 张 · 1-1主图', '5 张 · 3-4主图',
-                                 '2 张 · 详情图', '1 张 · sku图', '商品视频.mp4'):
+                                 '2 张 · 详情图', '2 张 · sku图', '商品视频.mp4'):
                         expect(summary).to_contain_text(text)
                     expect(page.locator('#listing-mapping')).to_be_hidden()
                     expect(page.locator('#listing-import-note')).to_contain_text('自检通过')
@@ -93,6 +96,10 @@ class WebListingBrowserTests(TestCase):
                     player.close()
                     page.set_viewport_size({'width': 390, 'height': 840})
                     expect(page.locator('#listing-issues')).to_contain_text('SKU 图 / 长柄款')
+                    short_row = page.locator('#listing-skus tbody tr').filter(has=page.get_by_text('短柄款', exact=True))
+                    expect(short_row).to_contain_text('专用短柄图.png')
+                    long_row = page.locator('#listing-skus tbody tr').filter(has=page.get_by_text('长柄款', exact=True))
+                    expect(long_row).to_contain_text('未找到图片')
 
                     shutil.copyfile(video, folder / '备选视频.mp4')
                     picker.set_input_files(str(folder))

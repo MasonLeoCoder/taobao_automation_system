@@ -137,4 +137,6 @@ def load_sku_images(directory: Path, names: list[str], *, codes=None, requested=
                 for name in (name for name in owners if name not in requested):
                     del files[name]
                     missing[name] = f"图片「{file.name}」同时匹配多条 SKU：" + "、".join(owners)
+                    getLogger(__name__).warning("SKU图片跳过：规格=%s；缺少SKU搜索主图、商品规格图片；原因=%s",
+                                                name, missing[name])
     return SkuImageInputs(files, missing)

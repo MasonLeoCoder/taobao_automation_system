@@ -82,16 +82,9 @@ def _book(path, profile=LINT_ROLLER, category=CATEGORY):
         raise ValueError(f'「分类」最多选择 {MAX_CATEGORIES} 项')
     mode = book.sku_mode(layered_supported=profile.key == BACKPACK.key)
     skus = book.sku_details()
-    sku_image_names = {}
-    if profile.key == BACKPACK.key:
-        for detail, row in zip(skus, book.skus):
-            value = row.get('SKU 图文件名')
-            if value is not None and (stem := str(value).strip()):
-                sku_image_names[detail['销售规格']] = stem
     return {**titles, 'code': book.text('商家编码'), 'price': book.fixed_price(),
-            'skus': skus, 'shop_categories': shop_categories,
+            'skus': skus, 'shop_categories': shop_categories, 'sku_image_names': book.sku_image_names(),
             **({'sku_mode': mode, 'sku_combinations': book.sku_combinations() if mode == LAYERED_SKU else {},
-                'sku_image_names': sku_image_names,
                 'sku_attributes': [[str(row.get(label) or '').strip() for label in SKU_DIMENSIONS] for row in book.skus]}
                if profile.key == BACKPACK.key else {}),
             'attributes': {key: str(book.fields.get(key) or '').strip() for key in profile.attributes}}
@@ -185,19 +178,17 @@ def import_materials(root, uploads, *, keyword, category, brand, profile=LINT_RO
                     errors.append(f'{label} / {MATERIAL_FOLDERS[group]}：{error}')
         if 'skus' in preview:
             names = [row['销售规格'] for row in preview['skus']]
-            codes = {row['销售规格']: row['商家编码'] for row in preview['skus']} if 'sku_mode' in preview else None
+            codes = {row['销售规格']: row['商家编码'] for row in preview['skus']}
             requested = preview.get('sku_image_names')
             matched = load_sku_images(bundle / 'sku', names, codes=codes, requested=requested) if files['sku'] or requested else None
             if matched:
-                by_name = {row['销售规格']: row['商家编码'] for row in preview['skus']}
                 for name, reason in matched.missing.items():
-                    label = f'{name}（{by_name[name]}）' if codes is not None else name
-                    action = '，请整理冲突文件后重新自检' if codes is not None and (
+                    label = f'{name}（{codes[name]}）'
+                    action = '，将跳过。请整理冲突文件后重新自检' if (
                         '不唯一' in reason or '多条 SKU' in reason) else '，将跳过'
                     warnings.append(f'SKU 图 / {label}：{reason.replace(str(bundle / "sku"), "SKU 图分组")}{action}')
-                if codes is not None:
-                    preview['sku_image_issues'] = {name: reason.replace(str(bundle / 'sku'), 'SKU 图分组')
-                                                   for name, reason in matched.missing.items()}
+                preview['sku_image_issues'] = {name: reason.replace(str(bundle / 'sku'), 'SKU 图分组')
+                                               for name, reason in matched.missing.items()}
                 unmatched = set(files['sku']) - {path.name for path in matched.files.values()}
                 if unmatched:
                     warnings.append('SKU 图中未匹配的文件：' + '、'.join(sorted(unmatched)))

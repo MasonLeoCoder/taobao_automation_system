@@ -112,6 +112,15 @@ class ProductWorkbook:
             raise ValueError('当前上架方案尚不支持分层展示')
         return mode
 
+    def sku_image_names(self):
+        """读取每条 SKU 指定的图片名称，空值交由编码及规格名匹配。"""
+        result = {}
+        for name, row in zip(self.sales_specifications(), self.skus):
+            value = row.get('SKU 图文件名')
+            if value is not None and (stem := str(value).strip()):
+                result[name] = stem
+        return result
+
     def sku_combinations(self):
         combinations = {}
         seen = {}

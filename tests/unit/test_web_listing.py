@@ -91,7 +91,7 @@ class WebListingTests(TestCase):
         self.account = self.enterContext(bind_listing_fixture(self.app))
         self.open_publish = self.enterContext(patch('ecommerce.modules.product.web_listing.open_publish'))
 
-    def preflight(self, *, bad_image=False, excel=None, video=None, offline=False, **target):
+    def preflight(self, *, bad_image=False, excel=None, video=None, sku=None, offline=False, **target):
         """走真实导入接口；参数：是否破坏图片内容；返回：HTTP响应。"""
         images = [(BytesIO(b'fake' if bad_image and p.stem == '2' else p.read_bytes()), p.name)
                   for p in sorted((self.folder / '1-1主图').iterdir())]
@@ -100,6 +100,7 @@ class WebListingTests(TestCase):
         return self.client.post('/api/listing/preflight', headers=self.headers, data={
             'keyword': '粘毛器', 'brand': '无品牌/无注册商标', 'category': CATEGORY,
             'excel': (excel, '任意表名.xlsx'), 'main': images, **({} if offline else {**TARGET_FORM, **target}),
+            **({'sku':sku} if sku else {}),
             **({'video': (BytesIO(video), '商品视频.mp4')} if video is not None else {})})
 
     def test_managed_preflight_seals_account_and_shop_and_rejects_changed_target(self):
@@ -269,6 +270,8 @@ class WebListingTests(TestCase):
         self.assertEqual(workbook.sheetnames, ['Sheet1', '填写示例', '属性选项', '填写说明'])
         entry = workbook['Sheet1']
         self.assertTrue(all(cell.value is None for cell in entry[2]))
+        self.assertEqual(entry['E4'].value, 'SKU 图文件名')
+        self.assertEqual(workbook['填写示例']['E5'].value, '短柄款')
         self.assertEqual(len(entry.data_validations.dataValidation), 5)
         empty = self.preflight(excel=BytesIO(data))
         self.assertEqual(empty.status_code, 422)
@@ -295,6 +298,60 @@ class WebListingTests(TestCase):
         workbook['填写说明']['D1'] = 99
         self.assertIn('模板与当前类目或版本不一致', submit_workbook().json['errors'][0])
         self.assertEqual(self.client.get('/api/listing/template', query_string={'category': '其他类目'}).status_code, 404)
+        self.open_publish.assert_not_called()
+
+    def test_lint_roller_sku_images_match_requested_code_or_spec_and_report_conflicts(self):
+        original = load_workbook(self.folder / '任意表名.xlsx')
+        self.addCleanup(original.close)
+        sheet = original['Sheet1']
+        sample = next((self.folder / '1-1主图').iterdir()).read_bytes()
+        other = BytesIO()
+        Image.new('RGB', (24, 24), 'gray').save(other, 'JPEG')
+        cases = [
+            ('旧表按编码优先', None, None,
+             ['DEMO-1-A.png', '白色.png'], {'白色':'DEMO-1-A.png'}, None),
+            ('旧表按规格回退', None, None,
+             ['白色.png'], {'白色':'白色.png'}, None),
+            ('空图名按编码', 'SKU 图文件名', None,
+             ['DEMO-1-A.png'], {'白色':'DEMO-1-A.png'}, None),
+            ('指定图名优先', 'SKU 图文件名', '长柄图',
+             ['长柄图.png', 'DEMO-1-A.png', '白色.png'], {'白色':'长柄图.png'}, None),
+            ('指定图缺失', 'SKU 图文件名', '长柄图',
+             ['DEMO-1-A.png', '白色.png'], {'白色':None}, '未找到指定图片「长柄图」'),
+            ('指定图重名', 'SKU 图文件名', '长柄图',
+             ['长柄图.png', '长柄图.jpg'], {'白色':None}, '同名图片不唯一'),
+            ('编码重名', None, None,
+             ['DEMO-1-A.png', 'DEMO-1-A.jpg', '白色.png'], {'白色':None}, '同名图片不唯一'),
+            ('缺少同名图', None, None,
+             ['其他.png'], {'白色':None}, '未找到图片'),
+        ]
+        for label, header, requested, filenames, expected, issue in cases:
+            with self.subTest(label=label):
+                sheet['E3'], sheet['E4'] = header, requested
+                stream = BytesIO()
+                original.save(stream)
+                stream.seek(0)
+                images = [(BytesIO(other.getvalue() if name.endswith('.jpg') else sample), name) for name in filenames]
+                response = self.preflight(excel=stream, sku=images)
+                self.assertEqual(response.status_code, 201, response.json)
+                preview = response.json['preview']
+                self.assertEqual(preview['sku_images'], expected)
+                self.assertEqual(preview['sku_image_names'], {'白色':requested} if requested else {})
+                if issue:
+                    self.assertIn(issue, preview['sku_image_issues']['白色'])
+                    self.assertTrue(any('将跳过' in warning for warning in response.json['warnings']))
+                else:
+                    self.assertEqual(preview['sku_image_issues'], {})
+
+        sheet['E3'], sheet['E4'] = 'SKU 图文件名', '共用图'
+        sheet.append(['黑色', 19, 2, 'DEMO-1-B', '共用图'])
+        stream = BytesIO()
+        original.save(stream)
+        stream.seek(0)
+        response = self.preflight(excel=stream, sku=[(BytesIO(sample), '共用图.png')])
+        self.assertEqual(response.status_code, 201, response.json)
+        self.assertEqual(response.json['preview']['sku_images'], {'白色':'共用图.png', '黑色':'共用图.png'})
+        self.assertEqual(response.json['preview']['sku_image_issues'], {})
         self.open_publish.assert_not_called()
 
     def test_preflight_reports_missing_main_image_number(self):
